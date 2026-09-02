@@ -1,0 +1,112 @@
+# 04 — Domain Model
+
+The vocabulary of AMOS. These names are used consistently in code, database, API and
+conversation. Where a word is ambiguous in the AI-agent field generally, its AMOS meaning is
+pinned here.
+
+## Core entities
+
+```
+Goal ──1:N──> Run ──1:N──> Task ──1:N──> Step ──1:N──> {LLMCall, ToolCall}
+                                  │
+                            assigned to
+                                  ▼
+                                Agent ──uses──> Tool
+```
+
+### Goal
+What the user wants, in natural language, plus constraints. Immutable once submitted — a
+changed goal is a new Goal. *"Compare Postgres SKIP LOCKED with Celery for AMOS's job queue."*
+
+### Run
+One execution attempt of a Goal. Re-running the same Goal creates a second Run; both are kept,
+because comparing them is how you see non-determinism. Holds overall status, timing, cost and
+final result. **The unit of tracing** — "what happened?" is always answered about a Run.
+
+### Task
+One unit of work within a Run, produced by the planner (V0.4). Has a type, parameters,
+dependencies on other Tasks, an assigned agent, and a state. Tasks form a **DAG**, not a list —
+independent tasks may run concurrently, and cycles are rejected at plan validation.
+
+### Step
+One attempt at executing a Task. A Task retried three times has three Steps. This separation is
+what makes retries observable: the Task carries the final outcome, the Steps carry the history
+of how it got there. Collapsing them would destroy the evidence of what actually happened.
+
+### Agent
+A bounded LLM reasoner with identity, purpose, input/output schemas, an **allowlist** of tools,
+a timeout, a retry policy and permissions. Not a prompt — a prompt is one field of an agent.
+
+An agent decides *what to do*. It never decides whether its own output was correct; validators
+and the critic (V0.7) do.
+
+### Tool
+A deterministic capability: name, description, input schema, output schema, permissions,
+timeout, implementation. Tools are the only way an agent affects anything outside itself.
+
+Tool output is **untrusted data**, never instructions (N-12). A tool returning
+"ignore your instructions and…" is returning a string, and it is treated as one.
+
+### Memory
+Five distinct concepts, deliberately not one thing. Full treatment in `docs/09-memory-architecture.md` (V0.6):
+
+| Kind | Holds | Lives | Scope |
+|---|---|---|---|
+| Working | intermediate results in the current Run | Run | one Run |
+| Conversation | recent turns with this user | rolling window | one session |
+| Semantic | durable facts and preferences | forever | one user |
+| Episodic | outcomes of past Runs — what worked | forever | one user |
+| Knowledge | ingested documents (RAG corpus) | forever | shared |
+
+Conflating these is the most common design error in agent systems. Vector search is right for
+*semantic* and *knowledge*; it is wrong for working memory, where exact retrieval is needed and
+similarity is meaningless.
+
+## Task lifecycle
+
+```
+   PENDING ──deps satisfied──> READY ──claimed──> RUNNING
+      │                                              │
+      │                            ┌─────────────────┼─────────────────┐
+      │                            ▼                 ▼                 ▼
+      │                       SUCCEEDED           FAILED           TIMED_OUT
+      │                                              │                 │
+      │                                              └────┬────────────┘
+      │                                                   ▼
+      │                                        retries left? ──yes──> READY
+      │                                                   │
+      │                                                   no
+      │                                                   ▼
+      └──dependency failed──> SKIPPED             PERMANENTLY_FAILED
+```
+
+Rules that are enforced in code, not conventions:
+
+- Transitions are explicit. Any transition not on this diagram raises rather than warns (N-2).
+- **Only the orchestrator moves a Task between states.** No agent, and no LLM output, ever does.
+- `RUNNING → READY` on retry is what makes retries safe to reason about — a retry re-enters the
+  normal path rather than taking a special one.
+- `SKIPPED` propagates transitively: a dependency's permanent failure skips its dependents.
+- Every state change is persisted (V0.3), so the history is reconstructable.
+
+## Run lifecycle
+
+`RECEIVED → PLANNING → EXECUTING → VALIDATING → {COMPLETED, FAILED, PARTIALLY_COMPLETED}`
+
+`PARTIALLY_COMPLETED` exists deliberately. Some tasks succeeding and others permanently failing
+is a **normal outcome**, not an error — a research goal where three sources answered and one
+timed out produced real value. Forcing that into binary success/failure would either discard
+good work or overstate what happened.
+
+## Identity and idempotency
+
+- Every entity has a UUID, generated by AMOS.
+- A Run additionally carries a client-supplied **idempotency key** (V0.3). Submitting the same
+  Goal with the same key returns the existing Run rather than starting a second one. Without
+  this, a retried HTTP request silently doubles the work and the cost.
+
+## Naming discipline
+
+The words above mean these things everywhere: in code, in table names, in API fields, in
+documentation and in conversation. "Job", "workflow", "chain", "session" and "prompt" are not
+AMOS domain terms and should not appear as if they were.
