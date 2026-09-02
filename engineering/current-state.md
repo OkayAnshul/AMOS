@@ -53,6 +53,7 @@ that wrong in V0.1 creates a migration at V0.3.
 | `GEMINI_API_KEY` | **not yet obtained** — needed for V0.1 |
 | Disk | ~119 GB free |
 | GitHub | `OkayAnshul/AMOS`, **private** — goes public at v0.1 |
+| Git remote | SSH over **port 443** (`ssh://git@ssh.github.com:443/...`) — port 22 is blocked on this network, see `bugs-log.md` |
 
 ## How To Run
 Nothing to run yet. V0.1 will add instructions here and in the README.
