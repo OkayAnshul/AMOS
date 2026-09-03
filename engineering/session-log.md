@@ -82,3 +82,80 @@ repository: obtain a Gemini API key.
 
 ## Recommended Commit
 Already committed across seven commits on `main` and pushed. No outstanding changes.
+
+---
+
+# Session 2
+
+**Date:** 2026-09-03
+**Module:** V0.1 — Grounded Agent API
+**Objective:** Ship the first runnable milestone: typed API, provider abstraction, structured
+output with bounded repair, tests that never touch the network.
+
+## What We Changed
+Built V0.1 end to end. 15 source files, 5 test files, 41 tests. Wrote `docs/06-api-specification.md`
+and `docs/interview/foundation.md` (both stubs whose milestone arrived). Updated README with real
+run instructions and verified output.
+
+## Files Changed
+`pyproject.toml`, `src/amos/**` (config, errors, observability, llm/, agents/, api/, `__main__`),
+`tests/**` (conftest, unit×3, integration×1, live×1), `README.md`,
+`docs/06-api-specification.md`, `docs/interview/foundation.md`, `docs/22-resume-evidence.md`,
+`engineering/{current-state,session-log,bugs-log,experiments-log}.md`.
+
+## Architecture Decisions
+No new ADRs — V0.1 implements decisions already made. Two implementation choices worth recording:
+
+- **`Protocol` over ABC for `LLMProvider`.** Structural typing means the fake substitutes
+  without inheritance. Justified by V0.1's own testing need, not by future providers.
+- **`502` for `OutputValidationError`.** The request was valid and AMOS worked correctly; an
+  upstream dependency failed. `500` would send someone debugging the wrong system.
+
+## Problems Encountered
+1. `TypeError: log_event() got multiple values for argument 'message'` — every error path broken.
+2. `python -m amos` → `ModuleNotFoundError` despite pip reporting the package installed.
+3. Two `mypy --strict` errors, one of which was a genuine logic defect:
+   `isinstance(response.parsed, object)` — always true, so it narrowed nothing.
+
+## How We Solved Them
+1. Renamed the structured field to `error_message`. Caught by the error-path integration tests,
+   which the happy path would never have exercised.
+2. Added `[tool.hatch.build.targets.editable] dev-mode-dirs = ["src"]`. Caught by *running the
+   app* — the test suite could not have caught it, since pytest's own `pythonpath` masked the
+   broken install.
+3. Narrowed properly to `isinstance(response.parsed, BaseModel)`, and typed `app.state.agent`.
+
+## Tests Performed
+- 41 tests pass, 1 skipped (live, correctly opt-in). No network access.
+- `mypy --strict` clean across 15 files; `ruff check` and `ruff format` clean.
+- Live smoke test against real Gemini: passed, `repair_count=0`, 183 tokens.
+- Full manual demo: health, a real goal, a 422 validation error, structured logs inspected.
+
+## Current System State
+V0.1 shipped and tagged. `main` runs and its tests pass.
+
+## Things I Learned
+- **A green test suite does not prove the app starts.** Problem 2 is the clearest possible
+  demonstration: 41 passing tests alongside a package that could not be imported. The Definition
+  of Done requires running the demo for exactly this reason.
+- **Error paths need testing as deliberately as happy paths.** Problem 1 lived entirely in code
+  a manual demo never reaches.
+- `isinstance(x, object)` is always true. A type checker caught a "check" that checked nothing.
+
+## Things I Should Investigate
+- ~16s latency on a single call — model, network, or this connection? Matters at V0.4, where a
+  plan means several sequential calls.
+- Does the repair loop ever fire against `gemini-3.5-flash`? 0/3 so far; n=3 proves nothing.
+
+## References
+- <https://googleapis.github.io/python-genai/>
+- <https://ai.google.dev/gemini-api/docs/structured-output>
+- <https://docs.python.org/3/library/typing.html#typing.Protocol>
+
+## Next Exact Step
+**The advance gate is unmet** — the V0.1 pre-read has not been done, so `docs/interview/foundation.md`
+cannot yet be answered unaided. Per `CLAUDE.md`, V0.2 waits on that. If deliberately deferred,
+V0.2 (Tool Registry) is specified in `engineering/current-state.md`.
+
+## Recommended Commit
+Committed and pushed across three commits; merged to `main` and tagged `v0.1`.
