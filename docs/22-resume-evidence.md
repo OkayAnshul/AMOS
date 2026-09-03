@@ -13,14 +13,14 @@ demo does not go on a resume.**
 
 ## Current status
 
-**V0.1 shipped.** One claim is now evidenced. Everything below it remains unbuilt and unclaimable.
+**V0.2 shipped.** Two claims are evidenced. Everything below them remains unbuilt and unclaimable.
 
 ## Evidence table
 
 | Claim | Milestone | Files | Tests | Demo | Status |
 |---|---|---|---|---|---|
 | Typed LLM service with provider abstraction and validated structured output | V0.1 | `src/amos/llm/base.py`, `src/amos/agents/agent.py`, `src/amos/api/app.py` | 41 tests, `tests/unit/test_agent_repair.py` | `POST /v1/goals` | ✅ **shipped** |
-| Tool-using agent with schema-validated arguments, timeouts and permission allowlists | V0.2 | — | — | — | ⬜ not built |
+| Tool-using agent with schema-validated arguments, timeouts and permission allowlists | V0.2 | `src/amos/tools/**`, `src/amos/agents/tool_agent.py` | 76 tool/agent tests | `POST /v1/goals` with a tool-requiring goal | ✅ **shipped** |
 | Durable execution history with full request tracing and idempotent submission | V0.3 | — | — | — | ⬜ not built |
 | Goal decomposition into a persisted task DAG with enforced state machine and bounded retries | V0.4 | — | — | — | ⬜ not built |
 | Retrieval pipeline with citation grounding and measured recall@k | V0.5 | — | — | — | ⬜ not built |
@@ -111,3 +111,61 @@ at V0.3.
 agent, so not "multi-agent". No retrieval, so not RAG. "Grounded" here means *states its
 assumptions and admits uncertainty*, not *cites sources* — that meaning arrives at V0.5.
 Latency (~16s/call) is unoptimised and currently unattributed.
+
+
+---
+
+### V0.2 — Tool Registry
+
+**What was implemented:** A tool system where the agent selects and invokes capabilities
+autonomously, while the system enforces argument validation, timeouts, permissions and loop
+termination in code the model cannot influence.
+
+**Evidence (files):**
+- `src/amos/tools/base.py` — `Tool` ABC; concrete `execute()` performs validation and timeout so
+  subclasses cannot skip either
+- `src/amos/tools/registry.py` — registration, lookup, generated declarations; refuses
+  `WRITE`/`DESTRUCTIVE`
+- `src/amos/tools/builtin/calculator.py` — AST allowlist, never `eval()`
+- `src/amos/tools/builtin/read_file.py` — resolve-then-check containment
+- `src/amos/tools/builtin/http_get.py` — https + allowlist + private-IP check + no redirects
+- `src/amos/agents/tool_agent.py` — bounded observe-decide-act loop
+
+**Tests (117 total, and what they prove):**
+- `test_calculator.py` — 9 code-execution payloads rejected (`__import__`, `open`,
+  `().__class__.__bases__`); exponent bomb capped
+- `test_read_file.py` — 5 traversal forms blocked; **symlink escape blocked**, the case a string
+  filter misses
+- `test_http_get.py` — non-https rejected; `evil-github.com` rejected; cloud-metadata IP
+  rejected; an allowlisted host resolving internally rejected
+- `test_tool_agent.py` — loop cap stops the *provider calls*, not just the result; hallucinated
+  tool recovers; invalid args rejected pre-execution; injected tool output cannot widen
+  permissions
+- All 117 run without network access
+
+**Demo:** verified live —
+1. `"What is 17% of 2340 plus 88?"` → calls `calculator`, answers 485.8 (2 calls, ~2.1s)
+2. `"Read docs/03-architecture-decisions.md and tell me why AMOS chose pgvector over Qdrant"` →
+   reads its own ADR and explains the consistency argument
+3. `"Read ../../../../etc/passwd"` → sandbox refuses; the model reports the refusal
+
+**Technical explanation (unaided):** Tools declare a Pydantic input schema which serves as both
+the model-facing declaration and the validator, so the two cannot drift. `Tool` is an ABC rather
+than a Protocol because the base class's concrete `execute()` performs validation and timeout
+enforcement — a tool has no opportunity to skip them. Tool failures are returned as data and fed
+back to the model so it can correct itself, while a hard iteration cap guarantees the loop
+terminates regardless of what the model does. Security is enforced by functions that never read
+model output: path containment is checked *after* resolution so symlinks cannot escape, and
+`http_get` uses an allowlist because a blocklist fails open.
+
+**Likely interview questions:** `docs/interview/agents.md`.
+
+**Honest resume wording:**
+> Built a tool-execution system for an LLM agent with schema-derived tool declarations,
+> pre-execution argument validation, per-tool timeouts and a permission model; hardened against
+> path traversal, symlink escape, SSRF and code injection, with 117 tests running offline.
+
+**What this does NOT demonstrate:** no persistence, no planning or decomposition, no retrieval.
+One agent — **not multi-agent**. No authentication or audit trail; **not safe to expose
+publicly**. The security work is defence of a single-user local tool, not a reviewed production
+posture.

@@ -25,17 +25,41 @@ bottom, because the habit of verifying is the point of this document.
 | pytest | latest | Testing | <https://docs.pytest.org/en/stable/how-to/fixtures.html> |
 | ruff / mypy | latest | Lint and type check | — |
 
-**Known limitation** — Free-tier Gemini is rate limited (~15 RPM) and its terms allow data to
-improve products. No confidential input. Tests never call it (N-14).
+**Known limitation** — Free-tier Gemini is capped at a *daily per-model* request quota (20/day
+for `gemini-3.5-flash`, measured), and its terms allow data to improve products. No confidential
+input. Tests never call it (N-14) — with a 20/day budget, a test suite that hit the network
+could exhaust the entire day's quota in one run.
 
 ## Model
 
-| Model | Use | Note |
+| Model | Use | Free-tier quota (measured 2026-09-03) |
 |---|---|---|
-| `gemini-3.5-flash` | Default reasoning model | Free tier |
-| `gemini-2.5-flash` | Fallback | Free tier |
-| `gemini-embedding-001` | Embeddings, V0.5 | 2048 token input, 3072 dims default, MRL-truncatable, supports `task_type` |
-| `gemini-embedding-2` | Alternative | 8192 token input, no `task_type` parameter |
+| `gemini-3.5-flash-lite` | **Default** for development | Own daily quota; fast (~1s/call) |
+| `gemini-3.5-flash` | Demos, higher quality | **20 requests/day** |
+| `gemini-2.5-flash` | ~~Fallback~~ | **404 NOT_FOUND** — no longer served |
+| `gemini-embedding-001` | Embeddings, V0.5 | 2048 token input, 3072 dims default, MRL-truncatable, `task_type` |
+| `gemini-embedding-2` | Alternative | 8192 token input, no `task_type` |
+
+### The free tier is a DAILY per-model quota, not a rate limit
+
+This is the single most operationally important fact in this document, and it is not what the
+published guides say. The binding constraint measured from the API's own error:
+
+```
+quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+model:   gemini-3.5-flash
+limit:   20
+```
+
+**20 requests per day.** Not 15 per minute. A tool-using goal costs 2 LLM calls, so that is
+roughly **10 goals per day per model**.
+
+Two consequences that shaped the code:
+
+1. **Quota is per model**, so `gemini-3.5-flash-lite` has its own separate allowance. It is the
+   default (`AMOS_LLM_MODEL`) so development does not consume the quota reserved for demos.
+2. **Every avoidable API call matters.** This is what made removing the redundant `_finalise`
+   round trip a correctness-grade concern rather than an optimisation.
 
 Model IDs change frequently. Check <https://ai.google.dev/gemini-api/docs/models> and
 <https://ai.google.dev/gemini-api/docs/rate-limits> before assuming any of the above still hold.
@@ -83,6 +107,19 @@ Recorded because each would have been a real bug had it gone unchecked:
 3. **pgvector cannot index 3072 dimensions**, which is precisely `gemini-embedding-001`'s
    default output. Discovering this at V0.5 instead of Phase 0 would have meant re-embedding
    the entire corpus. See ADR-008.
+4. **The free tier is 20 requests/day, not 15/minute** (V0.2). Every published summary said
+   RPM; the API's own quota violation says `GenerateRequestsPerDayPerProjectPerModel`. AMOS's
+   own error message repeated the wrong figure until the real 429 arrived.
+5. **`gemini-2.5-flash` returns 404** and is no longer served, despite being listed as a
+   fallback in this document at Phase 0.
+6. **Tools and `response_schema` CAN be combined** (V0.2). The opposite was written into a
+   docstring as "verified against the API" when it had not been tested. It cost one wasted API
+   call per goal — a third of the daily budget.
 
 **The rule:** check the current documentation before adopting or upgrading anything. Do not
 trust recall for a version number, a model ID or an API signature.
+
+**The stronger rule, learned at V0.2:** documentation is not the same as behaviour. Items 4-6
+were all *wrong in the docs* or *never tested*, and only the live API revealed them. Where a
+fact is load-bearing, probe the API and record what it returned. And never write "verified"
+into a comment for something that was assumed.

@@ -159,3 +159,90 @@ V0.2 (Tool Registry) is specified in `engineering/current-state.md`.
 
 ## Recommended Commit
 Committed and pushed across three commits; merged to `main` and tagged `v0.1`.
+
+---
+
+# Session 3
+
+**Date:** 2026-09-03
+**Module:** V0.2 — Tool Registry
+**Objective:** Give the agent tools it can select and execute autonomously, with the system
+enforcing what it may touch.
+
+## What We Changed
+Built the tool system: `Tool` ABC, registry, bounded agent loop, three safe tools. Extended the
+provider seam for function calling without touching V0.1's agent. Wrote
+`docs/08-tool-specification.md`, `docs/13-security.md`, `docs/15-testing.md` and
+`docs/interview/agents.md`. 117 tests.
+
+## Files Changed
+`src/amos/tools/**` (base, registry, builtin×3), `src/amos/agents/tool_agent.py`,
+`src/amos/llm/{base,gemini,fake}.py`, `src/amos/{errors,config}.py`, `src/amos/api/{app,dependencies}.py`,
+`tests/unit/tools/**`, `tests/unit/test_tool_agent.py`, `tests/integration/*`, `tests/live/*`,
+`docs/{08,13,15,21,22}`, `docs/interview/agents.md`, `engineering/*`.
+
+## Architecture Decisions
+- **`Tool` is an ABC, not a Protocol.** Providers share a shape; tools share *behaviour*
+  (validate + timeout). Putting that in a concrete `execute()` means a tool cannot opt out of it.
+- **Tool declarations generated from the Pydantic input schema.** One source of truth, so what
+  the model is told and what the code validates cannot drift.
+- **Failures are data, not exceptions.** Every outcome is fed back so the model can correct
+  itself; the iteration cap still guarantees termination.
+- **`WRITE`/`DESTRUCTIVE` refused by the registry**, not merely undocumented.
+- **Default model → `gemini-3.5-flash-lite`**, because free-tier quota is per model and daily.
+
+## Problems Encountered
+1. `400 INVALID_ARGUMENT: Function call is missing a thought_signature` on the second round trip.
+2. `429` after ~20 live calls — far sooner than "15 requests/minute" predicted.
+3. A docstring claiming, as *verified*, that tools and `response_schema` could not be combined.
+4. Integration tests broke when the API's agent type changed.
+
+## How We Solved Them
+1. `Turn.provider_state` — an opaque field carrying the vendor's original content, replayed
+   verbatim. Only the producing provider reads it. ADR-005 predicted needing this hatch.
+2. Read the full quota violation rather than the status code: **20 requests/day per model**, not
+   15/minute. Switched the default model, fixed the wrong error message, and removed a wasted
+   call per goal.
+3. Tested it. The combination is allowed. Removed the third API call: 3 → 2 calls per goal,
+   8.4s → 2.8s.
+4. Rewrote them for `ToolUsingAgent` and gave V0.1's agent its own file rather than deleting its
+   coverage. Gave both agents a `tool_names` property so the API layer need not special-case.
+
+## Tests Performed
+- 117 pass, 2 skipped (live, opt-in). No network.
+- `mypy --strict` clean across 23 files; `ruff` clean.
+- Live: calculator tool loop end to end.
+- Demo: arithmetic via tool; AMOS reading its own ADRs and explaining the pgvector decision;
+  `../../../../etc/passwd` traversal refused with the model reporting the refusal honestly.
+
+## Current System State
+V0.2 shipped and tagged. `main` runs and its tests pass.
+
+## Things I Learned
+- **Documentation is not behaviour.** Three separate facts were wrong in published docs or
+  untested: the free-tier limit, `gemini-2.5-flash`'s availability, and the tools+schema
+  combination. Only the live API settled them.
+- **Never write "verified" for something assumed.** A confident annotation stopped me
+  re-examining the claim; the phrasing did more damage than the wrong belief.
+- **Fakes cannot test what they do not model.** `FakeProvider` has no thought signatures to
+  lose, so every scripted test passed while the real API rejected the request. That is the
+  argument for keeping an opt-in live test.
+- Extending the provider seam without touching `GroundedAgent` or its 11 tests was the first
+  real evidence the V0.1 design held.
+
+## Things I Should Investigate
+- Does `_finalise` ever fire now? If not by V0.4, delete it rather than carry untested code.
+- What is `gemini-3.5-flash-lite`'s actual daily quota? Only `flash`'s 20/day was measured.
+- Quality difference between lite and flash on tool selection — matters before V0.7 routing.
+
+## References
+- <https://ai.google.dev/gemini-api/docs/function-calling>
+- <https://ai.google.dev/gemini-api/docs/thinking#signatures>
+- <https://ai.google.dev/gemini-api/docs/rate-limits>
+
+## Next Exact Step
+V0.3 — Persistence and Trace. **Docker must be installed first.** Full sequence in
+`engineering/current-state.md`. Advance gate still unmet: `docs/interview/{foundation,agents}.md`.
+
+## Recommended Commit
+Committed and pushed; merged to `main` and tagged `v0.2`.

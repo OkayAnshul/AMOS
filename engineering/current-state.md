@@ -3,102 +3,119 @@
 > **Read this first when resuming.** It is the recovery mechanism — it must be sufficient to
 > restart cold after months away, without conversation history.
 
-**Last updated:** 2026-09-03 (Session 2)
+**Last updated:** 2026-09-03 (Session 3)
 
 ## Current Version
-**V0.1 — Grounded Agent API.** Shipped, tagged `v0.1`.
+**V0.2 — Tool Registry.** Shipped, tagged `v0.2`.
 
 ## Current Module
-None in progress. Next milestone is V0.2 (Tool Registry), **blocked on the advance gate**.
+None in progress. Next is V0.3 (Persistence + Trace).
 
 ## Completed Modules
 - **Phase 0** — architecture, ADRs, domain model, data model, roadmap.
-- **V0.1** — FastAPI service, `LLMProvider` protocol, Gemini provider, structured output with
-  bounded repair, typed errors, structured logging with request ids. 41 tests.
+- **V0.1** — FastAPI service, `LLMProvider` protocol, structured output with bounded repair.
+- **V0.2** — `Tool` ABC, registry, bounded tool loop, three safe tools, security tests.
 
 ## What Works
-- `POST /v1/goals` → validated `AgentResponse` (answer, reasoning, assumptions, confidence, caveats)
-- `GET /health`, `GET /docs`, `GET /openapi.json`
-- Provider swapping via the `LLMProvider` protocol (`GeminiProvider`, `FakeProvider`)
-- Repair loop: malformed output re-prompted with the error, bounded, then `OutputValidationError`
-- Typed errors mapped to status codes in one table (`api/app.py::_STATUS_MAP`)
-- Structured JSON logs with a request id, echoed as `x-request-id`
-- 41 tests passing, none touching the network; 1 live smoke test opt-in
+- `POST /v1/goals` → the agent autonomously selects and executes tools, then answers
+- Tools: `calculator` (AST-walked, no `eval`), `read_file` (sandboxed), `http_get` (allowlisted)
+- Arguments validated against the Pydantic schema **before** execution; declarations generated
+  from that same schema
+- Every failure fed back to the model as data: hallucinated tool, invalid args, timeout, error
+- Hard iteration cap; `ToolLoopExhaustedError` → 502
+- `WRITE`/`DESTRUCTIVE` permissions refused by the registry itself
+- V0.1's `GroundedAgent` still works and is still tested (`tests/integration/test_grounded_api.py`)
+- 117 tests, none touching the network; 2 live tests opt-in
 - `mypy --strict` and `ruff` clean
-- Verified live against real Gemini: 362 tokens, ~16s, `repair_count=0`
+
+**Verified live:** arithmetic via calculator (2 calls, ~2.1s); AMOS reading its own
+`docs/03-architecture-decisions.md` and explaining the pgvector decision; a `../../../../etc/passwd`
+traversal attempt correctly refused.
 
 ## What Does Not Work
-Nothing is broken. Not yet built: tools (V0.2), persistence (V0.3), planner (V0.4), RAG (V0.5),
-memory (V0.6), multi-agent (V0.7), async (V0.8), tracing (V0.9), evaluation (V1.0).
+Nothing is broken. Not built: persistence (V0.3), planner (V0.4), RAG (V0.5), memory (V0.6),
+multi-agent (V0.7), async (V0.8), tracing (V0.9), evaluation (V1.0).
 
-Known limitation: **nothing survives a restart.** Deliberate — ADR-006.
+**Nothing survives a restart** — deliberate, ADR-006. V0.3 changes this.
+
+## ⚠️ Operating constraint: 20 requests/day
+The Gemini free tier is a **daily per-model quota**, not a rate limit:
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier, limit: 20`. A tool-using goal costs 2 calls,
+so ≈10 goals/day/model.
+
+- `AMOS_LLM_MODEL` defaults to **`gemini-3.5-flash-lite`** — quota is per model, so development
+  does not consume the allowance kept for demos with `gemini-3.5-flash`.
+- `gemini-2.5-flash` is **404 / no longer served**.
+- Tests must never call the network (N-14) — one run could exhaust a day.
 
 ## Current Architecture
 ```
-Client → FastAPI → GroundedAgent → LLMProvider → Gemini
+Client → FastAPI → ToolUsingAgent ⇄ ToolRegistry → {calculator, read_file, http_get}
                         ↓
-                  repair loop (bounded)
+                   LLMProvider → Gemini
 ```
-No database. Target architecture: `docs/02-system-architecture.md`.
+No database. Target: `docs/02-system-architecture.md`.
 
 ## Current Branch
-`main` (V0.1 merged from `feat/v0.1-grounded-agent`)
+`main` (V0.2 merged from `feat/v0.2-tool-registry`)
 
 ## Last Known Good Commit
-Tag `v0.1` — tests pass, app runs, demo verified end to end.
+Tag `v0.2` — tests pass, app runs, all three demos verified.
 
 ## Known Bugs
-None open. Two fixed during V0.1, both in `engineering/bugs-log.md`.
+None open. Four fixed across V0.1–V0.2, all in `engineering/bugs-log.md`.
 
 ## Technical Debt
-- `GroundedAgent._validate` handles three shapes of provider output (typed, dict-ish, raw text).
-  Correct but slightly baroque; revisit if a second provider makes the branching worse.
-- Live latency is ~16s for one call. Unmeasured whether that is the model, the network, or
-  `gemini-3.5-flash` specifically. Worth checking before V0.4, where a plan means several
-  sequential calls.
+- `ToolUsingAgent._finalise` is now a rarely-taken fallback. If it never fires by V0.4, delete it
+  rather than carrying untested code.
+- `GroundedAgent._validate` handles three output shapes; revisit if a second provider worsens it.
+- No CI. Tests only run when someone runs them.
+- Tool outcomes are returned to the caller and logged, but not persisted — V0.3.
 
 ## Environment
 | Thing | State |
 |---|---|
 | Python | 3.14.4 |
 | Virtualenv | `.venv/` — `.venv/bin/pip install -e ".[dev]"` |
-| Installed | fastapi 0.141.1, pydantic 2.13.5, google-genai 2.22.0 |
-| `.env` | **exists with a working key** (gitignored) |
-| Docker / PostgreSQL | not installed — needed at V0.3 |
-| Git remote | SSH over **port 443** — port 22 is blocked on this network, see `bugs-log.md` |
-| GitHub | `OkayAnshul/AMOS` |
+| Installed | fastapi 0.141.1, pydantic 2.13.5, google-genai 2.22.0, httpx |
+| `.env` | exists with a working key (gitignored) |
+| Docker / PostgreSQL | **not installed — needed for V0.3** |
+| Git remote | SSH over **port 443** (port 22 blocked on this network) |
+| GitHub | `OkayAnshul/AMOS`, public |
 
 ## How To Run
 ```bash
 .venv/bin/python -m amos          # http://127.0.0.1:8000
 curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
-  -d '{"goal":"Explain idempotency in one paragraph."}' | jq
+  -d '{"goal":"What is 17% of 2340 plus 88?"}' | jq
 ```
 
 ## How To Test
 ```bash
-.venv/bin/python -m pytest                                   # 41 tests, no network
+.venv/bin/python -m pytest                                   # 117 tests, no network
 .venv/bin/mypy src && .venv/bin/ruff check src tests
-AMOS_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/live  # opt-in, real API
+AMOS_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/live  # opt-in, uses daily quota
 ```
 
 ## Exact Next Step
 
-**The advance gate is open and unmet.** Per `CLAUDE.md`, V0.2 does not start until the questions
-in `docs/interview/foundation.md` can be answered unaided. Anshul has not yet done the V0.1
-pre-read (`engineering/learning-log.md`).
+**Advance gate: unmet.** `docs/interview/foundation.md` (V0.1) and `docs/interview/agents.md`
+(V0.2) have not been worked through. Per `CLAUDE.md`, V0.3 waits on that.
 
-If the gate is being deliberately deferred, **begin V0.2 — Tool Registry**:
+If deferring again, **begin V0.3 — Persistence and Trace**:
 
-1. `git switch -c feat/v0.2-tool-registry`
-2. Build in order: `Tool` base (name, description, input/output schema, timeout, permissions) →
-   registry with decorator registration → schema export to Gemini function calling → bounded
-   agent loop → the three tools.
-3. Tools: `calculator` (pure), `http_get` (**domain allowlist** — N-11), `read_file` (sandboxed
-   path). All deterministic and reversible; no payments, no deletion, no sending.
-4. Security tests are not optional here: path traversal on `read_file`, off-allowlist URL on
-   `http_get`, hallucinated tool name, invalid arguments, loop cap.
-5. Write `docs/08-tool-specification.md` and `docs/13-security.md` — both are stubs whose
-   milestone has now arrived.
+1. `git switch -c feat/v0.3-persistence`
+2. **Install Docker first** — it is not on this machine. Then `docker compose up` with one
+   service: PostgreSQL 18 + pgvector (`pgvector/pgvector:pg18` or equivalent).
+3. Build in order: SQLAlchemy 2.0 async engine and session → Alembic baseline migration →
+   schema from `docs/05-data-model.md` (`runs`, `tasks`, `steps`, `llm_calls`, `tool_calls`) →
+   repository layer → persist what `AgentResult` already carries → `GET /v1/runs/{id}` →
+   idempotency key on submit.
+4. `AgentResult.llm_calls` and `.tool_outcomes` are **already shaped like the rows** — this
+   should be a serialisation change, not a redesign. If it turns into a redesign, the V0.1/V0.2
+   seams were wrong and that is worth writing down.
+5. Tests: transactional rollback fixtures, trace completeness, idempotent resubmit, migration
+   up/down.
+6. Write `docs/18-deployment.md` (stub whose milestone arrives).
 
-Full V0.2 specification and Definition of Done: `docs/19-roadmap.md`.
+Full V0.3 spec and Definition of Done: `docs/19-roadmap.md`.
