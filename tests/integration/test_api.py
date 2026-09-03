@@ -1,62 +1,88 @@
-"""API contract tests. No network: the agent is injected with a FakeProvider."""
+"""API contract tests for V0.2. No network: the agent uses FakeProvider."""
 
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
-from amos.agents.agent import GroundedAgent
+from amos.agents.tool_agent import ToolUsingAgent
 from amos.api.app import create_app
 from amos.config import Settings
 from amos.errors import ProviderRateLimitError, ProviderTimeoutError
 from amos.llm.fake import AlwaysFailsProvider, FakeProvider
+from amos.tools.base import ToolCall
+from amos.tools.builtin import CalculatorTool
+from amos.tools.registry import ToolRegistry
+from tests.conftest import valid_response_json
 
 
-def build_client(provider: object, **agent_kwargs: object) -> TestClient:
+def build_client(provider: object, **kwargs: object) -> TestClient:
     settings = Settings(gemini_api_key="test-key", env="test", log_level="WARNING")
-    agent = GroundedAgent(provider, **agent_kwargs)  # type: ignore[arg-type]
+    agent = ToolUsingAgent(provider, ToolRegistry([CalculatorTool()]), **kwargs)  # type: ignore[arg-type]
     return TestClient(create_app(settings, agent=agent))
 
 
-def test_health_endpoint(valid_json: str) -> None:
+def calc_call(expression: str) -> ToolCall:
+    return ToolCall(id="c1", name="calculator", arguments={"expression": expression})
+
+
+def test_health_reports_v02(valid_json: str) -> None:
     with build_client(FakeProvider([valid_json])) as client:
         response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    assert response.json()["version"] == "0.2.0"
 
 
-def test_submit_goal_returns_structured_result(valid_json: str) -> None:
+def test_goal_answered_without_tools(valid_json: str) -> None:
     with build_client(FakeProvider([valid_json])) as client:
-        response = client.post("/v1/goals", json={"goal": "What is the answer?"})
+        response = client.post("/v1/goals", json={"goal": "What is your name?"})
 
     assert response.status_code == 200
     body = response.json()
     assert body["response"]["answer"] == "42"
-    assert body["response"]["confidence"] == "high"
-    assert body["repair_count"] == 0
-    assert body["request_id"]
-    assert len(body["llm_calls"]) == 1
+    assert body["tool_outcomes"] == []
 
 
-def test_repair_is_visible_in_the_response(valid_json: str) -> None:
-    """The client can see that a repair happened — it is not hidden."""
-    with build_client(FakeProvider(["garbage", valid_json])) as client:
+def test_tool_execution_is_visible_in_the_response() -> None:
+    """The caller can see which tools ran, with what result and at what cost."""
+    provider = FakeProvider(
+        [[calc_call("2340 * 0.17")], valid_response_json(answer="397.8")]
+    )
+    with build_client(provider) as client:
+        response = client.post("/v1/goals", json={"goal": "What is 17% of 2340?"})
+
+    body = response.json()
+    assert response.status_code == 200
+    assert len(body["tool_outcomes"]) == 1
+    outcome = body["tool_outcomes"][0]
+    assert outcome["name"] == "calculator"
+    assert outcome["status"] == "ok"
+    assert outcome["output"]["result"] == pytest.approx(397.8)
+
+
+def test_tool_failure_is_reported_not_hidden() -> None:
+    provider = FakeProvider(
+        [
+            [ToolCall(id="x", name="no_such_tool", arguments={})],
+            valid_response_json(),
+        ]
+    )
+    with build_client(provider) as client:
         response = client.post("/v1/goals", json={"goal": "x"})
 
     assert response.status_code == 200
-    assert response.json()["repair_count"] == 1
+    assert response.json()["tool_outcomes"][0]["status"] == "not_found"
 
 
-def test_empty_goal_returns_422(valid_json: str) -> None:
-    with build_client(FakeProvider([valid_json])) as client:
-        response = client.post("/v1/goals", json={"goal": ""})
-    assert response.status_code == 422
+def test_runaway_tool_loop_returns_502() -> None:
+    provider = FakeProvider([[calc_call("1+1")]])  # never stops
+    with build_client(provider, max_iterations=3) as client:
+        response = client.post("/v1/goals", json={"goal": "x"})
 
-
-def test_missing_goal_field_returns_422(valid_json: str) -> None:
-    with build_client(FakeProvider([valid_json])) as client:
-        response = client.post("/v1/goals", json={})
-    assert response.status_code == 422
+    assert response.status_code == 502
+    body = response.json()
+    assert body["error"]["type"] == "ToolLoopExhaustedError"
+    assert body["error"]["details"]["iterations"] == 3
 
 
 @pytest.mark.parametrize(
@@ -66,7 +92,9 @@ def test_missing_goal_field_returns_422(valid_json: str) -> None:
         (ProviderRateLimitError("slow down"), 429),
     ],
 )
-def test_provider_errors_map_to_correct_status(error: Exception, expected_status: int) -> None:
+def test_provider_errors_map_to_correct_status(
+    error: Exception, expected_status: int
+) -> None:
     with build_client(AlwaysFailsProvider(error)) as client:
         response = client.post("/v1/goals", json={"goal": "x"})
 
@@ -74,24 +102,24 @@ def test_provider_errors_map_to_correct_status(error: Exception, expected_status
     assert response.json()["error"]["type"] == type(error).__name__
 
 
-def test_unrepairable_output_returns_502() -> None:
-    with build_client(FakeProvider(["garbage"]), max_repair_attempts=1) as client:
-        response = client.post("/v1/goals", json={"goal": "x"})
+@pytest.mark.parametrize("payload", [{"goal": ""}, {}, {"goal": "x" * 8001}])
+def test_invalid_requests_return_422(payload: dict[str, str], valid_json: str) -> None:
+    with build_client(FakeProvider([valid_json])) as client:
+        response = client.post("/v1/goals", json=payload)
+    assert response.status_code == 422
 
-    assert response.status_code == 502
-    assert response.json()["error"]["type"] == "OutputValidationError"
 
-
-def test_request_id_is_returned_in_header(valid_json: str) -> None:
+def test_request_id_is_returned(valid_json: str) -> None:
     with build_client(FakeProvider([valid_json])) as client:
         response = client.post("/v1/goals", json={"goal": "x"})
     assert response.headers["x-request-id"]
 
 
 def test_client_supplied_request_id_is_honoured(valid_json: str) -> None:
-    """Lets a caller correlate their logs with ours — and becomes the V0.9 trace id."""
     with build_client(FakeProvider([valid_json])) as client:
-        response = client.post("/v1/goals", json={"goal": "x"}, headers={"x-request-id": "abc123"})
+        response = client.post(
+            "/v1/goals", json={"goal": "x"}, headers={"x-request-id": "abc123"}
+        )
     assert response.headers["x-request-id"] == "abc123"
 
 

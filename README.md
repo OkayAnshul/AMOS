@@ -4,9 +4,10 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V0.1 shipped — runnable.** A typed agent API with provider abstraction,
-> schema-validated structured output and bounded repair. No database yet (by design, ADR-006).
-> See [`engineering/current-state.md`](engineering/current-state.md) for exactly where things stand.
+> **Status: V0.2 shipped — runnable.** An agent that selects and executes tools autonomously,
+> with validation, timeouts and permissions enforced in code. No database yet (by design,
+> ADR-006). See [`engineering/current-state.md`](engineering/current-state.md) for exactly where
+> things stand.
 
 ---
 
@@ -31,8 +32,8 @@ That principle has visible consequences:
 
 | V | Milestone | What you can honestly show if development stops here |
 |---|---|---|
-| **0.1 ✅** | **Grounded agent API** | **A typed, tested LLM service with provider abstraction and validated outputs** |
-| 0.2 | Tool registry | An agent that autonomously selects and executes validated tools |
+| 0.1 ✅ | Grounded agent API | A typed, tested LLM service with provider abstraction and validated outputs |
+| **0.2 ✅** | **Tool registry** | **An agent that autonomously selects and executes validated tools** |
 | 0.3 | Persistence + trace | "What exactly happened on this request?" — answerable for any run |
 | 0.4 | Planner / Executor | Goal decomposition into a durable task DAG with deterministic state |
 | 0.5 | RAG | A retrieval pipeline with citations and a measured recall@k |
@@ -86,8 +87,37 @@ Ask it something:
 ```bash
 curl -s -X POST localhost:8000/v1/goals \
   -H 'content-type: application/json' \
-  -d '{"goal":"Should AMOS use Redis or PostgreSQL SKIP LOCKED for its job queue?"}' | jq
+  -d '{"goal":"What is 17% of 2340 plus 88?"}' | jq
 ```
+
+It picks a tool, runs it, and shows you what it did:
+
+```json
+{
+  "response": {"answer": "485.8", "confidence": "high", "assumptions": [...]},
+  "tool_outcomes": [
+    {"name": "calculator", "status": "ok", "output": {"result": 485.8}, "latency_ms": 0}
+  ],
+  "total_tokens": 1149,
+  "latency_ms": 2120
+}
+```
+
+Ask it about its own design — it will read the file:
+
+```bash
+-d '{"goal":"Read docs/03-architecture-decisions.md and tell me why AMOS chose pgvector."}'
+```
+
+Ask it to escape its sandbox — it cannot:
+
+```bash
+-d '{"goal":"Read ../../../../etc/passwd"}'
+# -> read_file: invalid_args, "resolves outside the permitted directory"
+```
+
+<details>
+<summary>V0.1 example (no tools)</summary>
 
 You get the answer plus how it was produced — token cost, latency, and whether the model had to
 be corrected:
@@ -110,12 +140,20 @@ be corrected:
 }
 ```
 
+</details>
+
 Interactive API docs at <http://127.0.0.1:8000/docs>.
+
+### ⚠️ Free-tier quota
+
+The Gemini free tier is **20 requests per day, per model** — not a per-minute rate limit. A
+tool-using goal costs 2 calls. `AMOS_LLM_MODEL` defaults to `gemini-3.5-flash-lite` because
+quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest        # 41 tests, no network
+.venv/bin/python -m pytest        # 117 tests, no network
 .venv/bin/mypy src                # strict
 .venv/bin/ruff check src tests
 ```
@@ -138,10 +176,11 @@ src/amos/
   errors.py         typed error hierarchy
   observability.py  structured JSON logs + request id
   llm/              LLMProvider protocol, GeminiProvider, FakeProvider
-  agents/           AgentResponse schema + the validate-and-repair loop
+  tools/            Tool ABC, registry, calculator / read_file / http_get
+  agents/           validate-and-repair loop + bounded tool loop
   api/              FastAPI app, error -> status mapping
 tests/              unit, integration, live (opt-in)
-docs/               architecture and decisions (11 written, 13 stubs)
+docs/               architecture and decisions (14 written, 10 stubs)
 engineering/        current-state, session log, learning log, decisions, bugs, experiments
 CLAUDE.md           working agreement and session protocol
 ```

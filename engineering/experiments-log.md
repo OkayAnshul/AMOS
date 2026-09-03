@@ -51,3 +51,51 @@ before deciding the loop is dead code.
 **Note on latency:** ~16s for a single call is higher than expected and currently unattributed
 (model? network? this campus connection?). Recorded as technical debt in `current-state.md`;
 worth attributing before V0.4 makes calls sequential.
+
+---
+
+## 2026-09-03 — What is the Gemini free tier actually limited to?
+**Milestone:** V0.2
+**Hypothesis:** ~15 requests/minute, per every published summary and per AMOS's own error text.
+**Method:** ran the live tool tests and demos until a 429 arrived, then read the full quota
+violation in the error body rather than the status code alone.
+**Result:**
+```
+quotaId:    GenerateRequestsPerDayPerProjectPerModel-FreeTier
+model:      gemini-3.5-flash
+limit:      20
+retryDelay: 23s
+```
+**Conclusion:** **20 requests per DAY per model.** Not per minute. The published guidance was
+wrong, and AMOS's own error message repeated it back.
+**Decision affected:**
+- `AMOS_LLM_MODEL` now defaults to `gemini-3.5-flash-lite` — quota is per model, so development
+  no longer consumes the allowance reserved for demos.
+- The redundant `_finalise` call was removed. At 20/day a wasted call per goal is a third of
+  the budget, which promoted it from optimisation to correctness.
+- The rate-limit error now carries the provider's own quota text and retry delay.
+**Also found:** `gemini-2.5-flash` returns **404 NOT_FOUND** — no longer served, despite being
+recorded as the fallback model in Phase 0.
+
+---
+
+## 2026-09-03 — Can tools and `response_schema` be sent in the same request?
+**Milestone:** V0.2
+**Hypothesis:** no — assumed while writing the tool loop, and (wrongly) annotated as verified.
+**Method:** one request with both `tools` and `response_schema` set.
+**Result:** **accepted.** The model returned a function call, with the schema still configured.
+**Conclusion:** the assumption was false and had cost one API call per goal.
+**Decision affected:** schema requested on every loop turn; measured 3 calls → 2 calls,
+8.4s → 2.8s end to end.
+
+---
+
+## 2026-09-03 — Does the repair loop ever fire? (running)
+**Milestone:** V0.1–V0.2
+**Result so far:** `repair_count = 0` across every real call to date (n≈8).
+**Conclusion:** still inconclusive, and now less likely to fire, since structured output is
+requested on every turn. Keep recording. Revisit at V0.4, where longer outputs make truncation
+(`MAX_TOKENS`) materially more likely — the failure mode the loop most plausibly protects
+against.
+**Latency note:** the ~16s/call recorded at V0.1 was network variance, not a property of the
+system. `gemini-3.5-flash-lite` measures ~1s/call; a full 2-call tool goal completes in ~2.1s.

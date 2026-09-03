@@ -45,3 +45,36 @@ without an API key.
 *Context:* the repo becomes public evidence for placements.
 *Decision:* private now; public when V0.1 runs with passing tests.
 *Why:* a visitor's first impression should be a working project, not an empty `src/`.
+
+---
+
+## 2026-09-03 — Session 3 (V0.2)
+
+No new ADRs; V0.2 implements existing decisions. Smaller decisions worth recording:
+
+**`Tool` is an ABC while `LLMProvider` is a Protocol.**
+*Context:* apparent inconsistency in how the two abstractions are expressed.
+*Decision:* Protocol for providers, ABC for tools.
+*Why:* providers share a shape (nothing inherited → structural typing); tools share behaviour
+that must not be skipped (validation, timeouts). Placing that in a concrete `execute()` means a
+tool has no opportunity to omit it.
+*Reconsider if:* a tool ever legitimately needs to bypass `execute()` — which would itself be
+evidence the base class is wrong.
+
+**Tool failures are returned as data, not raised.**
+*Decision:* `Tool.execute()` never raises; every path returns a `ToolOutcome`.
+*Why:* the model must be told what went wrong to correct itself. An exception unwinds the loop
+and turns a recoverable mistake into a failed request. Termination is still guaranteed by the
+iteration cap, not by failures propagating.
+
+**`WRITE`/`DESTRUCTIVE` permissions refused by the registry.**
+*Decision:* `ToolRegistry.register()` raises on them.
+*Why:* naming the boundary in an enum and enforcing it in code is more honest than leaving it
+unmentioned, and makes crossing it a deliberate act rather than an oversight.
+*Reconsider if:* the human-approval workflow in `docs/13-security.md` is built.
+
+**Default model changed to `gemini-3.5-flash-lite`.**
+*Context:* free-tier quota measured at **20 requests/day per model**, not 15/minute.
+*Decision:* lite for development; `gemini-3.5-flash` reserved for demos.
+*Why:* quota is per model, so this genuinely doubles the daily budget.
+*Reconsider if:* lite's tool-selection quality proves materially worse — check before V0.7.

@@ -56,3 +56,41 @@ class OutputValidationError(AmosError):
         super().__init__(message, details=details)
         self.attempts = attempts
         self.last_error = last_error
+
+
+class ToolError(AmosError):
+    """Base for tool failures."""
+
+
+class ToolNotFoundError(ToolError):
+    """The model asked for a tool that does not exist.
+
+    A hallucinated tool name is expected behaviour, not an exceptional one: the
+    model is told what exists and sometimes invents something else. It must be a
+    recoverable, typed failure the model can be told about — never a crash.
+    """
+
+
+class ToolValidationError(ToolError):
+    """Tool arguments failed schema validation, before any execution."""
+
+
+class ToolTimeoutError(ToolError):
+    """A tool exceeded its declared timeout."""
+
+
+class ToolPermissionError(ToolError):
+    """A tool was called by an agent whose allowlist does not include it."""
+
+
+class ToolLoopExhaustedError(AmosError):
+    """The agent hit its tool-call iteration cap without producing an answer.
+
+    An unbounded tool loop is a runaway cost and a hung request. The cap is a
+    hard guarantee enforced by code, not a suggestion in a prompt.
+    """
+
+    def __init__(self, message: str, *, iterations: int, tool_calls: int) -> None:
+        super().__init__(message, details={"iterations": iterations, "tool_calls": tool_calls})
+        self.iterations = iterations
+        self.tool_calls = tool_calls

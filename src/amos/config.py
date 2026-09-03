@@ -26,10 +26,21 @@ class Settings(BaseSettings):
     )
 
     gemini_api_key: str = Field(default="", description="Gemini API key")
-    llm_model: str = Field(default="gemini-3.5-flash")
+    llm_model: str = Field(
+        default="gemini-3.5-flash-lite",
+        description=(
+            "Free-tier quota is PER MODEL and daily (20/day for gemini-3.5-flash). "
+            "Defaulting to lite preserves the flash quota for demos."
+        ),
+    )
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     llm_max_repair_attempts: int = Field(default=2, ge=0, le=5)
     llm_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+
+    agent_max_iterations: int = Field(
+        default=5, ge=1, le=15, description="Hard cap on tool-calling rounds per goal."
+    )
+    tool_sandbox_root: str = Field(default=".", description="Directory read_file is confined to.")
 
     env: str = Field(default="development")
     log_level: str = Field(default="INFO")

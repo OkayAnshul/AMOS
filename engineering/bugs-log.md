@@ -96,3 +96,48 @@ requires *running the app*, not only running its tests, precisely because the tw
 different import paths.
 **Test added:** none. The right check is the demo step in the Definition of Done, which is what
 caught it.
+
+---
+
+## 2026-09-03 — 400 INVALID_ARGUMENT: "Function call is missing a thought_signature"
+**Milestone:** V0.2
+**Symptom:** the first live tool-loop test failed on the *second* round trip. Single-turn tool
+calls worked; sending the model's tool call back with a result was rejected.
+**Expected:** the conversation continues and the model answers using the tool result.
+**Root cause:** Gemini 3.x attaches an encrypted `thought_signature` to function-call parts and
+requires it returned **verbatim**. AMOS's provider-agnostic `Turn` reconstructed the call from
+`ToolCall(id, name, arguments)` — semantically identical, signature absent. The abstraction was
+lossy in a way the API treats as fatal.
+**Fix:** `Turn.provider_state` — an opaque field holding the vendor's original content object,
+which only the producing provider interprets. `_to_contents` replays it verbatim for model
+turns. The agent loop never reads it.
+**How it was found:** the live tool test. **Unit tests could not have caught this** — the fake
+provider has no signatures to lose, so every scripted test passed.
+**Lesson:** a provider-agnostic abstraction will eventually meet vendor state that cannot be
+represented generically. The answer is an explicit opaque escape hatch, not a leaky
+approximation — and not pretending the state does not exist. ADR-005 predicted this ("provider-
+specific features need explicit escape hatches"); it arrived one milestone later.
+Second lesson: **fakes cannot test what they do not model.** Some things only the live API
+reveals, which is the argument for keeping a live smoke test even when it must be opt-in.
+**Test added:** `test_real_gemini_uses_the_calculator_tool` (live, opt-in).
+
+---
+
+## 2026-09-03 — Wasted API call per goal from an unverified "verified" claim
+**Milestone:** V0.2
+**Symptom:** every tool-using goal cost 3 LLM calls where 2 would do.
+**Expected:** 2.
+**Root cause:** `_finalise()` existed because its docstring stated Gemini "does not accept a
+response schema and tool declarations in the same request", annotated *"Verified against the
+API — the constraint is real, not a design preference."* **It had never been tested.** The
+combination is accepted. Requesting the schema on every turn means a turn that stops calling
+tools already carries the validated answer.
+**Fix:** pass `response_schema=AgentResponse` alongside `tools` on every loop iteration;
+`_finalise` demoted to a fallback for when the model returns something unparseable.
+**How it was found:** investigating the free-tier quota. With 20 requests/day, a wasted call
+per goal is a third of the budget — which is what made it worth checking at all.
+**Lesson:** the damage was not the wrong belief, it was **writing it down as verified**. A
+confident annotation stops the next reader — including the author — from questioning it. Do not
+write "verified" for something assumed; say "assumed, not tested" and it will get checked.
+**Test added:** `test_no_extra_call_when_the_tool_turn_returns_a_valid_answer`,
+`test_schema_is_requested_alongside_tools`.

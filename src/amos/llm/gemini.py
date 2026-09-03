@@ -21,7 +21,8 @@ from amos.errors import (
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
-from amos.llm.base import LLMRequest, LLMResponse
+from amos.llm.base import LLMRequest, LLMResponse, Turn
+from amos.tools.base import ToolCall
 
 
 class GeminiProvider:
@@ -41,6 +42,24 @@ class GeminiProvider:
         if request.response_schema is not None:
             config.response_mime_type = "application/json"
             config.response_schema = request.response_schema
+        if request.tools:
+            config.tools = [
+                types.Tool(
+                    function_declarations=[
+                        types.FunctionDeclaration(
+                            name=spec.name,
+                            description=spec.description,
+                            # The Pydantic-generated JSON Schema goes straight to
+                            # the model, so validator and declaration cannot drift.
+                            parameters_json_schema=spec.parameters,
+                        )
+                        for spec in request.tools
+                    ]
+                )
+            ]
+            # AMOS validates arguments and enforces timeouts itself; the SDK
+            # executing functions on our behalf would bypass both.
+            config.automatic_function_calling = types.AutomaticFunctionCallingConfig(disable=True)
 
         started = time.perf_counter()
         try:
@@ -49,7 +68,7 @@ class GeminiProvider:
             response = await asyncio.wait_for(
                 self._client.aio.models.generate_content(
                     model=self._model,
-                    contents=request.prompt,
+                    contents=_to_contents(request.turns()),
                     config=config,
                 ),
                 timeout=timeout,
@@ -74,8 +93,21 @@ class GeminiProvider:
         if response.candidates:
             finish_reason = str(response.candidates[0].finish_reason)
 
+        tool_calls = [
+            ToolCall(
+                id=call.id or f"call_{index}",
+                name=call.name or "",
+                arguments=dict(call.args or {}),
+            )
+            for index, call in enumerate(response.function_calls or [])
+        ]
+
+        raw_content = response.candidates[0].content if response.candidates else None
+
         return LLMResponse(
-            text=response.text or "",
+            text=_safe_text(response),
+            tool_calls=tool_calls,
+            provider_state=raw_content,
             parsed=response.parsed if isinstance(response.parsed, BaseModel) else None,
             model=self._model,
             provider=self.name,
@@ -91,10 +123,70 @@ class GeminiProvider:
         status = getattr(exc, "code", None)
         message = str(exc)
         if status == 429:
+            # The free tier's binding limit is a DAILY per-model quota
+            # (20/day for gemini-3.5-flash), not a per-minute one. The
+            # message carries the provider's own text because it names the
+            # exact quota and retry delay.
             return ProviderRateLimitError(
-                "Gemini rate limit exceeded (free tier is ~15 requests/minute)",
+                f"Gemini quota exceeded. Free-tier quotas are per-model and daily. {message}",
                 details={"status": status},
             )
         if status in (401, 403):
             return ProviderAuthError("Gemini rejected the API key", details={"status": status})
         return ProviderError(f"Gemini client error: {message}", details={"status": status})
+
+
+def _safe_text(response: types.GenerateContentResponse) -> str:
+    """`.text` raises when the response holds only function calls."""
+    try:
+        return response.text or ""
+    except ValueError, AttributeError:
+        return ""
+
+
+def _to_contents(turns: list[Turn]) -> list[types.Content]:
+    """Translate AMOS turns into Gemini contents.
+
+    Note the role on a tool-result turn is "user", not "tool" — Gemini expects
+    function responses to come from the user role. Confirmed against the API,
+    not assumed.
+    """
+    contents: list[types.Content] = []
+    for turn in turns:
+        if turn.role == "tool":
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_function_response(
+                            name=outcome.name, response=outcome.to_model_payload()
+                        )
+                        for outcome in turn.tool_outcomes
+                    ],
+                )
+            )
+            continue
+
+        # Replay the model's own content verbatim when we have it. Gemini 3.x
+        # rejects reconstructed function-call parts because they lack the
+        # thought_signature, which is not exposed as a reproducible value.
+        if turn.role == "model" and isinstance(turn.provider_state, types.Content):
+            contents.append(turn.provider_state)
+            continue
+
+        parts: list[types.Part] = []
+        if turn.text:
+            parts.append(types.Part(text=turn.text))
+        for call in turn.tool_calls:
+            parts.append(
+                types.Part(
+                    function_call=types.FunctionCall(
+                        id=call.id, name=call.name, args=call.arguments
+                    )
+                )
+            )
+        if parts:
+            contents.append(
+                types.Content(role="model" if turn.role == "model" else "user", parts=parts)
+            )
+    return contents
