@@ -4,9 +4,9 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: Phase 0 — architecture and roadmap.** No application code yet. The first
-> runnable milestone is V0.1. See [`engineering/current-state.md`](engineering/current-state.md)
-> for exactly where things stand.
+> **Status: V0.1 shipped — runnable.** A typed agent API with provider abstraction,
+> schema-validated structured output and bounded repair. No database yet (by design, ADR-006).
+> See [`engineering/current-state.md`](engineering/current-state.md) for exactly where things stand.
 
 ---
 
@@ -18,20 +18,20 @@ documented. Stop at any version and there is still a real project here.
 
 That principle has visible consequences:
 
-- There is no `src/` yet, because there is no code yet. Empty directories for unbuilt modules
-  would be a lie about progress.
-- Two thirds of `docs/` are one-line stubs naming the milestone that will write them. A
+- `src/` contains only what V0.1 built. Directories for unbuilt modules would be a lie about
+  progress, so each appears at the milestone that fills it.
+- Most of `docs/` is one-line stubs naming the milestone that will write them. A
   chunking-strategy document written before anything has been embedded would be inventing
   decisions, not recording them.
-- No Docker, no database, no dependencies. They arrive at the milestone that needs them and
-  not before — each justified by an ADR in
+- No Docker and no database. They arrive at V0.3, when durable runs are the milestone — each
+  justified by an ADR in
   [`docs/03-architecture-decisions.md`](docs/03-architecture-decisions.md).
 
 ## Roadmap at a glance
 
 | V | Milestone | What you can honestly show if development stops here |
 |---|---|---|
-| 0.1 | Grounded agent API | A typed, tested LLM service with provider abstraction and validated outputs |
+| **0.1 ✅** | **Grounded agent API** | **A typed, tested LLM service with provider abstraction and validated outputs** |
 | 0.2 | Tool registry | An agent that autonomously selects and executes validated tools |
 | 0.3 | Persistence + trace | "What exactly happened on this request?" — answerable for any run |
 | 0.4 | Planner / Executor | Goal decomposition into a durable task DAG with deterministic state |
@@ -71,16 +71,79 @@ Not used, and not claimed: Kubernetes, Kafka, Celery, microservices.
 
 ## Running it
 
-Nothing to run yet — V0.1 is the first executable milestone. Setup instructions land with it,
-and `engineering/current-state.md` carries the current *How To Run* and *How To Test* at all
-times.
+Requires Python 3.14+ and a free Gemini API key from <https://aistudio.google.com/apikey>.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+
+cp .env.example .env        # then add your key to AMOS_GEMINI_API_KEY
+.venv/bin/python -m amos    # serves on http://127.0.0.1:8000
+```
+
+Ask it something:
+
+```bash
+curl -s -X POST localhost:8000/v1/goals \
+  -H 'content-type: application/json' \
+  -d '{"goal":"Should AMOS use Redis or PostgreSQL SKIP LOCKED for its job queue?"}' | jq
+```
+
+You get the answer plus how it was produced — token cost, latency, and whether the model had to
+be corrected:
+
+```json
+{
+  "request_id": "33e066d4fa3d4265",
+  "response": {
+    "answer": "PostgreSQL SKIP LOCKED",
+    "reasoning": "...",
+    "assumptions": ["AMOS already uses or has access to a PostgreSQL database."],
+    "confidence": "high",
+    "caveats": ["If AMOS requires extreme throughput ... Redis would be a better fit."]
+  },
+  "llm_calls": [{"provider": "gemini", "model": "gemini-3.5-flash",
+                 "prompt_tokens": 103, "output_tokens": 259, "repair_attempt": 0}],
+  "repair_count": 0,
+  "total_tokens": 362,
+  "latency_ms": 16743
+}
+```
+
+Interactive API docs at <http://127.0.0.1:8000/docs>.
+
+## Testing
+
+```bash
+.venv/bin/python -m pytest        # 41 tests, no network
+.venv/bin/mypy src                # strict
+.venv/bin/ruff check src tests
+```
+
+Tests never call the real API — the free tier is ~15 RPM and non-deterministic, so a network
+dependency would make the suite slow and flaky. `FakeProvider` scripts the model's responses,
+including the malformed ones that exercise the repair loop.
+
+One live smoke test is opt-in:
+
+```bash
+AMOS_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/live -v
+```
 
 ## Repository layout
 
 ```
-docs/          architecture and decisions (7 written, 17 stubs awaiting their milestone)
-engineering/   current-state, session log, learning log, decisions, bugs, experiments
-CLAUDE.md      working agreement and session protocol
+src/amos/
+  config.py         settings from env, fails fast on a missing key
+  errors.py         typed error hierarchy
+  observability.py  structured JSON logs + request id
+  llm/              LLMProvider protocol, GeminiProvider, FakeProvider
+  agents/           AgentResponse schema + the validate-and-repair loop
+  api/              FastAPI app, error -> status mapping
+tests/              unit, integration, live (opt-in)
+docs/               architecture and decisions (11 written, 13 stubs)
+engineering/        current-state, session log, learning log, decisions, bugs, experiments
+CLAUDE.md           working agreement and session protocol
 ```
 
 ## A note on authorship

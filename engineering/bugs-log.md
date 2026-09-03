@@ -52,3 +52,47 @@ timed out, proving the network was up and the block was port-specific.
 → auth) instead of assuming the topmost one. HTTPS with the `gh` token is the alternative fix.
 **Test added:** none — environmental, not a code defect. Recorded in `current-state.md` so a
 future session on a different network does not rediscover it.
+
+---
+
+## 2026-09-03 — `TypeError: log_event() got multiple values for argument 'message'`
+**Milestone:** V0.1
+**Symptom:** every API error path returned a `TypeError` instead of the intended error envelope.
+Three integration tests failed.
+**Expected:** the handler logs the error and returns a JSON envelope with the right status.
+**Root cause:** `log_event(logger, message, **fields)` takes `message` positionally. The error
+handler called it with `message=exc.message` as a keyword, colliding with the positional
+parameter. A signature collision, not a logic error.
+**Fix:** renamed the structured field to `error_message` (`src/amos/api/app.py`).
+**How it was found:** `tests/integration/test_api.py` — the error-path tests. Notably the happy
+path was unaffected, so **manual testing would have missed this entirely**: the bug lived only
+in the paths a human demo never exercises.
+**Lesson:** a `**kwargs` logging helper silently creates collisions with its own positional
+parameters. Prefix-namespacing structured fields (`error_message`, not `message`) avoids the
+whole class. Test error paths as deliberately as happy paths.
+**Test added:** already existed — `test_provider_errors_map_to_correct_status`,
+`test_unrepairable_output_returns_502`.
+
+---
+
+## 2026-09-03 — `python -m amos` fails with ModuleNotFoundError despite pip reporting it installed
+**Milestone:** V0.1
+**Symptom:** `pip show amos` reported version 0.1.0 installed; `import amos` raised
+`ModuleNotFoundError`. Tests passed the whole time.
+**Expected:** an editable install makes the package importable.
+**Root cause:** with a `src/` layout, hatchling needs an explicit editable target. Only
+`[tool.hatch.build.targets.wheel]` was configured, so the editable install produced dist-info
+metadata but no path hook. Tests passed because pytest was using
+`pythonpath = ["src"]` from `pyproject.toml` — masking the broken install completely.
+**Fix:**
+```toml
+[tool.hatch.build.targets.editable]
+dev-mode-dirs = ["src"]
+```
+**How it was found:** running the app for the demo. **The test suite could never have caught
+it** — pytest's own `pythonpath` bypassed the mechanism that was broken.
+**Lesson:** a green test suite does not prove the application starts. Definition of Done
+requires *running the app*, not only running its tests, precisely because the two can use
+different import paths.
+**Test added:** none. The right check is the demo step in the Definition of Done, which is what
+caught it.
