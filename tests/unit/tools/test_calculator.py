@@ -52,15 +52,13 @@ async def test_arithmetic_is_correct(
         "eval('1+1')",
         "().__class__.__bases__[0]",
         "globals()",
-        "x + 1",                    # bare name
-        "[1,2,3][0]",               # subscript
+        "x + 1",  # bare name
+        "[1,2,3][0]",  # subscript
         "lambda: 1",
         "print('hi')",
     ],
 )
-async def test_code_execution_is_rejected(
-    calculator: CalculatorTool, malicious: str
-) -> None:
+async def test_code_execution_is_rejected(calculator: CalculatorTool, malicious: str) -> None:
     """Not 'the prompt discourages it' — the AST walker cannot evaluate it."""
     outcome = await calculator.execute(call(malicious))
     assert outcome.status is ToolStatus.INVALID_ARGS
@@ -103,3 +101,12 @@ async def test_missing_argument_is_invalid_args(calculator: CalculatorTool) -> N
     outcome = await calculator.execute(ToolCall(id="c", name="calculator", arguments={}))
     assert outcome.status is ToolStatus.INVALID_ARGS
     assert "expression" in (outcome.error or "")
+
+
+async def test_outcome_records_the_arguments(calculator: CalculatorTool) -> None:
+    """Carried through on success and failure alike, so the trace is complete."""
+    ok = await calculator.execute(call("2+2"))
+    assert ok.arguments == {"expression": "2+2"}
+
+    bad = await calculator.execute(call("open('/etc/passwd')"))
+    assert bad.arguments == {"expression": "open('/etc/passwd')"}

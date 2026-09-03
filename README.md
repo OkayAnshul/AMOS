@@ -4,10 +4,9 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V0.2 shipped — runnable.** An agent that selects and executes tools autonomously,
-> with validation, timeouts and permissions enforced in code. No database yet (by design,
-> ADR-006). See [`engineering/current-state.md`](engineering/current-state.md) for exactly where
-> things stand.
+> **Status: V0.3 shipped — runnable.** An agent that uses tools, records everything it does, and
+> can tell you exactly what happened on any past request. See
+> [`engineering/current-state.md`](engineering/current-state.md) for exactly where things stand.
 
 ---
 
@@ -33,8 +32,8 @@ That principle has visible consequences:
 | V | Milestone | What you can honestly show if development stops here |
 |---|---|---|
 | 0.1 ✅ | Grounded agent API | A typed, tested LLM service with provider abstraction and validated outputs |
-| **0.2 ✅** | **Tool registry** | **An agent that autonomously selects and executes validated tools** |
-| 0.3 | Persistence + trace | "What exactly happened on this request?" — answerable for any run |
+| 0.2 ✅ | Tool registry | An agent that autonomously selects and executes validated tools |
+| **0.3 ✅** | **Persistence + trace** | **"What exactly happened on this request?" — answerable for any run** |
 | 0.4 | Planner / Executor | Goal decomposition into a durable task DAG with deterministic state |
 | 0.5 | RAG | A retrieval pipeline with citations and a measured recall@k |
 | 0.6 | Memory tiers | Recalls user facts and prior run outcomes across sessions |
@@ -65,8 +64,8 @@ it. See [`docs/02-system-architecture.md`](docs/02-system-architecture.md).
 
 ## Stack
 
-Python 3.14 · FastAPI · Pydantic v2 · SQLAlchemy 2.0 + Alembic (V0.3) · PostgreSQL + pgvector
-(V0.3/V0.5) · `google-genai` / Gemini · pytest · Docker Compose (V0.3).
+Python 3.14 · FastAPI · Pydantic v2 · SQLAlchemy 2.0 async + Alembic · PostgreSQL 18 + pgvector
+· `google-genai` / Gemini · pytest · podman/Docker Compose.
 
 Not used, and not claimed: Kubernetes, Kafka, Celery, microservices.
 
@@ -78,9 +77,16 @@ Requires Python 3.14+ and a free Gemini API key from <https://aistudio.google.co
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 
-cp .env.example .env        # then add your key to AMOS_GEMINI_API_KEY
-.venv/bin/python -m amos    # serves on http://127.0.0.1:8000
+cp .env.example .env               # then add your key to AMOS_GEMINI_API_KEY
+
+podman-compose up -d               # or: docker compose up -d
+.venv/bin/alembic upgrade head
+
+.venv/bin/python -m amos           # serves on http://127.0.0.1:8000
 ```
+
+The database is optional — without `AMOS_DATABASE_URL` everything works except the trace
+endpoint, which returns a 503 saying so.
 
 Ask it something:
 
@@ -142,6 +148,39 @@ be corrected:
 
 </details>
 
+Then ask what actually happened:
+
+```bash
+RUN=$(curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
+  -d '{"goal":"What is 12% of 500?"}' | jq -r .run_id)
+
+curl -s localhost:8000/v1/runs/$RUN | jq
+```
+
+```json
+{
+  "status": "COMPLETED",
+  "goal": "What is 12% of 500?",
+  "result": {"answer": "60", "reasoning": "Calculated 12% of 500 ...", "confidence": "high"},
+  "llm_calls": [
+    {"provider": "gemini", "model": "gemini-3.5-flash-lite",
+     "prompt_tokens": 467, "output_tokens": 22, "latency_ms": 5429},
+    {"provider": "gemini", "model": "gemini-3.5-flash-lite",
+     "prompt_tokens": 522, "output_tokens": 70, "latency_ms": 6501}
+  ],
+  "tool_calls": [
+    {"tool_name": "calculator", "arguments": {"expression": "500 * 0.12"},
+     "status": "ok", "output": {"result": 60.0}}
+  ],
+  "total_tokens": 1081
+}
+```
+
+Reconstructed from the database alone — it answers for runs this process never saw.
+
+Retry safely with an `idempotency-key` header: the same key returns the original run instead of
+re-running and re-charging.
+
 Interactive API docs at <http://127.0.0.1:8000/docs>.
 
 ### ⚠️ Free-tier quota
@@ -153,7 +192,7 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest        # 117 tests, no network
+.venv/bin/python -m pytest        # 136 tests; 118 pass + 18 skip with no database
 .venv/bin/mypy src                # strict
 .venv/bin/ruff check src tests
 ```
@@ -178,9 +217,11 @@ src/amos/
   llm/              LLMProvider protocol, GeminiProvider, FakeProvider
   tools/            Tool ABC, registry, calculator / read_file / http_get
   agents/           validate-and-repair loop + bounded tool loop
-  api/              FastAPI app, error -> status mapping
+  database/         models, async engine, repository
+  api/              FastAPI app, run service, error -> status mapping
+migrations/         Alembic
 tests/              unit, integration, live (opt-in)
-docs/               architecture and decisions (14 written, 10 stubs)
+docs/               architecture and decisions (15 written, 9 stubs)
 engineering/        current-state, session log, learning log, decisions, bugs, experiments
 CLAUDE.md           working agreement and session protocol
 ```

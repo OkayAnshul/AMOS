@@ -78,3 +78,36 @@ unmentioned, and makes crossing it a deliberate act rather than an oversight.
 *Decision:* lite for development; `gemini-3.5-flash` reserved for demos.
 *Why:* quota is per model, so this genuinely doubles the daily budget.
 *Reconsider if:* lite's tool-selection quality proves materially worse — check before V0.7.
+
+---
+
+## 2026-09-03 — Session 4 (V0.3)
+
+No new ADRs. Implementation decisions:
+
+**Run row written before execution, updated after.**
+*Why:* a crash mid-run still leaves evidence it was attempted — exactly the runs worth
+investigating. Writing afterwards would lose them entirely.
+
+**Execution happens outside any database transaction.**
+*Why:* an LLM call takes seconds and a transaction holds a pooled connection for its lifetime.
+With `pool_size=5`, six concurrent goals would deadlock waiting for connections while doing
+nothing but network I/O. Three short transactions with the slow work between them.
+
+**`run_id` denormalised onto `llm_calls` and `tool_calls`.**
+*Why:* trace assembly is the hottest read in the system; this makes it one indexed filter per
+table rather than a walk through `runs → steps → children`.
+*Cost:* a redundant column that must stay consistent.
+
+**Persistence is optional; the app runs without a database.**
+*Why:* "every milestone is runnable" has to survive V0.3. Without `AMOS_DATABASE_URL` the app
+serves goals and `/v1/runs/{id}` returns 503 with an explanation. 118 of 136 tests pass with no
+container.
+*Reconsider if:* a later milestone genuinely cannot function without persistence — V0.8's worker
+probably cannot, and that should be an explicit decision rather than a drift.
+
+**Podman rather than Docker, for now.**
+*Context:* neither installed; pgvector is not in Arch's repos, so a container is the clean path.
+*Decision:* podman — rootless, no daemon, no group membership requiring a re-login.
+*Consequence:* `compose.yaml` is written for both but **verified only on podman**.
+`docs/18-deployment.md` states this rather than implying Docker was tested.

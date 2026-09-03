@@ -24,7 +24,7 @@ def call(url: str) -> ToolCall:
 @pytest.mark.parametrize(
     "url",
     [
-        "http://docs.python.org/3/",          # not https
+        "http://docs.python.org/3/",  # not https
         "file:///etc/passwd",
         "ftp://docs.python.org/",
         "gopher://docs.python.org/",
@@ -40,7 +40,7 @@ async def test_non_https_schemes_are_rejected(tool: HttpGetTool, url: str) -> No
     [
         "https://evil.example.com/",
         "https://attacker.net/payload",
-        "https://evil-github.com/",   # would pass a naive endswith("github.com")
+        "https://evil-github.com/",  # would pass a naive endswith("github.com")
         "https://github.com.evil.net/",
     ],
 )

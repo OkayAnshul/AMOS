@@ -13,7 +13,7 @@ demo does not go on a resume.**
 
 ## Current status
 
-**V0.2 shipped.** Two claims are evidenced. Everything below them remains unbuilt and unclaimable.
+**V0.3 shipped.** Three claims are evidenced. Everything below them remains unbuilt and unclaimable.
 
 ## Evidence table
 
@@ -21,7 +21,7 @@ demo does not go on a resume.**
 |---|---|---|---|---|---|
 | Typed LLM service with provider abstraction and validated structured output | V0.1 | `src/amos/llm/base.py`, `src/amos/agents/agent.py`, `src/amos/api/app.py` | 41 tests, `tests/unit/test_agent_repair.py` | `POST /v1/goals` | ✅ **shipped** |
 | Tool-using agent with schema-validated arguments, timeouts and permission allowlists | V0.2 | `src/amos/tools/**`, `src/amos/agents/tool_agent.py` | 76 tool/agent tests | `POST /v1/goals` with a tool-requiring goal | ✅ **shipped** |
-| Durable execution history with full request tracing and idempotent submission | V0.3 | — | — | — | ⬜ not built |
+| Durable execution history with full request tracing and idempotent submission | V0.3 | `src/amos/database/**`, `src/amos/api/persistence.py` | 18 DB integration tests | `GET /v1/runs/{id}` | ✅ **shipped** |
 | Goal decomposition into a persisted task DAG with enforced state machine and bounded retries | V0.4 | — | — | — | ⬜ not built |
 | Retrieval pipeline with citation grounding and measured recall@k | V0.5 | — | — | — | ⬜ not built |
 | Tiered memory: semantic, episodic and working stores | V0.6 | — | — | — | ⬜ not built |
@@ -169,3 +169,61 @@ model output: path containment is checked *after* resolution so symlinks cannot 
 One agent — **not multi-agent**. No authentication or audit trail; **not safe to expose
 publicly**. The security work is defence of a single-user local tool, not a reviewed production
 posture.
+
+
+---
+
+### V0.3 — Persistence and Trace
+
+**What was implemented:** Durable recording of every run, step, LLM call and tool call in
+PostgreSQL, with an endpoint that reconstructs the complete execution history of any past run
+from stored rows alone, and idempotency keys that make a retried submission safe.
+
+**Evidence (files):**
+- `src/amos/database/models.py` — schema; `run_id` denormalised onto child tables for one-filter
+  trace assembly
+- `src/amos/database/repository.py` — persistence isolated from the domain
+- `src/amos/database/engine.py` — async engine, pooling, explicit commit/rollback scope
+- `src/amos/api/persistence.py` — run recorded before execution, executed outside the
+  transaction, outcome recorded after
+- `migrations/versions/*.py` — Alembic baseline, verified up and down
+- `compose.yaml` — PostgreSQL 18 + pgvector, one service
+
+**Tests (136 total, 18 against a real database):**
+- `test_trace_is_assembled_from_stored_rows_only` — a *fresh service instance* reconstructs the
+  trace, proving nothing depends on in-memory state
+- `test_idempotent_resubmit_returns_the_original_run` — asserts `agent.calls == 1`; returning the
+  same id while secretly re-running would be worse than useless
+- `test_failed_run_keeps_its_partial_trace` — a failure that spent tokens still shows them
+- `test_run_is_recorded_before_execution` — a crash leaves evidence
+- Transaction-rollback isolation; 18 skip cleanly when no database is running
+
+**Demo:**
+```
+POST /v1/goals  {"goal":"What is 12% of 500?"}   → run_id
+GET  /v1/runs/{run_id}                            → status, result, 2 llm_calls
+                                                     (provider/model/tokens/latency),
+                                                     1 tool_call (name/args/output), timings
+```
+
+**Technical explanation (unaided):** The run row is written before the agent executes, so a crash
+still leaves evidence the run was attempted. Execution happens outside any transaction, because an
+LLM call takes seconds and holding a pooled connection across it would deadlock the pool under
+concurrency — so there are three short transactions with the slow work between them. `run_id` is
+denormalised onto `llm_calls` and `tool_calls` because trace assembly is the hottest read, making
+it one indexed filter per table instead of a join walk. `selectinload` is used because lazy
+loading raises on an async session and would be N+1 regardless. Idempotency keys mean a client
+timeout followed by a retry returns the original run instead of silently doubling the work.
+
+**Likely interview questions:** `docs/interview/persistence.md`.
+
+**Honest resume wording:**
+> Added durable execution history to an LLM agent platform using PostgreSQL and async SQLAlchemy
+> with Alembic migrations: full request tracing across LLM and tool calls, idempotent submission,
+> and transaction-scoped test isolation; 136 tests, of which 118 run with no database at all.
+
+**What this does NOT demonstrate:** no planner, no concurrency, no worker or queue — `SKIP
+LOCKED` is V0.8. No task-level retries. pgvector is installed but unused until V0.5. Backups are
+a documented `pg_dump` command with **no restore drill**, so not a backup strategy. Still no
+authentication; **not deployable publicly**. Verified on podman only — the Docker path in the
+deployment doc is untested and labelled as such.

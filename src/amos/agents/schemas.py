@@ -57,9 +57,60 @@ class AgentResult(BaseModel):
     """
 
     request_id: str
+    run_id: str | None = Field(
+        default=None, description="Set when persistence is enabled; use with GET /v1/runs/{id}."
+    )
     response: AgentResponse
     llm_calls: list[LLMCallRecord] = Field(default_factory=list)
     tool_outcomes: list[ToolOutcome] = Field(default_factory=list)
     repair_count: int = 0
     total_tokens: int = 0
     latency_ms: int = 0
+
+
+class TraceLLMCall(BaseModel):
+    provider: str
+    model: str
+    prompt_tokens: int
+    output_tokens: int
+    latency_ms: int
+    repair_attempt: int
+    error: str | None = None
+
+
+class TraceToolCall(BaseModel):
+    tool_name: str
+    arguments: dict[str, object] = Field(default_factory=dict)
+    status: str
+    output: dict[str, object] | None = None
+    error: str | None = None
+    latency_ms: int
+
+
+class TraceStep(BaseModel):
+    attempt: int
+    status: str
+    agent_name: str
+    error: dict[str, object] | None = None
+
+
+class RunTrace(BaseModel):
+    """The answer to "what exactly happened on this request?".
+
+    Assembled from stored rows only — nothing here comes from memory, which is
+    what makes it answerable for a run that happened weeks ago.
+    """
+
+    run_id: str
+    goal: str
+    status: str
+    request_id: str | None = None
+    result: dict[str, object] | None = None
+    error: dict[str, object] | None = None
+    total_tokens: int
+    latency_ms: int
+    created_at: str
+    completed_at: str | None = None
+    steps: list[TraceStep] = Field(default_factory=list)
+    llm_calls: list[TraceLLMCall] = Field(default_factory=list)
+    tool_calls: list[TraceToolCall] = Field(default_factory=list)

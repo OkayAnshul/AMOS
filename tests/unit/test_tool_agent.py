@@ -83,8 +83,8 @@ async def test_tool_failure_is_fed_back_and_loop_continues(
     """A failed call must not abort the request — the model gets a second chance."""
     provider = FakeProvider(
         [
-            [calc_call("1/0")],                    # fails
-            [calc_call("2340 * 0.17", "c2")],      # model corrects itself
+            [calc_call("1/0")],  # fails
+            [calc_call("2340 * 0.17", "c2")],  # model corrects itself
             valid_response_json(answer="397.8"),
         ]
     )
@@ -138,9 +138,7 @@ async def test_tokens_include_every_call(registry: ToolRegistry) -> None:
     result = await ToolUsingAgent(provider, registry).run("goal")
 
     assert len(result.llm_calls) >= 2
-    assert result.total_tokens == sum(
-        c.prompt_tokens + c.output_tokens for c in result.llm_calls
-    )
+    assert result.total_tokens == sum(c.prompt_tokens + c.output_tokens for c in result.llm_calls)
 
 
 async def test_prompt_injection_in_tool_output_does_not_change_permissions(
@@ -180,9 +178,7 @@ async def test_no_extra_call_when_the_tool_turn_returns_a_valid_answer(
     assert result.response.answer == "397.8"
 
 
-async def test_schema_is_requested_alongside_tools(
-    registry: ToolRegistry, valid_json: str
-) -> None:
+async def test_schema_is_requested_alongside_tools(registry: ToolRegistry, valid_json: str) -> None:
     from amos.agents.schemas import AgentResponse
 
     provider = FakeProvider([valid_json])

@@ -1,6 +1,6 @@
 [project]
 name = "amos"
-version = "0.2.0"
+version = "0.3.0"
 description = "Autonomous Multi-Agent Operating System"
 requires-python = ">=3.14"
 dependencies = [
@@ -9,6 +9,9 @@ dependencies = [
     "pydantic-settings>=2.7",
     "google-genai>=2.21.0",    # google-generativeai is deprecated
     "uvicorn[standard]>=0.34",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +41,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "live: hits the real Gemini API; skipped unless AMOS_RUN_LIVE_TESTS=1",
+    "db: needs a running PostgreSQL; skipped automatically when unreachable",
 ]
 
 [tool.ruff]
