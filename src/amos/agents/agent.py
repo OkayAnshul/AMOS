@@ -68,6 +68,12 @@ class GroundedAgent:
         self._max_repair_attempts = max_repair_attempts
         self._temperature = temperature
 
+    @property
+    def tool_names(self) -> list[str]:
+        """No tools by design. Present so both agents satisfy the shape the API
+        layer depends on, rather than the API special-casing agent types."""
+        return []
+
     async def run(self, goal: str) -> AgentResult:
         request_id = get_request_id() or new_request_id()
         started = time.perf_counter()

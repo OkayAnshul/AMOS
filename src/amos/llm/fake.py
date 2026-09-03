@@ -17,21 +17,27 @@ from pydantic import BaseModel, ValidationError
 
 from amos.errors import ProviderError
 from amos.llm.base import LLMRequest, LLMResponse
+from amos.tools.base import ToolCall
 
 
 class FakeProvider:
     """Replays a scripted sequence of responses.
 
     Each item in `responses` is either:
-      - str        -> returned as response text (parsed if it fits the schema)
-      - Exception  -> raised, to script failures
+      - str              -> returned as response text (parsed if it fits the schema)
+      - Exception        -> raised, to script failures
+      - list[ToolCall]   -> returned as tool calls, to script tool-using turns
+
+    Scripting tool calls is what lets the V0.2 agent-loop tests run without a
+    network: the "model's" decisions are fixed, so the test exercises the loop's
+    behaviour rather than the model's mood.
     """
 
     name = "fake"
 
     def __init__(
         self,
-        responses: Sequence[str | Exception],
+        responses: Sequence[str | Exception | list[ToolCall]],
         *,
         model: str = "fake-model",
         latency_ms: int = 1,
@@ -59,6 +65,18 @@ class FakeProvider:
             raise scripted
 
         await asyncio.sleep(0)  # yield, so tests exercise the real async path
+
+        if isinstance(scripted, list):
+            return LLMResponse(
+                text="",
+                tool_calls=scripted,
+                model=self._model,
+                provider=self.name,
+                prompt_tokens=len(request.prompt.split()),
+                output_tokens=4 * len(scripted),
+                latency_ms=self._latency_ms,
+                finish_reason="STOP",
+            )
 
         parsed: BaseModel | None = None
         if request.response_schema is not None:

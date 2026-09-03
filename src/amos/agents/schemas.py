@@ -17,6 +17,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from amos.llm.base import LLMCallRecord
+from amos.tools.base import ToolOutcome
 
 
 class Confidence(StrEnum):
@@ -58,6 +59,7 @@ class AgentResult(BaseModel):
     request_id: str
     response: AgentResponse
     llm_calls: list[LLMCallRecord] = Field(default_factory=list)
+    tool_outcomes: list[ToolOutcome] = Field(default_factory=list)
     repair_count: int = 0
     total_tokens: int = 0
     latency_ms: int = 0
