@@ -141,3 +141,61 @@ confident annotation stops the next reader — including the author — from que
 write "verified" for something assumed; say "assumed, not tested" and it will get checked.
 **Test added:** `test_no_extra_call_when_the_tool_turn_returns_a_valid_answer`,
 `test_schema_is_requested_alongside_tools`.
+
+---
+
+## 2026-09-03 — postgres:18 container exits(1) immediately
+**Milestone:** V0.3
+**Symptom:** `podman-compose up -d` reported success; the container was `Exited (1)` seconds
+later. `pg_isready` failed with "container state improper".
+**Expected:** PostgreSQL starts and accepts connections.
+**Root cause:** PostgreSQL **18** images changed the data-directory convention. The volume must
+mount at `/var/lib/postgresql`, not `/var/lib/postgresql/data` — the image now places data in a
+version-named subdirectory so `pg_upgrade --link` works across one mount boundary. The old path
+is recognised and refused.
+**Fix:** `- amos-pgdata:/var/lib/postgresql` in `compose.yaml`; removed the stale volume.
+**How it was found:** `podman logs amos-postgres`. The image explains the problem clearly — but
+only in its logs, and `compose up` reported success, so nothing pointed at them.
+**Lesson:** "the container started" is not "the service is running". A healthcheck belongs in the
+compose file from the first version, and **read the logs of a container that exits, rather than
+trusting the orchestrator's exit code.** Also: a widely-copied compose snippet can be silently
+stale — this path was correct for postgres:17 and every tutorial still shows it.
+**Test added:** none — infrastructure config. The healthcheck in `compose.yaml` now surfaces it.
+
+---
+
+## 2026-09-03 — "attached to a different loop" in database tests
+**Milestone:** V0.3
+**Symptom:** 10 of 11 persistence tests failed with
+`RuntimeError: got Future attached to a different loop` and
+`InterfaceError: another operation is in progress`. The first test passed; the rest did not.
+**Expected:** all tests pass against a real database.
+**Root cause:** the engine fixture was `scope="session"`, but pytest-asyncio gives each test its
+own event loop. asyncpg connections are bound to the loop that created them, so every test after
+the first received a connection belonging to a dead loop.
+**Fix:** function-scoped engine with `NullPool`, so nothing is carried between tests.
+**How it was found:** the failure pattern — first test passes, all later ones fail — points at
+shared state across tests rather than at the code under test.
+**Lesson:** **async fixtures must not outlive the event loop they were created in.** Fixture
+scope and event-loop scope are separate settings and it is easy to make them disagree. When the
+first test passes and the rest fail identically, suspect the fixtures, not the subject.
+**Test added:** the whole persistence suite now passes; the fixture carries a comment explaining
+why it is function-scoped, so nobody "optimises" it back.
+
+---
+
+## 2026-09-03 — Tests connected to a real database because they read the developer's `.env`
+**Milestone:** V0.3
+**Symptom:** adding `AMOS_DATABASE_URL` to `.env` broke 12 previously-passing integration tests,
+which began attempting real network connections.
+**Expected:** tests are unaffected by a developer's local environment.
+**Root cause:** `Settings` declares `env_file=".env"`, so `Settings(gemini_api_key="test-key")`
+in a test still loaded every other value from the real `.env` — including the new database URL,
+which switched persistence on inside tests that had no database.
+**Fix:** `isolated_settings()` in `tests/conftest.py`, constructing `Settings(_env_file=None, …)`.
+**How it was found:** tests that had passed for two milestones failed after a change to a file
+that is not in the repository.
+**Lesson:** **a test that reads `.env` is a test that depends on the machine it runs on.** It had
+been latent since V0.1 and only surfaced when `.env` gained a setting that changed behaviour. Any
+config object with a file source needs an explicit test-time escape hatch from day one.
+**Test added:** every integration test now builds settings through `isolated_settings()`.

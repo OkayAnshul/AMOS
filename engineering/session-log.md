@@ -246,3 +246,92 @@ V0.3 — Persistence and Trace. **Docker must be installed first.** Full sequenc
 
 ## Recommended Commit
 Committed and pushed; merged to `main` and tagged `v0.2`.
+
+---
+
+# Session 4
+
+**Date:** 2026-09-03
+**Module:** V0.3 — Persistence and Trace
+**Objective:** Make every run durable and inspectable. The hinge milestone: persistence
+independently unblocks the planner, RAG and async execution.
+
+## What We Changed
+PostgreSQL 18 + pgvector via one podman service. SQLAlchemy 2.0 async models, Alembic baseline
+migration, repository layer, `RunService`, `GET /v1/runs/{id}`, idempotency keys. Wrote
+`docs/18-deployment.md` and `docs/interview/persistence.md`. 136 tests.
+
+## Files Changed
+`compose.yaml`, `alembic.ini`, `migrations/**`, `src/amos/database/**`,
+`src/amos/api/{app,persistence}.py`, `src/amos/{config,agents/schemas}.py`,
+`src/amos/tools/base.py`, `tests/integration/{conftest,test_persistence,test_trace_api}.py`,
+`tests/conftest.py`, `docs/{18,22}`, `docs/interview/persistence.md`, `engineering/*`.
+
+## Architecture Decisions
+No new ADRs. Implementation decisions worth recording:
+- **Run row written before execution.** A crash then still leaves evidence it was attempted.
+- **Execution outside any transaction.** An LLM call takes seconds; holding a pooled connection
+  across it would deadlock the pool at six concurrent goals.
+- **`run_id` denormalised onto `llm_calls`/`tool_calls`.** Trace assembly is the hottest read;
+  this makes it one indexed filter per table.
+- **Persistence is optional.** Without `AMOS_DATABASE_URL` the app still runs and 118 of 136
+  tests pass. Mandatory infrastructure would break "every milestone is runnable".
+
+## Problems Encountered
+1. `postgres:18` container exited(1) immediately after `compose up` reported success.
+2. 10 of 11 database tests failed with "attached to a different loop".
+3. Adding `AMOS_DATABASE_URL` to `.env` broke 12 previously-passing integration tests.
+4. Podman/Docker needed installing — neither was present, and pgvector is not in Arch's repos.
+
+## How We Solved Them
+1. Read the container logs. PostgreSQL 18 changed the volume convention to
+   `/var/lib/postgresql` (not `/data`). Added a healthcheck so a non-starting container is
+   visible rather than merely absent.
+2. Made the engine fixture function-scoped with `NullPool`. asyncpg connections belong to the
+   event loop that created them, and pytest-asyncio gives each test its own.
+3. `isolated_settings()` building `Settings(_env_file=None, …)`. The bug had been latent since
+   V0.1 and only surfaced when `.env` gained a setting that changed behaviour.
+4. Chose podman — rootless, so no docker group and no logout/login. `compose.yaml` is written
+   for both; **only the podman path is verified**, and the deployment doc says so.
+
+## Tests Performed
+- 136 pass with the database, 118 pass + 18 skip without it — verified by stopping the container
+  and re-running.
+- `alembic upgrade head` → `downgrade base` → `upgrade head`, confirming table counts each way.
+- `mypy --strict` clean across 27 files; `ruff` clean.
+- Demo: goal → `run_id` → full trace from stored rows; idempotent resubmit returned the same run.
+
+## Current System State
+V0.3 shipped and tagged. `main` runs and its tests pass.
+
+## Things I Learned
+- **The seams held, and I can now say that with evidence rather than hope.** `_add_trace_rows`
+  is a mechanical field copy — no field had to be derived or restructured. That was V0.1/V0.2's
+  central bet and it paid off.
+- **One gap, worth stating plainly:** `ToolOutcome` recorded a tool's result but not its
+  arguments, so the first working trace showed what came back without what was asked. The design
+  was right in shape and ~95% right in content. Claiming it worked perfectly would have been the
+  less useful record.
+- **"The container started" is not "the service is running."** `compose up` exited 0 while
+  Postgres was dead. Healthchecks belong in the first version of a compose file.
+- **A test that reads `.env` depends on the machine it runs on.** Latent for two milestones.
+- **Async fixtures must not outlive their event loop.** When the first test passes and the rest
+  fail identically, suspect the fixtures.
+
+## Things I Should Investigate
+- Verify `compose.yaml` on Docker; the deployment doc currently documents an unverified path.
+- `_finalise` has still never fired. Delete it at V0.4 if it stays dead.
+- Latency was 12s for a 2-call goal here vs 2.1s at V0.2 — network variance again, but worth
+  watching before V0.4 makes calls sequential.
+
+## References
+- <https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html>
+- <https://alembic.sqlalchemy.org/en/latest/tutorial.html>
+- <https://github.com/docker-library/postgres/issues/37> (the PG18 volume path change)
+
+## Next Exact Step
+V0.4 — Planner / Executor. Full sequence in `engineering/current-state.md`. Advance gate now has
+three unread interview docs.
+
+## Recommended Commit
+Committed and pushed; merged to `main` and tagged `v0.3`.

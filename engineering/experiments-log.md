@@ -99,3 +99,26 @@ requested on every turn. Keep recording. Revisit at V0.4, where longer outputs m
 against.
 **Latency note:** the ~16s/call recorded at V0.1 was network variance, not a property of the
 system. `gemini-3.5-flash-lite` measures ~1s/call; a full 2-call tool goal completes in ~2.1s.
+
+---
+
+## 2026-09-03 — Did the V0.1/V0.2 seams actually hold under persistence?
+**Milestone:** V0.3
+**Question:** ADR-002 and `docs/02-system-architecture.md` claimed `AgentResult`,
+`LLMCallRecord` and `ToolOutcome` were shaped so that V0.3 would be a *serialisation change*
+rather than a redesign. Was that true, or optimistic?
+**Method:** implemented persistence and inspected what
+`RunRepository._add_trace_rows` had to do.
+**Result:** it is a mechanical field-by-field copy. No field had to be derived, inferred or
+restructured. `AgentResult.llm_calls` → `llm_calls` rows and `AgentResult.tool_outcomes` →
+`tool_calls` rows, one to one.
+
+**One genuine gap:** `ToolOutcome` carried the tool's *result* but not the *arguments* it was
+called with, so the first working trace showed what came back without what was asked. Added
+`ToolOutcome.arguments`.
+
+**Conclusion:** the seam was right in shape and ~95% right in content. Recording the imperfection
+because "it worked perfectly" would be the less useful claim — the missing field is exactly the
+kind of thing this experiment existed to find.
+**Decision affected:** none reversed. Evidence that designing V0.4's task rows against
+`docs/05-data-model.md` up front is worth the same effort.
