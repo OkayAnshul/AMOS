@@ -169,6 +169,7 @@ class ToolUsingAgent:
             return ToolOutcome(
                 call_id=call.id,
                 name=call.name,
+                arguments=call.arguments,
                 status=ToolStatus.NOT_FOUND,
                 error=exc.message,
             )

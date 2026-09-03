@@ -7,17 +7,16 @@ from fastapi.testclient import TestClient
 
 from amos.agents.tool_agent import ToolUsingAgent
 from amos.api.app import create_app
-from amos.config import Settings
 from amos.errors import ProviderRateLimitError, ProviderTimeoutError
 from amos.llm.fake import AlwaysFailsProvider, FakeProvider
 from amos.tools.base import ToolCall
 from amos.tools.builtin import CalculatorTool
 from amos.tools.registry import ToolRegistry
-from tests.conftest import valid_response_json
+from tests.conftest import isolated_settings, valid_response_json
 
 
 def build_client(provider: object, **kwargs: object) -> TestClient:
-    settings = Settings(gemini_api_key="test-key", env="test", log_level="WARNING")
+    settings = isolated_settings()
     agent = ToolUsingAgent(provider, ToolRegistry([CalculatorTool()]), **kwargs)  # type: ignore[arg-type]
     return TestClient(create_app(settings, agent=agent))
 
@@ -26,11 +25,11 @@ def calc_call(expression: str) -> ToolCall:
     return ToolCall(id="c1", name="calculator", arguments={"expression": expression})
 
 
-def test_health_reports_v02(valid_json: str) -> None:
+def test_health_reports_version(valid_json: str) -> None:
     with build_client(FakeProvider([valid_json])) as client:
         response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.2.0"
+    assert response.json()["version"] == "0.3.0"
 
 
 def test_goal_answered_without_tools(valid_json: str) -> None:
@@ -45,9 +44,7 @@ def test_goal_answered_without_tools(valid_json: str) -> None:
 
 def test_tool_execution_is_visible_in_the_response() -> None:
     """The caller can see which tools ran, with what result and at what cost."""
-    provider = FakeProvider(
-        [[calc_call("2340 * 0.17")], valid_response_json(answer="397.8")]
-    )
+    provider = FakeProvider([[calc_call("2340 * 0.17")], valid_response_json(answer="397.8")])
     with build_client(provider) as client:
         response = client.post("/v1/goals", json={"goal": "What is 17% of 2340?"})
 
@@ -92,9 +89,7 @@ def test_runaway_tool_loop_returns_502() -> None:
         (ProviderRateLimitError("slow down"), 429),
     ],
 )
-def test_provider_errors_map_to_correct_status(
-    error: Exception, expected_status: int
-) -> None:
+def test_provider_errors_map_to_correct_status(error: Exception, expected_status: int) -> None:
     with build_client(AlwaysFailsProvider(error)) as client:
         response = client.post("/v1/goals", json={"goal": "x"})
 
@@ -117,9 +112,7 @@ def test_request_id_is_returned(valid_json: str) -> None:
 
 def test_client_supplied_request_id_is_honoured(valid_json: str) -> None:
     with build_client(FakeProvider([valid_json])) as client:
-        response = client.post(
-            "/v1/goals", json={"goal": "x"}, headers={"x-request-id": "abc123"}
-        )
+        response = client.post("/v1/goals", json={"goal": "x"}, headers={"x-request-id": "abc123"})
     assert response.headers["x-request-id"] == "abc123"
 
 

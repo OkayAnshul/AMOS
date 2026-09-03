@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from amos.errors import ToolTimeoutError, ToolValidationError
 
@@ -67,6 +67,7 @@ class ToolOutcome(BaseModel):
     call_id: str
     name: str
     status: ToolStatus
+    arguments: dict[str, Any] = Field(default_factory=dict)
     output: dict[str, Any] | None = None
     error: str | None = None
     latency_ms: int = 0
@@ -123,6 +124,7 @@ class Tool(ABC):
             return ToolOutcome(
                 call_id=call.id,
                 name=self.name,
+                arguments=call.arguments,
                 status=ToolStatus.INVALID_ARGS,
                 error=_summarise_validation_error(exc),
                 latency_ms=_elapsed_ms(started),
@@ -134,6 +136,7 @@ class Tool(ABC):
             return ToolOutcome(
                 call_id=call.id,
                 name=self.name,
+                arguments=call.arguments,
                 status=ToolStatus.TIMEOUT,
                 error=f"Tool '{self.name}' exceeded its {self.timeout_seconds}s timeout",
                 latency_ms=_elapsed_ms(started),
@@ -142,6 +145,7 @@ class Tool(ABC):
             return ToolOutcome(
                 call_id=call.id,
                 name=self.name,
+                arguments=call.arguments,
                 status=ToolStatus.INVALID_ARGS,
                 error=exc.message,
                 latency_ms=_elapsed_ms(started),
@@ -150,6 +154,7 @@ class Tool(ABC):
             return ToolOutcome(
                 call_id=call.id,
                 name=self.name,
+                arguments=call.arguments,
                 status=ToolStatus.ERROR,
                 error=f"{type(exc).__name__}: {exc}"[:500],
                 latency_ms=_elapsed_ms(started),
@@ -158,6 +163,7 @@ class Tool(ABC):
         return ToolOutcome(
             call_id=call.id,
             name=self.name,
+            arguments=call.arguments,
             status=ToolStatus.OK,
             output=output,
             latency_ms=_elapsed_ms(started),

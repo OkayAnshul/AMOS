@@ -7,16 +7,19 @@ domain errors to status codes. Business logic lives in the agent.
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from amos.agents.schemas import AgentResult, GoalRequest
+from amos.agents.schemas import AgentResult, GoalRequest, RunTrace
 from amos.agents.tool_agent import ToolUsingAgent
 from amos.api.dependencies import build_agent
+from amos.api.persistence import RunService
 from amos.config import Settings, get_settings
+from amos.database.engine import create_engine, create_session_factory
 from amos.errors import (
     AmosError,
     ConfigurationError,
@@ -26,7 +29,13 @@ from amos.errors import (
     ProviderTimeoutError,
     ToolLoopExhaustedError,
 )
-from amos.observability import configure_logging, log_event, new_request_id, set_request_id
+from amos.observability import (
+    configure_logging,
+    get_request_id,
+    log_event,
+    new_request_id,
+    set_request_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +57,11 @@ def _status_for(exc: AmosError) -> int:
     return 500
 
 
-def create_app(settings: Settings | None = None, agent: ToolUsingAgent | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    agent: ToolUsingAgent | None = None,
+    run_service: RunService | None = None,
+) -> FastAPI:
     """Build the app.
 
     `agent` is injectable so tests can supply one backed by FakeProvider without
@@ -63,23 +76,40 @@ def create_app(settings: Settings | None = None, agent: ToolUsingAgent | None = 
         # first request an hour from now.
         if app.state.agent is None:
             app.state.agent = build_agent(settings)
+
+        # Persistence is optional so the app still runs without a database —
+        # V0.1 and V0.2 behaviour stays reachable, and tests need no container.
+        if app.state.run_service is None:
+            factory = None
+            if settings.database_url:
+                app.state.engine = create_engine(settings)
+                factory = create_session_factory(app.state.engine)
+            app.state.run_service = RunService(app.state.agent, factory)
+
         log_event(
             logger,
             "amos.started",
             model=settings.llm_model,
             env=settings.env,
             tools=app.state.agent.tool_names,
+            persistence=app.state.run_service.persistence_enabled,
         )
-        yield
+        try:
+            yield
+        finally:
+            if app.state.engine is not None:
+                await app.state.engine.dispose()
 
     app = FastAPI(
         title="AMOS",
-        description="Autonomous Multi-Agent Operating System — V0.2",
-        version="0.2.0",
+        description="Autonomous Multi-Agent Operating System — V0.3",
+        version="0.3.0",
         lifespan=lifespan,
     )
     app.state.agent = agent
     app.state.settings = settings
+    app.state.run_service = run_service
+    app.state.engine = None
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -114,14 +144,51 @@ def create_app(settings: Settings | None = None, agent: ToolUsingAgent | None = 
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "version": "0.2.0"}
+        return {"status": "ok", "version": "0.3.0"}
 
     @app.post("/v1/goals", response_model=AgentResult)
-    async def submit_goal(payload: GoalRequest) -> AgentResult:
-        log_event(logger, "goal.received", goal_length=len(payload.goal))
-        agent: ToolUsingAgent = app.state.agent
-        result = await agent.run(payload.goal)
+    async def submit_goal(
+        payload: GoalRequest,
+        idempotency_key: str | None = Header(default=None, alias="idempotency-key"),
+    ) -> AgentResult:
+        log_event(
+            logger,
+            "goal.received",
+            goal_length=len(payload.goal),
+            idempotent=idempotency_key is not None,
+        )
+        service: RunService = app.state.run_service
+        result, run_id = await service.execute(
+            payload.goal,
+            request_id=get_request_id() or "",
+            idempotency_key=idempotency_key,
+        )
+        if run_id is not None:
+            result.run_id = str(run_id)
         return result
+
+    @app.get("/v1/runs/{run_id}", response_model=RunTrace)
+    async def get_run_trace(run_id: str) -> RunTrace:
+        """What exactly happened on this request.
+
+        Assembled from stored rows only, so it answers for runs that finished
+        weeks ago and for runs this process never saw.
+        """
+        try:
+            parsed = uuid.UUID(run_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="run_id must be a UUID") from None
+
+        service: RunService = app.state.run_service
+        if not service.persistence_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="Persistence is not configured; set AMOS_DATABASE_URL.",
+            )
+        trace = await service.get_trace(parsed)
+        if trace is None:
+            raise HTTPException(status_code=404, detail=f"No run with id {run_id}")
+        return trace
 
     return app
 

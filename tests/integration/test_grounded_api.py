@@ -10,12 +10,12 @@ from fastapi.testclient import TestClient
 
 from amos.agents.agent import GroundedAgent
 from amos.api.app import create_app
-from amos.config import Settings
 from amos.llm.fake import FakeProvider
+from tests.conftest import isolated_settings
 
 
 def build_client(provider: object, **kwargs: object) -> TestClient:
-    settings = Settings(gemini_api_key="test-key", env="test", log_level="WARNING")
+    settings = isolated_settings()
     agent = GroundedAgent(provider, **kwargs)  # type: ignore[arg-type]
     app = create_app(settings, agent=agent)  # type: ignore[arg-type]
     return TestClient(app)

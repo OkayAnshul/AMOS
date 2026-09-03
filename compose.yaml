@@ -1,0 +1,32 @@
+# One service. PostgreSQL carries relational data, JSONB documents and vectors,
+# so AMOS needs exactly one stateful system rather than three (ADR-001).
+#
+# Works with `docker compose up -d` and `podman-compose up -d` unchanged.
+services:
+  postgres:
+    # pgvector pre-installed. The extension is not in Arch's repos, so a native
+    # Postgres would mean compiling it from source.
+    image: docker.io/pgvector/pgvector:pg18
+    container_name: amos-postgres
+    environment:
+      POSTGRES_USER: amos
+      POSTGRES_PASSWORD: amos
+      POSTGRES_DB: amos
+    ports:
+      - "5432:5432"
+    volumes:
+      # PostgreSQL 18 images changed this convention: the mount goes at
+      # /var/lib/postgresql, NOT /var/lib/postgresql/data. The image places data
+      # in a version-named subdirectory so `pg_upgrade --link` can work across a
+      # single mount boundary. Using the old path makes the container exit(1).
+      - amos-pgdata:/var/lib/postgresql
+    healthcheck:
+      # Without this, the app starts before Postgres accepts connections and
+      # fails on its first query rather than waiting.
+      test: ["CMD-SHELL", "pg_isready -U amos -d amos"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  amos-pgdata:

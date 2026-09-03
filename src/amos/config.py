@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     )
     tool_sandbox_root: str = Field(default=".", description="Directory read_file is confined to.")
 
+    database_url: str = Field(
+        default="",
+        description="postgresql+asyncpg://... Required from V0.3.",
+    )
+    db_echo: bool = Field(default=False, description="Log every SQL statement.")
+
     env: str = Field(default="development")
     log_level: str = Field(default="INFO")
 
@@ -61,6 +67,16 @@ class Settings(BaseSettings):
                 "from https://aistudio.google.com/apikey"
             )
         return self.gemini_api_key
+
+    def require_database_url(self) -> str:
+        """Return the database URL, or fail loudly at startup."""
+        if not self.database_url:
+            raise ConfigurationError(
+                "AMOS_DATABASE_URL is not set. Start the database with "
+                "`podman-compose up -d` (or `docker compose up -d`), then copy "
+                ".env.example to .env — the default URL matches compose.yaml."
+            )
+        return self.database_url
 
 
 @lru_cache(maxsize=1)
