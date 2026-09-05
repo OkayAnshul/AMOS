@@ -16,13 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from amos.agents.schemas import AgentResult
-from amos.database.models import LLMCall, Run, Step, ToolCallRow
+from amos.database.models import LLMCall, Run, Step, Task, ToolCallRow
 
 
 class RunStatus:
     RECEIVED = "RECEIVED"
     EXECUTING = "EXECUTING"
     COMPLETED = "COMPLETED"
+    PARTIALLY_COMPLETED = "PARTIALLY_COMPLETED"
     FAILED = "FAILED"
 
 
@@ -69,7 +70,9 @@ class RunRepository:
 
     async def record_success(self, run: Run, result: AgentResult) -> Run:
         """Persist a completed run and its full trace."""
-        run.status = RunStatus.COMPLETED
+        # The run's status mirrors the executor's verdict, so a run where three
+        # of four tasks succeeded is not recorded as an unqualified success.
+        run.status = result.outcome or RunStatus.COMPLETED
         run.result = result.response.model_dump(mode="json")
         run.total_tokens = result.total_tokens
         run.latency_ms = result.latency_ms
@@ -88,6 +91,7 @@ class RunRepository:
         self._session.add(step)
         await self._session.flush()
 
+        self._add_task_rows(run, result)
         self._add_trace_rows(run, step, result)
         await self._session.flush()
         return run
@@ -120,9 +124,37 @@ class RunRepository:
         if result is not None:
             run.total_tokens = result.total_tokens
             run.latency_ms = result.latency_ms
+            self._add_task_rows(run, result)
             self._add_trace_rows(run, step, result)
         await self._session.flush()
         return run
+
+    def _add_task_rows(self, run: Run, result: AgentResult) -> None:
+        """Persist the task DAG.
+
+        `depends_on` is stored as the planner's symbolic refs resolved to the
+        UUIDs of the rows created here, so the stored graph is self-contained
+        and does not depend on the plan text surviving.
+        """
+        if not result.tasks:
+            return
+
+        ids = {record.plan_ref: uuid.uuid4() for record in result.tasks}
+        for record in result.tasks:
+            self._session.add(
+                Task(
+                    id=ids[record.plan_ref],
+                    run_id=run.id,
+                    plan_ref=record.plan_ref,
+                    description=record.description,
+                    state=record.state,
+                    depends_on=[ids[ref] for ref in record.depends_on if ref in ids],
+                    position=record.position,
+                    attempt_count=record.attempt_count,
+                    result={"answer": record.answer} if record.answer else None,
+                    error={"message": record.error} if record.error else None,
+                )
+            )
 
     def _add_trace_rows(self, run: Run, step: Step, result: AgentResult) -> None:
         """Turn the agent's in-memory records into rows.
@@ -181,6 +213,7 @@ class RunRepository:
 
 def _trace_loaders() -> tuple[Any, ...]:
     return (
+        selectinload(Run.tasks),
         selectinload(Run.steps),
         selectinload(Run.llm_calls),
         selectinload(Run.tool_calls),

@@ -3,123 +3,140 @@
 > **Read this first when resuming.** It is the recovery mechanism — sufficient to restart cold
 > after months away, without conversation history.
 
-**Last updated:** 2026-09-03 (Session 4)
+**Last updated:** 2026-09-05 (Session 5)
 
 ## Current Version
-**V0.3 — Persistence and Trace.** Shipped, tagged `v0.3`. The hinge milestone.
+**V0.4 — Planner / Executor.** Shipped, tagged `v0.4`.
 
 ## Current Module
-None in progress. Next is V0.4 (Planner / Executor).
+None in progress. Next is V0.5 (RAG) — the first milestone that uses pgvector.
 
 ## Completed Modules
 - **Phase 0** — architecture, ADRs, domain model, data model, roadmap
 - **V0.1** — provider protocol, structured output, bounded repair
 - **V0.2** — tool registry, bounded tool loop, three safe tools
-- **V0.3** — PostgreSQL persistence, full execution trace, idempotency
+- **V0.3** — PostgreSQL persistence, execution trace, idempotency
+- **V0.4** — planner, task DAG, state machine, retries, partial completion
 
 ## What Works
-- `POST /v1/goals` → runs the goal, persists everything, returns `run_id`
-- `GET /v1/runs/{id}` → the complete trace **from stored rows alone**: steps, every LLM call
-  (provider, model, tokens, latency, repair attempt), every tool call (name, arguments, status,
-  output, latency)
-- `idempotency-key` header → a resubmit returns the original run without re-running the agent
-- Failed runs keep their partial trace, including tokens already spent
-- Run row written **before** execution, so a crash still leaves evidence
-- **Runs fine with no database**: `/v1/runs/{id}` returns 503, everything else works
-- 136 tests (18 need Postgres and skip cleanly without it); `mypy --strict` and `ruff` clean
+- `POST /v1/goals` → planner decomposes the goal → executor runs the DAG → synthesised answer
+- Independent tasks run **concurrently**; dependents wait, then receive upstream results
+- Task state machine where **illegal transitions raise** — 53 of them asserted
+- Plans validated before persistence: unique ids, resolvable deps, **acyclic**, ≤10 tasks
+- Bounded retries with exponential backoff + **full jitter**, budget per task
+- Failure contained: dependents `SKIPPED` transitively, unrelated branches still run
+- `PARTIALLY_COMPLETED` is a real outcome and is stored as the run's status
+- `GET /v1/runs/{id}` → trace now includes the task DAG with states and attempt counts
+- Everything from V0.1–V0.3 still works; `AMOS_PLANNING_ENABLED=false` reverts to the V0.2 agent
+- 266 tests (18 need Postgres, skip cleanly without it); `mypy --strict` and `ruff` clean
 
-**Verified live:** goal → `run_id` → full trace fetched from the DB; idempotent resubmit
-returned the same run; migration up/down round trip.
+**Verified live:** *"Work out 17% of 2340 and 23% of 1500, then tell me which is larger and by
+how much"* → planner emitted a diamond (t1, t2 independent; t3 depends on both), all three used
+the calculator, answer correct. 8 LLM calls, 4456 tokens, 7.5s. Trace persisted with dependencies
+resolved to row UUIDs.
 
 ## What Does Not Work
-Nothing broken. Not built: planner (V0.4), RAG (V0.5), memory (V0.6), multi-agent (V0.7),
-async workers (V0.8), OTel (V0.9), evaluation (V1.0).
+Nothing broken. Not built: RAG (V0.5), memory (V0.6), multi-agent (V0.7), async workers (V0.8),
+OTel (V0.9), evaluation (V1.0).
 
-pgvector is **installed but unused** until V0.5.
+Known gaps, stated because an unlisted gap reads as a claim (`docs/17-failure-recovery.md`):
+- **No re-planning** — a failed task is retried as written
+- **No resumption** — a crash leaves an abandoned `RECEIVED` run; nothing sweeps it (V0.8)
+- **Tasks are not idempotent** — safe only because every tool is read-only. This becomes a real
+  bug the moment a write tool exists, which is why the registry refuses to register one
+- pgvector installed, still unused
 
 ## ⚠️ Operating constraints
-- **Gemini free tier: 20 requests/day, per model.** Not a rate limit. A tool-using goal costs
-  2 calls. `AMOS_LLM_MODEL` defaults to `gemini-3.5-flash-lite` because quota is per model.
-  `gemini-2.5-flash` is 404 / no longer served.
-- Tests never touch the network (N-14) — one run could exhaust a day's quota.
+- **Gemini free tier: 20 requests/day, per model.** A 3-task plan costs **8 calls** — 40% of the
+  day. `AMOS_LLM_MODEL` defaults to `gemini-3.5-flash-lite`; quota is per model.
+  `gemini-2.5-flash` is 404.
+- Develop against `FakeProvider`; spend live calls only on demos.
+- `AMOS_PLANNING_ENABLED=false` for goals that need no decomposition.
 
 ## Current Architecture
 ```
-Client → FastAPI → RunService → ToolUsingAgent ⇄ ToolRegistry → tools
-                       ↓                ↓
-                  PostgreSQL       LLMProvider → Gemini
-                  (runs, steps, llm_calls, tool_calls)
+Client → FastAPI → RunService → Orchestrator
+                                   ├── Planner (LLM) → Plan → validate (acyclic)
+                                   ├── Executor (NO LLM) → task DAG, state machine, retries
+                                   │      └── ToolUsingAgent ⇄ ToolRegistry → tools
+                                   └── Synthesis (LLM, skipped when 1 task or 0 succeeded)
+                       ↓
+                  PostgreSQL (runs, tasks, steps, llm_calls, tool_calls)
 ```
 
 ## Current Branch
-`main` (V0.3 merged from `feat/v0.3-persistence`)
+`main` (V0.4 merged from `feat/v0.4-planner`)
 
 ## Last Known Good Commit
-Tag `v0.3` — tests pass, app runs, demo verified.
+Tag `v0.4` — tests pass, app runs, demo verified.
 
 ## Known Bugs
-None open. Seven fixed across V0.1–V0.3, all in `engineering/bugs-log.md`.
+None open. Eight fixed across V0.1–V0.4, all in `engineering/bugs-log.md`.
 
 ## Technical Debt
-- `ToolUsingAgent._finalise` still has not fired in practice. Delete it at V0.4 if it stays dead.
-- `Step` has exactly one row per run until V0.4 gives it a reason to have more.
-- Backups are a documented `pg_dump` command with **no restore drill** — not a strategy.
-- No CI. Tests run only when someone runs them.
-- `RunService.execute` takes `agent: object` — it predates a shared agent protocol. If V0.7 adds
-  a third agent type, define one.
+- `ToolUsingAgent._finalise` **still has never fired.** Delete it at V0.5 — carrying untested
+  code is worse than removing it and restoring it if needed.
+- No automated migration reversibility test; `downgrade base && upgrade head` is run by hand.
+- No CI.
+- Backups: a documented `pg_dump` command with **no restore drill**.
+- `Step` rows are still one-per-run; V0.4 writes tasks but does not yet write a step per attempt.
+  The schema supports it (`steps.task_id`); the repository does not use it.
 
 ## Environment
 | Thing | State |
 |---|---|
 | Python | 3.14.4, `.venv/` |
 | Installed | fastapi 0.141.1, pydantic 2.13.5, google-genai 2.22.0, sqlalchemy 2.0.52, asyncpg 0.31, alembic 1.19.1 |
-| Container runtime | **podman 5.8.2** + podman-compose (rootless). Docker not installed — `compose.yaml` is written to work with both but has **only been verified on podman** |
+| Container runtime | **podman 5.8.2** + podman-compose (rootless). Docker still **not installed** — `compose.yaml` targets both but is **verified on podman only** |
 | Database | PostgreSQL **18.6** + pgvector **0.8.6**, container `amos-postgres`, port 5432 |
+| Migrations | single baseline `e25051359e64` (V0.3's was squashed — see `bugs-log.md`) |
 | `.env` | working key + `AMOS_DATABASE_URL` (gitignored) |
 | Git remote | SSH over **port 443** (port 22 blocked on this network) |
 | GitHub | `OkayAnshul/AMOS`, public |
 
 ## How To Run
 ```bash
-podman-compose up -d                     # or: docker compose up -d
+podman-compose up -d
 .venv/bin/alembic upgrade head
-.venv/bin/python -m amos                 # http://127.0.0.1:8000
+.venv/bin/python -m amos
 
 RUN=$(curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
-  -d '{"goal":"What is 12% of 500?"}' | jq -r .run_id)
-curl -s localhost:8000/v1/runs/$RUN | jq   # the whole story of that request
+  -d '{"goal":"Work out 17% of 2340 and 23% of 1500, then say which is larger."}' | jq -r .run_id)
+curl -s localhost:8000/v1/runs/$RUN | jq '.tasks, .tool_calls'
 ```
 
 ## How To Test
 ```bash
-.venv/bin/python -m pytest                # 136 with a DB; 118 pass + 18 skip without one
+.venv/bin/python -m pytest                # 266; 248 pass + 18 skip without a database
 .venv/bin/mypy src && .venv/bin/ruff check src tests
 AMOS_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/live   # opt-in, uses daily quota
 ```
 
 ## Exact Next Step
 
-**Advance gate: unmet.** Three interview docs now unread —
-`docs/interview/{foundation,agents,persistence}.md`. Per `CLAUDE.md`, V0.4 waits on them.
+**Advance gate: unmet.** Four interview docs unread —
+`docs/interview/{foundation,agents,persistence,orchestration}.md`. Per `CLAUDE.md`, V0.5 waits.
 
-Also outstanding from the V0.3 decision: **verify `compose.yaml` on Docker** and note the result
-in `docs/18-deployment.md`. Until then the doc's Docker instructions are untested, and it says so.
+Outstanding from earlier sessions: verify `compose.yaml` on Docker and record the result in
+`docs/18-deployment.md`.
 
-If deferring again, **begin V0.4 — Planner / Executor**:
+If deferring again, **begin V0.5 — RAG**:
 
-1. `git switch -c feat/v0.4-planner`
-2. Add the `tasks` table per `docs/05-data-model.md` (it is specified and not yet created) —
-   `task_type`, `parameters`, `depends_on UUID[]`, `state`, `attempt_count`, `max_attempts`.
-3. Build in order: `Plan` schema → planner call returning a validated plan → **acyclicity check
-   before persisting** → task rows → executor walking ready tasks → explicit state machine →
-   bounded retry with exponential backoff and jitter → `SKIPPED` propagation.
-4. The state machine is `docs/04-domain-model.md`. Transitions are enforced in code and raise on
-   anything illegal — **the LLM never moves a task between states**.
-5. Tests: exhaustive transition table including every illegal transition; cyclic plan rejected;
-   retry then permanent failure; dependents skipped; `PARTIALLY_COMPLETED` produced.
-6. Write `docs/11-orchestration.md` and `docs/17-failure-recovery.md` (stubs whose milestone
-   arrives).
-7. Watch the quota: a multi-task plan costs several calls per goal. Develop against
-   `FakeProvider` and spend live calls only on the demo.
+1. `git switch -c feat/v0.5-rag`
+2. `CREATE EXTENSION vector;` in a migration; `chunks` and `documents` tables per
+   `docs/05-data-model.md`.
+3. **Embedding dimension is already decided: 1536, MRL-truncated and re-normalised** (ADR-008).
+   pgvector's HNSW index caps `vector` at 2000 dims and `gemini-embedding-001` defaults to 3072.
+   **Re-normalisation is mandatory** — truncating an L2-normalised vector leaves it
+   un-normalised, and cosine distance then returns wrong rankings *silently*.
+4. Build: `VectorStore` protocol → `PgVectorStore` → ingest pipeline (parse → chunk → embed →
+   store, with a content hash for re-ingest detection) → retrieval as a **Tool**, so the agent
+   chooses to retrieve → citations → refuse when retrieval is empty.
+5. Build the HNSW index **after** loading the corpus, not before — it is markedly faster.
+6. **Measure recall@k on a golden question set.** `docs/10-rag-architecture.md` must contain
+   measured numbers, not defaults copied from a blog post. Without that number it is not RAG,
+   it is a vector database with a claim attached.
+7. Seed corpus: AMOS's own `docs/` — it makes the demo self-referential and the ground truth
+   easy to check.
 
-Full V0.4 spec and Definition of Done: `docs/19-roadmap.md`.
+Full V0.5 spec and Definition of Done: `docs/19-roadmap.md`.

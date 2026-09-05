@@ -122,3 +122,28 @@ because "it worked perfectly" would be the less useful claim — the missing fie
 kind of thing this experiment existed to find.
 **Decision affected:** none reversed. Evidence that designing V0.4's task rows against
 `docs/05-data-model.md` up front is worth the same effort.
+
+---
+
+## 2026-09-05 — Does the planner produce a real DAG, or a list pretending to be one?
+**Milestone:** V0.4
+**Hypothesis:** given a goal with two independent sub-computations and one that depends on both,
+the planner should emit a diamond — not three sequential tasks.
+**Method:** one live goal: *"Work out 17% of 2340 and 23% of 1500, then tell me which is larger
+and by how much."*
+**Result:**
+```
+t1: 17% of 2340          (no dependencies)
+t2: 23% of 1500          (no dependencies)
+t3: compare them         (depends_on: t1, t2)
+```
+t1 and t2 ran concurrently; all three used the calculator (397.8, 345.0, 52.8); answer correct.
+8 LLM calls, 4456 tokens, 7.5s.
+**Conclusion:** the planner does express genuine parallelism rather than serialising everything.
+n=1 — this is one favourable goal, not a measurement of planning quality. Routing and planning
+accuracy become measurable at V1.0 with a golden set; until then "the planner works" means
+"it worked on this."
+**Decision affected:** none. Confirms the DAG (rather than a list) earns its complexity, and that
+`asyncio.gather` over ready tasks is doing something real.
+**Cost note:** 8 calls is 40% of the daily free-tier quota for one goal. This is why synthesis is
+skipped for single-task plans and why `AMOS_PLANNING_ENABLED=false` exists.

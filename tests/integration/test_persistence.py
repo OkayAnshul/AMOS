@@ -266,3 +266,74 @@ async def test_trace_records_the_arguments_a_tool_was_called_with(
     stored = await repo.get_trace(run.id)
     assert stored is not None
     assert stored.tool_calls[0].arguments == {"expression": "2340 * 0.17"}
+
+
+# ---------- V0.4: task persistence ----------
+
+
+async def test_task_dag_is_persisted_with_resolved_dependencies(
+    db_session: AsyncSession,
+) -> None:
+    """Stored dependencies are row UUIDs, not the planner's symbolic refs, so the
+    graph stays intact without the plan text."""
+    from amos.agents.schemas import TaskRecord
+
+    repo = RunRepository(db_session)
+    result = sample_result()
+    result.tasks = [
+        TaskRecord(
+            plan_ref="t1",
+            description="do t1",
+            state="SUCCEEDED",
+            position=0,
+            attempt_count=1,
+            answer="a",
+        ),
+        TaskRecord(
+            plan_ref="t2",
+            description="do t2",
+            state="SUCCEEDED",
+            position=1,
+            attempt_count=1,
+            depends_on=["t1"],
+            answer="b",
+        ),
+    ]
+    run = await repo.create_run(goal="g", request_id="r")
+    await repo.record_success(run, result)
+
+    stored = await repo.get_trace(run.id)
+    assert stored is not None
+    assert len(stored.tasks) == 2
+    t1, t2 = sorted(stored.tasks, key=lambda t: t.position)
+    assert t2.depends_on == [t1.id], "symbolic ref resolved to the real row id"
+
+
+async def test_partially_completed_run_is_not_recorded_as_success(
+    db_session: AsyncSession,
+) -> None:
+    """A run where some tasks failed must not read as an unqualified success."""
+    from amos.agents.schemas import TaskRecord
+
+    repo = RunRepository(db_session)
+    result = sample_result()
+    result.outcome = "PARTIALLY_COMPLETED"
+    result.tasks = [
+        TaskRecord(plan_ref="t1", description="ok", state="SUCCEEDED", position=0),
+        TaskRecord(
+            plan_ref="t2",
+            description="bad",
+            state="PERMANENTLY_FAILED",
+            position=1,
+            error="timed out",
+        ),
+    ]
+    run = await repo.create_run(goal="g", request_id="r")
+    await repo.record_success(run, result)
+
+    stored = await repo.get_trace(run.id)
+    assert stored is not None
+    assert stored.status == "PARTIALLY_COMPLETED"
+    failed = next(t for t in stored.tasks if t.plan_ref == "t2")
+    assert failed.error is not None
+    assert failed.error["message"] == "timed out"

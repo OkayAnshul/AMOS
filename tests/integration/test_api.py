@@ -29,7 +29,7 @@ def test_health_reports_version(valid_json: str) -> None:
     with build_client(FakeProvider([valid_json])) as client:
         response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.3.0"
+    assert response.json()["version"] == "0.4.0"
 
 
 def test_goal_answered_without_tools(valid_json: str) -> None:
