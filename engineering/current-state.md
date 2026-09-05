@@ -3,7 +3,7 @@
 > **Read this first when resuming.** It is the recovery mechanism — sufficient to restart cold
 > after months away, without conversation history.
 
-**Last updated:** 2026-09-05 (Session 6)
+**Last updated:** 2026-09-06 (Session 7)
 
 ## Current Version
 **V0.5 — Retrieval (RAG).** Shipped, tagged `v0.5`.
@@ -127,7 +127,8 @@ curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
 ## Exact Next Step
 
 **Advance gate: unmet.** Five interview docs unread —
-`docs/interview/{foundation,agents,persistence,orchestration,rag}.md`.
+`docs/interview/{foundation,agents,persistence,orchestration,rag}.md`. The reading needed to
+close them is now listed in full in `docs/24-study-plan.md` (Session 7, documentation only).
 
 Outstanding: verify `compose.yaml` on Docker; delete `_finalise` if still dead.
 

@@ -513,3 +513,51 @@ is a relational lookup, and similarity search will occasionally return the wrong
 
 ## Recommended Commit
 Committed and pushed; merged to `main` and tagged `v0.5`.
+
+---
+
+# Session 7
+
+**Date:** 2026-09-06
+**Module:** Documentation only — no application code changed.
+**Objective:** Produce the complete reading list: prerequisites from zero knowledge, architecture
+and design, every milestone built and unbuilt, and every algorithm mapped to the file that
+implements it.
+
+## What We Changed
+Added `docs/24-study-plan.md`. Cross-linked it from `docs/20-learning-roadmap.md` and
+`engineering/learning-log.md`, which previously had pre-read links for **V0.1 only** — V0.2–V0.5
+were built with their concepts named in a table but never given reading.
+
+## Files Changed
+`docs/24-study-plan.md` (new), `docs/20-learning-roadmap.md`, `engineering/learning-log.md`,
+`engineering/current-state.md`, `engineering/session-log.md`.
+
+## What The Document Contains
+- Tier 0 prerequisites — Python, async, HTTP, JSON Schema, SQL, containers, testing, tooling.
+- Tier A — architecture and design: ports and adapters, repository/service/unit of work,
+  monolith vs microservices, ADR practice, C4, designing for failure, agent architecture.
+- Tiers 1–5 — one per shipped milestone, each naming its algorithms with `file:line`.
+- Tiers 6–10 — pre-read for V0.6–V1.0, to be read *before* each milestone starts.
+- A single table of all 24 algorithms currently in the repo, plus 6 not yet built.
+- Four books, a suggested sequence, and an explicit **what to skip** list.
+
+## Problems Encountered
+Every URL was checked with `curl` before being written down (N: never fabricate a link).
+Two failed and were replaced: the Grafana RED-method post (403 to a scripted request) was
+dropped in favour of the SRE book's golden-signals chapter, and an EnterpriseDB `SKIP LOCKED`
+post returned 404 — the original 2ndQuadrant URL resolves and was used instead.
+`starlette.io` and `uvicorn.org` were unreachable from this network; the GitHub repositories
+were used instead.
+
+## Learning Notes
+The reading list is long by design and is tagged **[core] / [deep] / [ref]** so it can be
+truncated honestly. Roughly 70–90 hours of **[core]** covers Tier 0 through V0.5.
+
+## Next Exact Step
+Unchanged: **the advance gate is still unmet.** Five interview docs
+(`docs/interview/{foundation,agents,persistence,orchestration,rag}.md`) remain unanswered.
+The reading list now exists to close them. After that, V0.6 — Memory.
+
+## Recommended Commit
+`docs: add the complete study plan — prerequisites, architecture, algorithms`

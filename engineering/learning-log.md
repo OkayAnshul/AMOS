@@ -4,6 +4,10 @@ Concepts, why they exist, where they appear in AMOS, and what to read. **Links, 
 the reading is the point. Status uses the scale in `docs/20-learning-roadmap.md`:
 **Recognise → Explain → Apply → Defend.**
 
+This file tracks **status per concept**. The full reading list — prerequisites, architecture,
+every milestone, every algorithm — is `docs/24-study-plan.md`. Read that for *what* to read;
+record *how far you got* here.
+
 ---
 
 # V0.1 — pre-read

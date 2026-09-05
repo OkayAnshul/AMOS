@@ -18,7 +18,9 @@ for retention, so retention is mechanised rather than hoped for.
    be answered unaided.
 
 Concepts and links per milestone live in [`../engineering/learning-log.md`](../engineering/learning-log.md),
-which is a link index, not an essay.
+which is a link index, not an essay. The **complete reading list** — prerequisites from zero,
+architecture and design, every milestone, and every algorithm mapped to the file that implements
+it — is [`24-study-plan.md`](24-study-plan.md).
 
 ## Concept progression
 
