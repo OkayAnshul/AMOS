@@ -3,140 +3,147 @@
 > **Read this first when resuming.** It is the recovery mechanism — sufficient to restart cold
 > after months away, without conversation history.
 
-**Last updated:** 2026-09-05 (Session 5)
+**Last updated:** 2026-09-05 (Session 6)
 
 ## Current Version
-**V0.4 — Planner / Executor.** Shipped, tagged `v0.4`.
+**V0.5 — Retrieval (RAG).** Shipped, tagged `v0.5`.
 
 ## Current Module
-None in progress. Next is V0.5 (RAG) — the first milestone that uses pgvector.
+None in progress. Next is V0.6 (Memory tiers).
 
 ## Completed Modules
-- **Phase 0** — architecture, ADRs, domain model, data model, roadmap
-- **V0.1** — provider protocol, structured output, bounded repair
-- **V0.2** — tool registry, bounded tool loop, three safe tools
-- **V0.3** — PostgreSQL persistence, execution trace, idempotency
-- **V0.4** — planner, task DAG, state machine, retries, partial completion
+Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
+V0.4 planner/executor · **V0.5 RAG**
 
 ## What Works
-- `POST /v1/goals` → planner decomposes the goal → executor runs the DAG → synthesised answer
-- Independent tasks run **concurrently**; dependents wait, then receive upstream results
-- Task state machine where **illegal transitions raise** — 53 of them asserted
-- Plans validated before persistence: unique ids, resolvable deps, **acyclic**, ≤10 tasks
-- Bounded retries with exponential backoff + **full jitter**, budget per task
-- Failure contained: dependents `SKIPPED` transitively, unrelated branches still run
-- `PARTIALLY_COMPLETED` is a real outcome and is stored as the run's status
-- `GET /v1/runs/{id}` → trace now includes the task DAG with states and attempt counts
-- Everything from V0.1–V0.3 still works; `AMOS_PLANNING_ENABLED=false` reverts to the V0.2 agent
-- 266 tests (18 need Postgres, skip cleanly without it); `mypy --strict` and `ruff` clean
+- Ingestion: `python -m amos.rag.cli ingest docs` — parse → heading-aware chunk → embed → store
+- `search_knowledge` tool: the agent retrieves when it judges the corpus relevant
+- Answers cite sources; **empty retrieval produces an explicit refusal**, not a silent fallback
+  to model memory
+- Re-ingestion of unchanged content is a no-op (content hash)
+- Ingestion commits **per document** and honours the provider's `retryDelay` on a 429
+- `python -m amos.rag.cli evaluate [k]` — recall@k, strict recall, MRR
+- Everything from V0.1–V0.4 still works
+- 314 tests (18 need Postgres); `mypy --strict` and `ruff` clean
 
-**Verified live:** *"Work out 17% of 2340 and 23% of 1500, then tell me which is larger and by
-how much"* → planner emitted a diamond (t1, t2 independent; t3 depends on both), all three used
-the calculator, answer correct. 8 LLM calls, 4456 tokens, 7.5s. Trace persisted with dependencies
-resolved to row UUIDs.
+**Measured retrieval** — 28 docs, 300 chunks, 12-question golden set:
+
+| k | recall (any valid source) | strict (primary only) | MRR |
+|---|---|---|---|
+| 1 | 91.7% | 50.0% | 0.917 |
+| 3 | 100% | 83.3% | 0.958 |
+| 5 | 100% | 91.7% | 0.958 |
+
+Both figures are reported permanently because ground truth was widened *after* seeing results —
+see `docs/10-rag-architecture.md`. Caveats: 12 questions is a small set, written by the same
+person as the corpus.
+
+**Verified live:** "why pgvector instead of Qdrant?" → cited `03-architecture-decisions.md`,
+correct answer. "What does AMOS say about its Kubernetes autoscaling policy?" → correctly said
+the documentation does not define one, rather than inventing it.
 
 ## What Does Not Work
-Nothing broken. Not built: RAG (V0.5), memory (V0.6), multi-agent (V0.7), async workers (V0.8),
-OTel (V0.9), evaluation (V1.0).
+Nothing broken. Not built: memory tiers (V0.6), multi-agent (V0.7), async workers (V0.8),
+OTel (V0.9), evaluation harness for the whole system (V1.0).
 
-Known gaps, stated because an unlisted gap reads as a claim (`docs/17-failure-recovery.md`):
-- **No re-planning** — a failed task is retried as written
-- **No resumption** — a crash leaves an abandoned `RECEIVED` run; nothing sweeps it (V0.8)
-- **Tasks are not idempotent** — safe only because every tool is read-only. This becomes a real
-  bug the moment a write tool exists, which is why the registry refuses to register one
-- pgvector installed, still unused
+Gaps stated because an unlisted gap reads as a claim:
+- **No hybrid search, no reranking, no query rewriting.** Vector-only
+- **No groundedness metric** — recall@k says the right passage was retrieved, not that the answer
+  was faithful to it
+- **No chunk-size sweep** — 1000/150 was reasoned, not compared
+- Tasks still not idempotent (safe only because every tool is read-only)
+- No resumption after a crash (V0.8)
 
-## ⚠️ Operating constraints
-- **Gemini free tier: 20 requests/day, per model.** A 3-task plan costs **8 calls** — 40% of the
-  day. `AMOS_LLM_MODEL` defaults to `gemini-3.5-flash-lite`; quota is per model.
-  `gemini-2.5-flash` is 404.
-- Develop against `FakeProvider`; spend live calls only on demos.
-- `AMOS_PLANNING_ENABLED=false` for goals that need no decomposition.
+## ⚠️ Operating constraints — two different quotas
+| Thing | Quota | Waiting helps? |
+|---|---|---|
+| `generateContent` | **20 / day** per model | No — plan around it |
+| `embed_content` | **100 / minute**, counts *contents* not requests | **Yes** — ingestion paces and retries |
+
+`AMOS_LLM_MODEL` defaults to `gemini-3.5-flash-lite`. `gemini-2.5-flash` is 404.
+`AMOS_PLANNING_ENABLED=false` skips planning for goals that do not need it.
 
 ## Current Architecture
 ```
 Client → FastAPI → RunService → Orchestrator
-                                   ├── Planner (LLM) → Plan → validate (acyclic)
-                                   ├── Executor (NO LLM) → task DAG, state machine, retries
-                                   │      └── ToolUsingAgent ⇄ ToolRegistry → tools
+                                   ├── Planner (LLM) → validated acyclic Plan
+                                   ├── Executor (NO LLM) → DAG, state machine, retries
+                                   │      └── ToolUsingAgent ⇄ ToolRegistry
+                                   │            ├── calculator / read_file / http_get
+                                   │            └── search_knowledge → pgvector
                                    └── Synthesis (LLM, skipped when 1 task or 0 succeeded)
                        ↓
-                  PostgreSQL (runs, tasks, steps, llm_calls, tool_calls)
+        PostgreSQL: runs, tasks, steps, llm_calls, tool_calls, documents, chunks(vector 1536)
 ```
 
 ## Current Branch
-`main` (V0.4 merged from `feat/v0.4-planner`)
+`main` (V0.5 merged from `feat/v0.5-rag`)
 
 ## Last Known Good Commit
-Tag `v0.4` — tests pass, app runs, demo verified.
+Tag `v0.5`.
 
 ## Known Bugs
-None open. Eight fixed across V0.1–V0.4, all in `engineering/bugs-log.md`.
+None open. Nine fixed across V0.1–V0.5, all in `engineering/bugs-log.md`.
 
 ## Technical Debt
-- `ToolUsingAgent._finalise` **still has never fired.** Delete it at V0.5 — carrying untested
-  code is worse than removing it and restoring it if needed.
-- No automated migration reversibility test; `downgrade base && upgrade head` is run by hand.
+- `ToolUsingAgent._finalise` **still has never fired** across three milestones. Delete it at V0.6.
+- `steps` is still one row per run; the schema supports one per task attempt and the repository
+  does not use it.
+- No automated migration-reversibility test (run by hand).
 - No CI.
 - Backups: a documented `pg_dump` command with **no restore drill**.
-- `Step` rows are still one-per-run; V0.4 writes tasks but does not yet write a step per attempt.
-  The schema supports it (`steps.task_id`); the repository does not use it.
+- `compose.yaml` still **verified on podman only** — Docker path untested and labelled as such.
 
 ## Environment
 | Thing | State |
 |---|---|
 | Python | 3.14.4, `.venv/` |
-| Installed | fastapi 0.141.1, pydantic 2.13.5, google-genai 2.22.0, sqlalchemy 2.0.52, asyncpg 0.31, alembic 1.19.1 |
-| Container runtime | **podman 5.8.2** + podman-compose (rootless). Docker still **not installed** — `compose.yaml` targets both but is **verified on podman only** |
-| Database | PostgreSQL **18.6** + pgvector **0.8.6**, container `amos-postgres`, port 5432 |
-| Migrations | single baseline `e25051359e64` (V0.3's was squashed — see `bugs-log.md`) |
-| `.env` | working key + `AMOS_DATABASE_URL` (gitignored) |
-| Git remote | SSH over **port 443** (port 22 blocked on this network) |
+| Key deps | fastapi 0.141.1, pydantic 2.13.5, google-genai 2.22.0, sqlalchemy 2.0.52, asyncpg 0.31, alembic 1.19.1 |
+| Container | podman 5.8.2 + podman-compose (rootless) |
+| Database | PostgreSQL 18.6 + **pgvector 0.8.6 (in use)**, container `amos-postgres`, port 5432 |
+| Migrations | `e25051359e64` → `5a881f4bdb98` (pgvector, documents, chunks) |
+| Corpus | 28 documents, 300 chunks indexed |
+| `.env` | key + `AMOS_DATABASE_URL` (gitignored) |
+| Git remote | SSH over **port 443** (22 blocked on this network) |
 | GitHub | `OkayAnshul/AMOS`, public |
 
 ## How To Run
 ```bash
-podman-compose up -d
-.venv/bin/alembic upgrade head
+podman-compose up -d && .venv/bin/alembic upgrade head
+.venv/bin/python -m amos.rag.cli ingest docs      # ~4 min, paced for the quota
+.venv/bin/python -m amos.rag.cli evaluate 5
 .venv/bin/python -m amos
 
-RUN=$(curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
-  -d '{"goal":"Work out 17% of 2340 and 23% of 1500, then say which is larger."}' | jq -r .run_id)
-curl -s localhost:8000/v1/runs/$RUN | jq '.tasks, .tool_calls'
+curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
+  -d '{"goal":"Search the AMOS docs and explain why pgvector was chosen over Qdrant."}' | jq
 ```
 
 ## How To Test
 ```bash
-.venv/bin/python -m pytest                # 266; 248 pass + 18 skip without a database
+.venv/bin/python -m pytest                # 314; 296 pass + 18 skip without a database
 .venv/bin/mypy src && .venv/bin/ruff check src tests
-AMOS_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/live   # opt-in, uses daily quota
 ```
 
 ## Exact Next Step
 
-**Advance gate: unmet.** Four interview docs unread —
-`docs/interview/{foundation,agents,persistence,orchestration}.md`. Per `CLAUDE.md`, V0.5 waits.
+**Advance gate: unmet.** Five interview docs unread —
+`docs/interview/{foundation,agents,persistence,orchestration,rag}.md`.
 
-Outstanding from earlier sessions: verify `compose.yaml` on Docker and record the result in
-`docs/18-deployment.md`.
+Outstanding: verify `compose.yaml` on Docker; delete `_finalise` if still dead.
 
-If deferring again, **begin V0.5 — RAG**:
+If deferring again, **begin V0.6 — Memory**:
 
-1. `git switch -c feat/v0.5-rag`
-2. `CREATE EXTENSION vector;` in a migration; `chunks` and `documents` tables per
-   `docs/05-data-model.md`.
-3. **Embedding dimension is already decided: 1536, MRL-truncated and re-normalised** (ADR-008).
-   pgvector's HNSW index caps `vector` at 2000 dims and `gemini-embedding-001` defaults to 3072.
-   **Re-normalisation is mandatory** — truncating an L2-normalised vector leaves it
-   un-normalised, and cosine distance then returns wrong rankings *silently*.
-4. Build: `VectorStore` protocol → `PgVectorStore` → ingest pipeline (parse → chunk → embed →
-   store, with a content hash for re-ingest detection) → retrieval as a **Tool**, so the agent
-   chooses to retrieve → citations → refuse when retrieval is empty.
-5. Build the HNSW index **after** loading the corpus, not before — it is markedly faster.
-6. **Measure recall@k on a golden question set.** `docs/10-rag-architecture.md` must contain
-   measured numbers, not defaults copied from a blog post. Without that number it is not RAG,
-   it is a vector database with a claim attached.
-7. Seed corpus: AMOS's own `docs/` — it makes the demo self-referential and the ground truth
-   easy to check.
+1. `git switch -c feat/v0.6-memory`
+2. The five memory kinds are already defined in `docs/04-domain-model.md`. **The milestone's real
+   work is deciding which store each belongs in, and writing that down** —
+   `docs/09-memory-architecture.md` is the deliverable, not the code.
+3. Likely shape: *semantic* (durable facts, embedded — reuses `VectorStore`), *episodic* (past run
+   outcomes in Postgres, retrieved by goal similarity), *working* (scoped to one run, in memory).
+4. **Do not put everything in vectors.** Exact recall of "the user's name is X" is a relational
+   lookup; similarity search is the wrong tool and will occasionally return someone else's fact.
+5. Tests: fact recall across sessions; **contradicting facts resolved deterministically**;
+   episodic retrieval surfaces relevant prior runs; working memory does not leak between runs.
+6. Watch the quota: semantic memory writes cost embedding calls (100/min — fine); episodic
+   retrieval costs one query embedding per run.
 
-Full V0.5 spec and Definition of Done: `docs/19-roadmap.md`.
+Full V0.6 spec and Definition of Done: `docs/19-roadmap.md`.

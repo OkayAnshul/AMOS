@@ -13,7 +13,7 @@ demo does not go on a resume.**
 
 ## Current status
 
-**V0.4 shipped.** Four claims are evidenced. Everything below them remains unbuilt and unclaimable.
+**V0.5 shipped.** Five claims are evidenced. Everything below them remains unbuilt and unclaimable.
 
 ## Evidence table
 
@@ -23,7 +23,7 @@ demo does not go on a resume.**
 | Tool-using agent with schema-validated arguments, timeouts and permission allowlists | V0.2 | `src/amos/tools/**`, `src/amos/agents/tool_agent.py` | 76 tool/agent tests | `POST /v1/goals` with a tool-requiring goal | ✅ **shipped** |
 | Durable execution history with full request tracing and idempotent submission | V0.3 | `src/amos/database/**`, `src/amos/api/persistence.py` | 18 DB integration tests | `GET /v1/runs/{id}` | ✅ **shipped** |
 | Goal decomposition into a persisted task DAG with enforced state machine and bounded retries | V0.4 | `src/amos/orchestration/**` | 130 orchestration tests | 3-task DAG demo | ✅ **shipped** |
-| Retrieval pipeline with citation grounding and measured recall@k | V0.5 | — | — | — | ⬜ not built |
+| Retrieval pipeline with citation grounding and measured recall@k | V0.5 | `src/amos/rag/**` | 48 RAG tests + evaluation harness | `search_knowledge` tool, `rag.cli evaluate` | ✅ **shipped** |
 | Tiered memory: semantic, episodic and working stores | V0.6 | — | — | — | ⬜ not built |
 | Multi-agent orchestration with structured contracts and a critic gate | V0.7 | — | — | — | ⬜ not built |
 | Asynchronous execution with crash-safe job claiming via `SKIP LOCKED` | V0.8 | — | — | — | ⬜ not built |
@@ -286,3 +286,64 @@ distributed task processing. No resumption after a crash. **Tasks are not idempo
 safe only because every tool is read-only today. Still one agent type — **not multi-agent**. No
 retrieval; pgvector remains installed and unused. Planner quality is anecdotal (n=1), not
 measured — that arrives at V1.0.
+
+
+---
+
+### V0.5 — Retrieval (RAG)
+
+**What was implemented:** An ingestion and retrieval pipeline over pgvector — heading-aware
+chunking, MRL-truncated re-normalised embeddings, content-hash deduplication, retrieval exposed as
+an agent tool with citations and an explicit refusal path — plus an evaluation harness that
+measures recall@k and MRR against a golden set.
+
+**Evidence (files):**
+- `src/amos/rag/embeddings.py` — 1536-dim truncation with **mandatory re-normalisation**
+- `src/amos/rag/chunking.py` — heading-aware, heading prepended to each chunk
+- `src/amos/rag/store.py` — `VectorStore` protocol; pgvector and in-memory implementations
+- `src/amos/rag/ingest.py` — content hashing, per-document transactions
+- `src/amos/rag/retrieval.py` — retrieval as a Tool; refusal instruction on empty results
+- `src/amos/rag/evaluation.py` — recall@k, strict recall, MRR, golden set
+
+**Measured (28 documents, 300 chunks, 12 questions):**
+
+| k | recall (any valid source) | strict (primary only) | MRR |
+|---|---|---|---|
+| 1 | 91.7% | 50.0% | 0.917 |
+| 3 | 100% | 83.3% | 0.958 |
+| 5 | 100% | 91.7% | 0.958 |
+
+**Tests:** truncated vectors asserted non-unit without re-normalisation; fake embedder asserted to
+make similar texts similar (a random fake would make every retrieval test meaningless); empty
+retrieval asserted to instruct refusal; pgvector integration at real 1536 dimensionality;
+re-ingestion asserted to be a no-op; the evaluation harness itself tested against known-bad input.
+
+**Demo:** `"Search the AMOS docs and explain why pgvector was chosen over Qdrant"` → cited
+`03-architecture-decisions.md` with the dual-write consistency argument.
+`"What does AMOS say about its Kubernetes autoscaling policy?"` → correctly answered that the
+documentation does not define one, instead of inventing it.
+
+**Technical explanation (unaided):** `gemini-embedding-001` returns 3072 dimensions and pgvector's
+HNSW index handles at most 2000, so embeddings are MRL-truncated to 1536 — which leaves them
+un-normalised (measured: L2 norm 0.686517), and cosine distance on un-normalised vectors returns
+wrong rankings without raising. Every embedding is therefore re-normalised at the boundary.
+Chunking is heading-aware because a Markdown section is a coherent unit where a fixed window is
+not, and the heading is prepended to each chunk because a mid-section chunk otherwise loses the
+words a question about it would use. Retrieval is a tool so the agent decides when the corpus is
+relevant, and empty retrieval returns an explicit refusal instruction rather than an empty list
+the model could ignore before answering from memory.
+
+**Likely interview questions:** `docs/interview/rag.md`.
+
+**Honest resume wording:**
+> Built a retrieval pipeline over PostgreSQL/pgvector with heading-aware chunking, dimension-
+> truncated re-normalised embeddings, content-hash deduplication and citation-grounded answers;
+> measured retrieval quality with a golden-set harness reporting recall@k and MRR (recall@5 100%,
+> MRR 0.958 on a 12-question set).
+
+**What this does NOT demonstrate:** vector-only — **no hybrid search, no reranking, no query
+rewriting**. No groundedness metric: recall@k measures whether the right passage was retrieved,
+not whether the answer was faithful to it. Chunk size was reasoned, not swept. The golden set is
+**12 questions written by the same person as the corpus**, and ground truth was widened after
+seeing initial results — both the strict and lenient figures are reported for that reason. Corpus
+is 300 chunks; nothing here is evidence of behaviour at scale.

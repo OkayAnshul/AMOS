@@ -147,3 +147,83 @@ accuracy become measurable at V1.0 with a golden set; until then "the planner wo
 `asyncio.gather` over ready tasks is doing something real.
 **Cost note:** 8 calls is 40% of the daily free-tier quota for one goal. This is why synthesis is
 skipped for single-task plans and why `AMOS_PLANNING_ENABLED=false` exists.
+
+---
+
+## 2026-09-05 — Does MRL truncation actually break normalisation?
+**Milestone:** V0.5
+**Hypothesis:** ADR-008 asserted, from documentation, that truncating an L2-normalised embedding
+leaves it un-normalised. Never verified.
+**Method:** embedded the same text at 3072 and at 1536 dimensions and measured the L2 norm.
+**Result:**
+```
+3072 dims → 1.000000
+1536 dims → 0.686517
+```
+**Conclusion:** confirmed, and the magnitude is large — a 31% deviation from unit length. pgvector's
+cosine operator accepts this silently and returns wrong rankings.
+**Decision affected:** re-normalisation is applied at the provider boundary with a test asserting
+the norm, rather than being left as a documented intention.
+
+---
+
+## 2026-09-05 — Retrieval quality on the AMOS corpus
+**Milestone:** V0.5
+**Question:** is retrieval good enough to call this RAG?
+**Method:** 28 documents → 300 chunks; 12-question golden set phrased as a user would ask, not
+copied from the target passages.
+**Result:**
+
+| k | recall (any valid source) | strict (primary only) | MRR |
+|---|---|---|---|
+| 1 | 91.7% | 50.0% | 0.917 |
+| 3 | 100% | 83.3% | 0.958 |
+| 5 | 100% | 91.7% | 0.958 |
+
+**Conclusion:** yes, on this corpus and this set. Caveats stated rather than buried: 12 questions
+is small, and they were written by the same person as the corpus.
+
+---
+
+## 2026-09-05 — Why recall@1 was 50%, and what it actually measured
+**Milestone:** V0.5
+**Observation:** the first golden set had one expected source per question and scored
+`recall@1 = 50%`. **Every miss had retrieved an `interview/*.md` document.**
+**Hypothesis:** the interview docs are written as Q&A, so for a *question* query they are often
+the best semantic match — and they genuinely answer the question. The labels were wrong, not the
+retrieval.
+**Method:** widened ground truth to accept any document that actually answers the question, and
+reported both figures.
+**Result:** recall@1 50% → 91.7%. `strict` (primary source only) still reports 50%.
+**Conclusion:** confirmed. The corpus has genuine redundancy — a decision is stated in an ADR and
+explained in an interview doc — and single-label ground truth measured the labelling rather than
+the retrieval.
+
+**The uncomfortable part, recorded deliberately:** widening ground truth after seeing results is
+precisely how a metric gets massaged until it looks good. Three guards: both numbers are reported
+permanently; a source is added only when it genuinely answers the question; and the rule is
+written into `GoldenQuestion`'s docstring so the next person inherits the constraint.
+
+**The real lesson:** MRR was the honest signal the whole time. At k=1 it was already 0.917 —
+the right document was almost always rank 1 — while single-label recall said 50%. When two
+metrics disagree that sharply, suspect the measurement before the system.
+
+---
+
+## 2026-09-05 — What is the embedding quota?
+**Milestone:** V0.5
+**Hypothesis:** same shape as `generateContent` — 20/day.
+**Method:** ingested 300 chunks and read the 429 body.
+**Result:**
+```
+quotaId: EmbedContentRequestsPerMinutePerUserPerProjectPerModel-FreeTier
+limit:   100      (per MINUTE, not per day)
+retryDelay: 31s
+```
+Batching does not help: the quota counts **contents**, not HTTP requests, so a batch of 50 texts
+consumes 50 units.
+**Conclusion:** a completely different shape from the chat quota. Because the window is a minute,
+**waiting is a real strategy** — unlike the daily quota, where it is not.
+**Decision affected:** ingestion paces batches and honours the provider's own `retryDelay` on a
+429. Guessing a backoff when the server has told you exactly how long to wait is strictly worse.
+Batch size reduced 50 → 25.
