@@ -63,9 +63,41 @@ class AgentResult(BaseModel):
     response: AgentResponse
     llm_calls: list[LLMCallRecord] = Field(default_factory=list)
     tool_outcomes: list[ToolOutcome] = Field(default_factory=list)
+    tasks: list[TaskRecord] = Field(default_factory=list)
+    outcome: str = Field(
+        default="COMPLETED",
+        description="COMPLETED, PARTIALLY_COMPLETED or FAILED (V0.4).",
+    )
     repair_count: int = 0
     total_tokens: int = 0
     latency_ms: int = 0
+
+
+class TaskRecord(BaseModel):
+    """A task's outcome, as the caller sees it.
+
+    Carried on AgentResult so the orchestrator satisfies the same interface as
+    the single-shot agents — which is what lets RunService persist any of them
+    without knowing which produced the result.
+    """
+
+    plan_ref: str
+    description: str
+    state: str
+    depends_on: list[str] = Field(default_factory=list)
+    attempt_count: int = 0
+    position: int = 0
+    answer: str | None = None
+    error: str | None = None
+
+
+class TraceTask(BaseModel):
+    plan_ref: str
+    description: str
+    state: str
+    depends_on: list[str] = Field(default_factory=list)
+    attempt_count: int = 0
+    error: str | None = None
 
 
 class TraceLLMCall(BaseModel):
@@ -111,6 +143,7 @@ class RunTrace(BaseModel):
     latency_ms: int
     created_at: str
     completed_at: str | None = None
+    tasks: list[TraceTask] = Field(default_factory=list)
     steps: list[TraceStep] = Field(default_factory=list)
     llm_calls: list[TraceLLMCall] = Field(default_factory=list)
     tool_calls: list[TraceToolCall] = Field(default_factory=list)

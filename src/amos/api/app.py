@@ -36,6 +36,7 @@ from amos.observability import (
     new_request_id,
     set_request_id,
 )
+from amos.orchestration.orchestrator import Orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _status_for(exc: AmosError) -> int:
 
 def create_app(
     settings: Settings | None = None,
-    agent: ToolUsingAgent | None = None,
+    agent: Orchestrator | ToolUsingAgent | None = None,
     run_service: RunService | None = None,
 ) -> FastAPI:
     """Build the app.
@@ -92,6 +93,7 @@ def create_app(
             model=settings.llm_model,
             env=settings.env,
             tools=app.state.agent.tool_names,
+            planning=isinstance(app.state.agent, Orchestrator),
             persistence=app.state.run_service.persistence_enabled,
         )
         try:
@@ -102,8 +104,8 @@ def create_app(
 
     app = FastAPI(
         title="AMOS",
-        description="Autonomous Multi-Agent Operating System — V0.3",
-        version="0.3.0",
+        description="Autonomous Multi-Agent Operating System — V0.4",
+        version="0.4.0",
         lifespan=lifespan,
     )
     app.state.agent = agent
@@ -144,7 +146,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "version": "0.3.0"}
+        return {"status": "ok", "version": "0.4.0"}
 
     @app.post("/v1/goals", response_model=AgentResult)
     async def submit_goal(

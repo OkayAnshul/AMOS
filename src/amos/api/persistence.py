@@ -16,6 +16,7 @@ from amos.agents.schemas import (
     RunTrace,
     TraceLLMCall,
     TraceStep,
+    TraceTask,
     TraceToolCall,
 )
 from amos.database.engine import session_scope
@@ -139,6 +140,17 @@ def _to_trace(run: Run) -> RunTrace:
         latency_ms=run.latency_ms,
         created_at=run.created_at.isoformat(),
         completed_at=run.completed_at.isoformat() if run.completed_at else None,
+        tasks=[
+            TraceTask(
+                plan_ref=t.plan_ref,
+                description=t.description,
+                state=t.state,
+                depends_on=[str(d) for d in (t.depends_on or [])],
+                attempt_count=t.attempt_count,
+                error=(t.error or {}).get("message") if t.error else None,
+            )
+            for t in run.tasks
+        ],
         steps=[
             TraceStep(
                 attempt=s.attempt,

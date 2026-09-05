@@ -41,6 +41,16 @@ class Settings(BaseSettings):
         default=5, ge=1, le=15, description="Hard cap on tool-calling rounds per goal."
     )
     tool_sandbox_root: str = Field(default=".", description="Directory read_file is confined to.")
+    task_max_attempts: int = Field(
+        default=3, ge=1, le=10, description="Attempts per task before permanent failure."
+    )
+    planning_enabled: bool = Field(
+        default=True,
+        description=(
+            "V0.4 orchestration. Disable to fall back to the single-shot V0.2 agent — "
+            "cheaper on a 20-request/day quota."
+        ),
+    )
 
     database_url: str = Field(
         default="",

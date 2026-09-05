@@ -21,17 +21,38 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    MetaData,
     String,
     Text,
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
-    pass
+    """Declarative base with a constraint naming convention.
+
+    Without this, SQLAlchemy lets the database invent constraint names, and
+    Alembic then autogenerates a downgrade that says
+    `DROP CONSTRAINT ... it has no name` — the migration applies but cannot be
+    reversed. An irreversible migration is a one-way door, and you discover it
+    only when you need to go back.
+
+    Deterministic names make every constraint droppable by name from any
+    migration, on any database built from these models.
+    """
+
+    metadata = MetaData(
+        naming_convention={
+            "ix": "ix_%(column_0_label)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+            "pk": "pk_%(table_name)s",
+        }
+    )
 
 
 def _uuid_pk() -> Mapped[uuid.UUID]:
@@ -58,6 +79,9 @@ class Run(Base):
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    tasks: Mapped[list[Task]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", order_by="Task.position"
+    )
     steps: Mapped[list[Step]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="Step.attempt"
     )
@@ -79,6 +103,59 @@ class Run(Base):
     )
 
 
+class Task(Base):
+    """One unit of work within a run, produced by the planner (V0.4).
+
+    `depends_on` is a Postgres UUID[] rather than a join table. The alternative
+    — a `task_dependencies` table — is the textbook normalisation, but every read
+    of this graph loads the whole run's tasks at once anyway, so the join buys
+    nothing and costs a table. Postgres arrays are first-class here.
+
+    `plan_ref` keeps the planner's own symbolic id ("t1") so a stored task can be
+    traced back to the plan text the model produced.
+    """
+
+    __tablename__ = "tasks"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_ref: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    depends_on: Mapped[list[uuid.UUID]] = mapped_column(
+        ARRAY(UUID(as_uuid=True)), nullable=False, default=list
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # Claimed-at supports the V0.8 visibility timeout. Present now because
+    # adding a column later to a table with rows is a migration; adding it now
+    # is a default.
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[Run] = relationship(back_populates="tasks")
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "plan_ref", name="tasks_run_planref_unique"),
+        Index("idx_tasks_run_state", "run_id", "state"),
+        # Partial: READY tasks are a small fraction of all tasks, and this is
+        # the index the V0.8 worker will claim through.
+        Index(
+            "idx_tasks_claimable",
+            "state",
+            "created_at",
+            postgresql_where=(state == "READY"),
+        ),
+    )
+
+
 class Step(Base):
     """One attempt at doing the run's work.
 
@@ -92,6 +169,12 @@ class Step(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     run_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    # Nullable: V0.3 runs have steps with no task. From V0.4 every step belongs
+    # to one, and a task with three attempts has three steps — which is what
+    # makes "was this retried?" answerable from the data.
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
     )
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -107,8 +190,11 @@ class Step(Base):
     run: Mapped[Run] = relationship(back_populates="steps")
 
     __table_args__ = (
-        UniqueConstraint("run_id", "attempt", name="steps_run_attempt_unique"),
+        # Was UNIQUE(run_id, attempt) at V0.3, when a run had exactly one step.
+        # With a task DAG, several tasks legitimately share attempt number 0.
+        UniqueConstraint("task_id", "attempt", name="steps_task_attempt_unique"),
         Index("idx_steps_run", "run_id"),
+        Index("idx_steps_task", "task_id"),
     )
 
 

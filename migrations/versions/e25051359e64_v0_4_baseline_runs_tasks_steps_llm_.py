@@ -1,8 +1,8 @@
-"""v0.3 baseline: runs, steps, llm_calls, tool_calls
+"""v0.4 baseline: runs, tasks, steps, llm_calls, tool_calls
 
-Revision ID: 56b2d09878e0
+Revision ID: e25051359e64
 Revises: 
-Create Date: 2026-09-03 17:05:17.304895
+Create Date: 2026-09-05 20:53:57.460407
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '56b2d09878e0'
+revision: str = 'e25051359e64'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -33,14 +33,35 @@ def upgrade() -> None:
     sa.Column('latency_ms', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
-    sa.PrimaryKeyConstraint('id'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_runs')),
     sa.UniqueConstraint('idempotency_key', name='runs_idempotency_unique')
     )
     op.create_index('idx_runs_created', 'runs', ['created_at'], unique=False)
     op.create_index('idx_runs_idempotency', 'runs', ['idempotency_key'], unique=False, postgresql_where=sa.text('idempotency_key IS NOT NULL'))
+    op.create_table('tasks',
+    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('run_id', sa.UUID(), nullable=False),
+    sa.Column('plan_ref', sa.String(length=32), nullable=False),
+    sa.Column('description', sa.Text(), nullable=False),
+    sa.Column('state', sa.String(length=32), nullable=False),
+    sa.Column('depends_on', postgresql.ARRAY(sa.UUID()), nullable=False),
+    sa.Column('position', sa.Integer(), nullable=False),
+    sa.Column('attempt_count', sa.Integer(), nullable=False),
+    sa.Column('max_attempts', sa.Integer(), nullable=False),
+    sa.Column('result', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('error', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('claimed_at', sa.DateTime(timezone=True), nullable=True),
+    sa.ForeignKeyConstraint(['run_id'], ['runs.id'], name=op.f('fk_tasks_run_id_runs'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_tasks')),
+    sa.UniqueConstraint('run_id', 'plan_ref', name='tasks_run_planref_unique')
+    )
+    op.create_index('idx_tasks_claimable', 'tasks', ['state', 'created_at'], unique=False, postgresql_where=sa.text("state = 'READY'"))
+    op.create_index('idx_tasks_run_state', 'tasks', ['run_id', 'state'], unique=False)
     op.create_table('steps',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('run_id', sa.UUID(), nullable=False),
+    sa.Column('task_id', sa.UUID(), nullable=True),
     sa.Column('attempt', sa.Integer(), nullable=False),
     sa.Column('status', sa.String(length=32), nullable=False),
     sa.Column('agent_name', sa.String(length=64), nullable=False),
@@ -49,11 +70,13 @@ def upgrade() -> None:
     sa.Column('error', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('started_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('finished_at', sa.DateTime(timezone=True), nullable=True),
-    sa.ForeignKeyConstraint(['run_id'], ['runs.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('run_id', 'attempt', name='steps_run_attempt_unique')
+    sa.ForeignKeyConstraint(['run_id'], ['runs.id'], name=op.f('fk_steps_run_id_runs'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['task_id'], ['tasks.id'], name=op.f('fk_steps_task_id_tasks'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_steps')),
+    sa.UniqueConstraint('task_id', 'attempt', name='steps_task_attempt_unique')
     )
     op.create_index('idx_steps_run', 'steps', ['run_id'], unique=False)
+    op.create_index('idx_steps_task', 'steps', ['task_id'], unique=False)
     op.create_table('llm_calls',
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('run_id', sa.UUID(), nullable=False),
@@ -66,9 +89,9 @@ def upgrade() -> None:
     sa.Column('repair_attempt', sa.Integer(), nullable=False),
     sa.Column('error', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.ForeignKeyConstraint(['run_id'], ['runs.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['step_id'], ['steps.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
+    sa.ForeignKeyConstraint(['run_id'], ['runs.id'], name=op.f('fk_llm_calls_run_id_runs'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['step_id'], ['steps.id'], name=op.f('fk_llm_calls_step_id_steps'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_llm_calls'))
     )
     op.create_index('idx_llm_calls_run', 'llm_calls', ['run_id'], unique=False)
     op.create_table('tool_calls',
@@ -83,9 +106,9 @@ def upgrade() -> None:
     sa.Column('error', sa.Text(), nullable=True),
     sa.Column('latency_ms', sa.Integer(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
-    sa.ForeignKeyConstraint(['run_id'], ['runs.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['step_id'], ['steps.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
+    sa.ForeignKeyConstraint(['run_id'], ['runs.id'], name=op.f('fk_tool_calls_run_id_runs'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['step_id'], ['steps.id'], name=op.f('fk_tool_calls_step_id_steps'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_tool_calls'))
     )
     op.create_index('idx_tool_calls_run', 'tool_calls', ['run_id'], unique=False)
     # ### end Alembic commands ###
@@ -98,8 +121,12 @@ def downgrade() -> None:
     op.drop_table('tool_calls')
     op.drop_index('idx_llm_calls_run', table_name='llm_calls')
     op.drop_table('llm_calls')
+    op.drop_index('idx_steps_task', table_name='steps')
     op.drop_index('idx_steps_run', table_name='steps')
     op.drop_table('steps')
+    op.drop_index('idx_tasks_run_state', table_name='tasks')
+    op.drop_index('idx_tasks_claimable', table_name='tasks', postgresql_where=sa.text("state = 'READY'"))
+    op.drop_table('tasks')
     op.drop_index('idx_runs_idempotency', table_name='runs', postgresql_where=sa.text('idempotency_key IS NOT NULL'))
     op.drop_index('idx_runs_created', table_name='runs')
     op.drop_table('runs')
