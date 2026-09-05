@@ -75,16 +75,19 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Fail fast: a missing key is a startup error, not a surprise on the
         # first request an hour from now.
+        # The engine is built first: from V0.5 the agent's retrieval tool needs
+        # a session factory, so the ordering is load-bearing rather than stylistic.
+        factory = None
+        if settings.database_url:
+            app.state.engine = create_engine(settings)
+            factory = create_session_factory(app.state.engine)
+
         if app.state.agent is None:
-            app.state.agent = build_agent(settings)
+            app.state.agent = build_agent(settings, session_factory=factory)
 
         # Persistence is optional so the app still runs without a database —
-        # V0.1 and V0.2 behaviour stays reachable, and tests need no container.
+        # earlier milestones' behaviour stays reachable, and tests need no container.
         if app.state.run_service is None:
-            factory = None
-            if settings.database_url:
-                app.state.engine = create_engine(settings)
-                factory = create_session_factory(app.state.engine)
             app.state.run_service = RunService(app.state.agent, factory)
 
         log_event(
@@ -104,8 +107,8 @@ def create_app(
 
     app = FastAPI(
         title="AMOS",
-        description="Autonomous Multi-Agent Operating System — V0.4",
-        version="0.4.0",
+        description="Autonomous Multi-Agent Operating System — V0.5",
+        version="0.5.0",
         lifespan=lifespan,
     )
     app.state.agent = agent
@@ -146,7 +149,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "version": "0.4.0"}
+        return {"status": "ok", "version": "0.5.0"}
 
     @app.post("/v1/goals", response_model=AgentResult)
     async def submit_goal(

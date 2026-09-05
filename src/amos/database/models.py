@@ -103,6 +103,34 @@ class Run(Base):
     )
 
 
+class Document(Base):
+    """An ingested source document (V0.5).
+
+    `content_hash` is UNIQUE so re-ingesting unchanged content is a no-op rather
+    than a duplicate. Without it, running ingestion twice doubles the corpus and
+    every retrieval starts returning the same chunk twice.
+    """
+
+    __tablename__ = "documents"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    source: Mapped[str] = mapped_column(String(500), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    doc_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("content_hash", name="documents_content_hash_unique"),
+        Index("idx_documents_source", "source"),
+    )
+
+
 class Task(Base):
     """One unit of work within a run, produced by the planner (V0.4).
 

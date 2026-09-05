@@ -337,3 +337,86 @@ async def test_partially_completed_run_is_not_recorded_as_success(
     failed = next(t for t in stored.tasks if t.plan_ref == "t2")
     assert failed.error is not None
     assert failed.error["message"] == "timed out"
+
+
+# ---------- V0.5: pgvector ----------
+
+
+async def test_pgvector_stores_and_retrieves_by_similarity(
+    db_session: AsyncSession,
+) -> None:
+    """The real index path: 1536-dim vectors through pgvector's cosine operator."""
+    import uuid as _uuid
+
+    from sqlalchemy import text as _text
+
+    from amos.rag.embeddings import normalise
+    from amos.rag.store import PgVectorStore, StoredChunk
+
+    document_id = _uuid.uuid4()
+    await db_session.execute(
+        _text(
+            "INSERT INTO documents (id, source, title, content_hash, chunk_count, metadata)"
+            " VALUES (:id, 'test.md', 't', :hash, 2, '{}'::jsonb)"
+        ),
+        {"id": str(document_id), "hash": f"hash-{document_id}"},
+    )
+
+    # Two orthogonal unit vectors at the real dimensionality.
+    a = normalise([1.0] + [0.0] * 1535)
+    b = normalise([0.0, 1.0] + [0.0] * 1534)
+
+    store = PgVectorStore(db_session)
+    await store.upsert(
+        [
+            StoredChunk(document_id, 0, "about vectors", a, metadata={"source": "test.md"}),
+            StoredChunk(document_id, 1, "about something else", b, metadata={"source": "test.md"}),
+        ]
+    )
+
+    hits = await store.search(a, limit=2)
+    assert len(hits) == 2
+    assert hits[0].content == "about vectors"
+    assert hits[0].score > hits[1].score
+    assert hits[0].score == pytest.approx(1.0, abs=1e-4)
+    assert hits[0].source == "test.md"
+
+
+async def test_pgvector_min_score_filters(db_session: AsyncSession) -> None:
+    import uuid as _uuid
+
+    from sqlalchemy import text as _text
+
+    from amos.rag.embeddings import normalise
+    from amos.rag.store import PgVectorStore, StoredChunk
+
+    document_id = _uuid.uuid4()
+    await db_session.execute(
+        _text(
+            "INSERT INTO documents (id, source, title, content_hash, chunk_count, metadata)"
+            " VALUES (:id, 'test.md', 't', :hash, 1, '{}'::jsonb)"
+        ),
+        {"id": str(document_id), "hash": f"hash2-{document_id}"},
+    )
+    store = PgVectorStore(db_session)
+    await store.upsert([StoredChunk(document_id, 0, "x", normalise([0.0, 1.0] + [0.0] * 1534))])
+
+    query = normalise([1.0] + [0.0] * 1535)
+    assert await store.search(query, limit=5, min_score=0.5) == []
+
+
+async def test_reingesting_unchanged_content_is_a_noop(db_session: AsyncSession) -> None:
+    """Without the content hash, ingesting twice doubles the corpus and every
+    retrieval starts returning duplicates."""
+    from amos.rag.embeddings import FakeEmbeddings
+    from amos.rag.ingest import Ingestor
+    from amos.rag.store import PgVectorStore
+
+    text = "# Doc\n\n## Section\n\n" + ("meaningful content about vectors " * 20)
+    ingestor = Ingestor(db_session, PgVectorStore(db_session), FakeEmbeddings(dimensions=1536))
+
+    first_id, first_count = await ingestor.ingest_text(source="a.md", text=text)
+    second_id, second_count = await ingestor.ingest_text(source="a.md", text=text)
+
+    assert first_id is not None and first_count > 0
+    assert second_id is None and second_count == 0
