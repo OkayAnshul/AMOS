@@ -335,3 +335,93 @@ three unread interview docs.
 
 ## Recommended Commit
 Committed and pushed; merged to `main` and tagged `v0.3`.
+
+---
+
+# Session 5
+
+**Date:** 2026-09-05
+**Module:** V0.4 — Planner / Executor
+**Objective:** Decompose goals into a durable task DAG with deterministic state management,
+bounded retries and contained failure.
+
+## What We Changed
+`src/amos/orchestration/` — state machine, plan validation, planner, executor, retry policy,
+orchestrator. `tasks` table plus `steps.task_id`. Alembic metadata naming convention. Trace now
+carries the task DAG. Wrote `docs/11-orchestration.md`, `docs/17-failure-recovery.md`,
+`docs/interview/orchestration.md`. 266 tests (up from 136).
+
+## Files Changed
+`src/amos/orchestration/**` (state, plan, planner, executor, retry, orchestrator),
+`src/amos/database/{models,repository}.py`, `src/amos/api/{app,dependencies,persistence}.py`,
+`src/amos/{config,agents/schemas}.py`, `migrations/versions/*`,
+`tests/unit/orchestration/**`, `tests/integration/test_persistence.py`,
+`docs/{11,17,22}`, `docs/interview/orchestration.md`, `engineering/*`.
+
+## Architecture Decisions
+- **Only `orchestration/state.py` changes a task's state**, via `assert_transition`, which raises
+  on anything the table forbids. This is the invariant "LLMs handle uncertainty, software handles
+  guarantees" made executable rather than aspirational.
+- **A retry returns the task to `READY`**, not a retry-specific state — one code path for "about
+  to run", so a retried attempt cannot diverge from a first one.
+- **`depends_on` as a Postgres `UUID[]`**, not a join table; every read loads the whole graph
+  anyway. Stored as row UUIDs, so the graph survives without the plan text.
+- **Synthesis skipped for single-task plans and total failures** — a measurable fraction of a
+  20-call daily budget, not a micro-optimisation.
+
+## Problems Encountered
+1. `alembic downgrade` failed: `Can't emit DROP CONSTRAINT ... it has no name`.
+2. mypy flagged `2**attempt` widening to `Any`, silently making a return type unchecked.
+3. A `match` statement reusing the name `func` across arms unified two incompatible signatures.
+
+## How We Solved Them
+1. Added a `naming_convention` to `Base.metadata` so every constraint has a deterministic,
+   droppable name. This required a fresh baseline, which **squashed V0.3's migration** — a
+   history rewrite of a shipped artifact, safe only because it had run on exactly one machine.
+   Recorded as such rather than glossed.
+2. Annotated the intermediate explicitly. A widened `Any` return type is the kind of thing strict
+   typing exists to catch and comments do not.
+3. Renamed the unary branch's binding. Reusing a name across `match` arms is legal and makes the
+   checker unify types that have nothing to do with each other.
+
+## Tests Performed
+- 266 pass, 2 skipped (live). Includes **all 53 illegal state transitions** asserted to raise,
+  plus a test asserting the module's transition table and the test's expectations agree — so they
+  cannot drift.
+- `alembic upgrade → downgrade base → upgrade`, verified by table count each way.
+- `mypy --strict` clean across 34 files; `ruff` clean.
+- Live demo: one goal → 3-task diamond DAG, two branches concurrent, correct answer, trace
+  persisted with dependencies resolved to row UUIDs.
+
+## Current System State
+V0.4 shipped and tagged. `main` runs and its tests pass.
+
+## Things I Learned
+- **An irreversible migration is a one-way door you find at the worst moment.** The upgrade was
+  perfect; the defect only existed in the reverse direction, and only appeared because reversing
+  it was part of the Definition of Done.
+- **Testing only legal transitions tests almost nothing.** The value is in the 53 illegal ones —
+  and in the test that keeps the table and its expectations in sync, since otherwise adding a
+  transition silently shrinks the illegal set.
+- **Jitter needs its own test.** `test_jitter_actually_varies` exists because a constant would
+  pass every bounds check while doing nothing to decorrelate retries.
+- Writing `docs/17-failure-recovery.md`'s "deliberately NOT handled" table was more useful than
+  the handled one. Naming that tasks are not idempotent — safe today only because every tool is
+  read-only — is the gap most likely to become a real bug.
+
+## Things I Should Investigate
+- `_finalise` has now survived two milestones without ever firing. Delete it at V0.5.
+- Planner quality is n=1. Routing/planning accuracy only becomes measurable at V1.0.
+- `steps` is still one row per run; the schema supports one per attempt and the repository does
+  not use it. Worth closing before V0.8 makes attempts more interesting.
+
+## References
+- <https://alembic.sqlalchemy.org/en/latest/naming.html>
+- <https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#sqlalchemy.dialects.postgresql.ARRAY>
+
+## Next Exact Step
+V0.5 — RAG. Full sequence in `engineering/current-state.md`. The embedding dimension decision
+(1536, re-normalised) is already made in ADR-008 and is a silent-failure trap if skipped.
+
+## Recommended Commit
+Committed and pushed; merged to `main` and tagged `v0.4`.

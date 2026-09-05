@@ -13,7 +13,7 @@ demo does not go on a resume.**
 
 ## Current status
 
-**V0.3 shipped.** Three claims are evidenced. Everything below them remains unbuilt and unclaimable.
+**V0.4 shipped.** Four claims are evidenced. Everything below them remains unbuilt and unclaimable.
 
 ## Evidence table
 
@@ -22,7 +22,7 @@ demo does not go on a resume.**
 | Typed LLM service with provider abstraction and validated structured output | V0.1 | `src/amos/llm/base.py`, `src/amos/agents/agent.py`, `src/amos/api/app.py` | 41 tests, `tests/unit/test_agent_repair.py` | `POST /v1/goals` | ✅ **shipped** |
 | Tool-using agent with schema-validated arguments, timeouts and permission allowlists | V0.2 | `src/amos/tools/**`, `src/amos/agents/tool_agent.py` | 76 tool/agent tests | `POST /v1/goals` with a tool-requiring goal | ✅ **shipped** |
 | Durable execution history with full request tracing and idempotent submission | V0.3 | `src/amos/database/**`, `src/amos/api/persistence.py` | 18 DB integration tests | `GET /v1/runs/{id}` | ✅ **shipped** |
-| Goal decomposition into a persisted task DAG with enforced state machine and bounded retries | V0.4 | — | — | — | ⬜ not built |
+| Goal decomposition into a persisted task DAG with enforced state machine and bounded retries | V0.4 | `src/amos/orchestration/**` | 130 orchestration tests | 3-task DAG demo | ✅ **shipped** |
 | Retrieval pipeline with citation grounding and measured recall@k | V0.5 | — | — | — | ⬜ not built |
 | Tiered memory: semantic, episodic and working stores | V0.6 | — | — | — | ⬜ not built |
 | Multi-agent orchestration with structured contracts and a critic gate | V0.7 | — | — | — | ⬜ not built |
@@ -227,3 +227,62 @@ LOCKED` is V0.8. No task-level retries. pgvector is installed but unused until V
 a documented `pg_dump` command with **no restore drill**, so not a backup strategy. Still no
 authentication; **not deployable publicly**. Verified on podman only — the Docker path in the
 deployment doc is untested and labelled as such.
+
+
+---
+
+### V0.4 — Planner and Executor
+
+**What was implemented:** Goal decomposition into a validated, acyclic task DAG, executed in
+dependency order with independent branches running concurrently, bounded jittered retries,
+transitive skipping of unreachable work, and a task state machine that raises on any transition
+it does not sanction.
+
+**Evidence (files):**
+- `src/amos/orchestration/state.py` — the transition table; the only place a task's state changes
+- `src/amos/orchestration/plan.py` — validation incl. iterative-DFS cycle detection returning the
+  offending cycle
+- `src/amos/orchestration/executor.py` — DAG walk, concurrency, retries, skip propagation,
+  termination guarantee
+- `src/amos/orchestration/retry.py` — exponential backoff with full jitter
+- `src/amos/orchestration/orchestrator.py` — composes planner + executor + synthesis
+- `src/amos/database/models.py` — `tasks` table, `depends_on UUID[]`, partial claimable index
+
+**Tests (266 total; 130 for orchestration):**
+- **All 53 illegal state transitions asserted to raise**, plus a test asserting the module's
+  table and the test's expectations agree, so they cannot drift apart
+- `test_skipping_propagates_transitively` — a dependent of a dependent is not left waiting
+- `test_an_unrelated_branch_still_runs_when_another_fails` — failure is contained
+- `test_jitter_actually_varies` — a constant would pass a bounds check while doing nothing
+- `test_retry_budget_is_per_task_not_per_run`
+- Cycle rejection incl. a cycle hidden behind a valid prefix, and diamond graphs accepted
+
+**Demo (live):** *"Work out 17% of 2340 and 23% of 1500, then tell me which is larger and by how
+much."* → planner emitted `t1`, `t2` (independent) and `t3` (depends on both); t1/t2 ran
+concurrently; all three used the calculator; answer correct (397.8 vs 345, larger by 52.8).
+8 LLM calls, 4456 tokens, 7.5s. Trace persisted with dependencies resolved to row UUIDs.
+
+**Technical explanation (unaided):** The planner is the only LLM that decides structure, and its
+output is validated — unique ids, resolvable dependencies, acyclicity — before anything is
+persisted, because a cyclic plan reaching the database would be a run that can never complete.
+The executor contains no LLM calls: it decides what may run, what is retried and what is skipped.
+A task's state changes only through `assert_transition`, which raises on anything the table
+forbids, so no model output can put the system into an unsanctioned state. Retries return a task
+to `READY` rather than a special state, so a retried attempt cannot behave differently from a
+first one, and backoff is jittered because tasks that fail together would otherwise retry
+together indefinitely.
+
+**Likely interview questions:** `docs/interview/orchestration.md`.
+
+**Honest resume wording:**
+> Built a task orchestration layer that decomposes goals into a validated acyclic task graph and
+> executes it with dependency-aware scheduling, concurrent independent branches, an enforced state
+> machine, per-task bounded retries with jittered exponential backoff, and transitive failure
+> containment; 266 tests including exhaustive coverage of all 53 illegal state transitions.
+
+**What this does NOT demonstrate:** no re-planning — a failed task is retried as written. No
+worker and no queue; execution still happens inside the HTTP request, so this is **not**
+distributed task processing. No resumption after a crash. **Tasks are not idempotent**, which is
+safe only because every tool is read-only today. Still one agent type — **not multi-agent**. No
+retrieval; pgvector remains installed and unused. Planner quality is anecdotal (n=1), not
+measured — that arrives at V1.0.

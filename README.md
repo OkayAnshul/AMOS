@@ -4,9 +4,10 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V0.3 shipped — runnable.** An agent that uses tools, records everything it does, and
-> can tell you exactly what happened on any past request. See
-> [`engineering/current-state.md`](engineering/current-state.md) for exactly where things stand.
+> **Status: V0.4 shipped — runnable.** Decomposes a goal into a task graph, runs independent
+> branches concurrently, retries what fails, contains what cannot be recovered, and records all
+> of it. See [`engineering/current-state.md`](engineering/current-state.md) for exactly where
+> things stand.
 
 ---
 
@@ -33,8 +34,8 @@ That principle has visible consequences:
 |---|---|---|
 | 0.1 ✅ | Grounded agent API | A typed, tested LLM service with provider abstraction and validated outputs |
 | 0.2 ✅ | Tool registry | An agent that autonomously selects and executes validated tools |
-| **0.3 ✅** | **Persistence + trace** | **"What exactly happened on this request?" — answerable for any run** |
-| 0.4 | Planner / Executor | Goal decomposition into a durable task DAG with deterministic state |
+| 0.3 ✅ | Persistence + trace | "What exactly happened on this request?" — answerable for any run |
+| **0.4 ✅** | **Planner / Executor** | **Goal decomposition into a durable task DAG with deterministic state** |
 | 0.5 | RAG | A retrieval pipeline with citations and a measured recall@k |
 | 0.6 | Memory tiers | Recalls user facts and prior run outcomes across sessions |
 | 0.7 | Multi-agent | Specialised agents collaborate; a critic gates output |
@@ -148,6 +149,32 @@ be corrected:
 
 </details>
 
+Give it something that needs decomposing:
+
+```bash
+curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
+  -d '{"goal":"Work out 17% of 2340 and 23% of 1500, then say which is larger and by how much."}'
+```
+
+The planner emits a real graph — `t1` and `t2` have no dependency on each other, so they run
+concurrently; `t3` waits for both:
+
+```
+t1: SUCCEEDED   Calculate 17 percent of 2340
+t2: SUCCEEDED   Calculate 23 percent of 1500
+t3: SUCCEEDED   Compare them            <- t1, t2
+
+calculator {"expression": "2340 * 0.17"} -> 397.8
+calculator {"expression": "1500 * 0.23"} -> 345.0
+calculator {"expression": "397.8 - 345"} -> 52.8
+
+answer: "17% of 2340 is larger by 52.8."
+```
+
+A task that fails is retried with jittered backoff; if it exhausts its budget, its dependents are
+skipped transitively while unrelated branches still complete, and the run reports
+`PARTIALLY_COMPLETED` rather than discarding the work that succeeded.
+
 Then ask what actually happened:
 
 ```bash
@@ -192,10 +219,14 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest        # 136 tests; 118 pass + 18 skip with no database
+.venv/bin/python -m pytest        # 266 tests; 248 pass + 18 skip with no database
 .venv/bin/mypy src                # strict
 .venv/bin/ruff check src tests
 ```
+
+The state machine is tested exhaustively: all 11 legal transitions, and **all 53 illegal ones
+asserted to raise** — plus a test that the transition table and the test's expectations agree, so
+they cannot drift apart.
 
 Tests never call the real API — the free tier is ~15 RPM and non-deterministic, so a network
 dependency would make the suite slow and flaky. `FakeProvider` scripts the model's responses,
@@ -217,11 +248,12 @@ src/amos/
   llm/              LLMProvider protocol, GeminiProvider, FakeProvider
   tools/            Tool ABC, registry, calculator / read_file / http_get
   agents/           validate-and-repair loop + bounded tool loop
+  orchestration/    state machine, plan validation, planner, executor, retries
   database/         models, async engine, repository
   api/              FastAPI app, run service, error -> status mapping
 migrations/         Alembic
 tests/              unit, integration, live (opt-in)
-docs/               architecture and decisions (15 written, 9 stubs)
+docs/               architecture and decisions (17 written, 7 stubs)
 engineering/        current-state, session log, learning log, decisions, bugs, experiments
 CLAUDE.md           working agreement and session protocol
 ```

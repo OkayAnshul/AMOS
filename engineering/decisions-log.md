@@ -111,3 +111,36 @@ probably cannot, and that should be an explicit decision rather than a drift.
 *Decision:* podman — rootless, no daemon, no group membership requiring a re-login.
 *Consequence:* `compose.yaml` is written for both but **verified only on podman**.
 `docs/18-deployment.md` states this rather than implying Docker was tested.
+
+---
+
+## 2026-09-05 — Session 5 (V0.4)
+
+No new ADRs; V0.4 implements the orchestration model from `docs/04-domain-model.md`.
+
+**Only `orchestration/state.py` may change a task's state.**
+*Why:* the invariant "LLMs handle uncertainty, software handles guarantees" is only real if there
+is exactly one enforcement point. `assert_transition` raises on anything the table forbids.
+*Reconsider if:* never. If a state change needs to happen elsewhere, add the transition to the
+table — do not bypass it.
+
+**A retry returns the task to `READY`, not to a retry-specific state.**
+*Why:* one code path for "about to run", so a retried attempt cannot diverge from a first one.
+
+**`depends_on` as a Postgres `UUID[]`, not a join table.**
+*Why:* every read loads a run's whole task graph anyway, so the join buys nothing and costs a
+table on the hottest path.
+*Reconsider if:* dependencies ever need attributes of their own (a type, a condition).
+
+**Synthesis skipped for single-task plans and for total failures.**
+*Why:* a single task's answer already is the answer; restating it costs a call from a 20/day
+budget. Nothing to synthesise when nothing succeeded.
+
+**Alembic metadata naming convention.**
+*Why:* without it, autogenerate produced an unnamed FK and an irreversible migration.
+*Consequence:* required rebaselining, which rewrote V0.3's migration — acceptable only because
+it had run on one machine. Recorded in `bugs-log.md`.
+
+**`AMOS_PLANNING_ENABLED` falls back to the V0.2 single-shot agent.**
+*Why:* not every goal needs decomposition, and planning costs 3-8× the calls. On a 20/day quota
+that is the difference between six goals and two.
