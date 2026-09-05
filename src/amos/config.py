@@ -41,6 +41,19 @@ class Settings(BaseSettings):
         default=5, ge=1, le=15, description="Hard cap on tool-calling rounds per goal."
     )
     tool_sandbox_root: str = Field(default=".", description="Directory read_file is confined to.")
+    embedding_model: str = Field(default="gemini-embedding-001")
+    embedding_dimensions: int = Field(
+        default=1536,
+        ge=128,
+        le=2000,
+        description=(
+            "Must stay <=2000: pgvector's HNSW index limit for the `vector` type. "
+            "Truncated embeddings are re-normalised (ADR-008)."
+        ),
+    )
+    retrieval_top_k: int = Field(default=5, ge=1, le=20)
+    retrieval_min_score: float = Field(default=0.30, ge=0.0, le=1.0)
+
     task_max_attempts: int = Field(
         default=3, ge=1, le=10, description="Attempts per task before permanent failure."
     )

@@ -224,3 +224,27 @@ on exactly one machine. Once anyone else has applied a migration, this option is
 only route is a new forward migration.
 **Test added:** none automated yet — `alembic downgrade base && alembic upgrade head` is run
 manually before each migration is committed. Worth automating at V1.0 CI.
+
+---
+
+## 2026-09-05 — Rate-limited ingest discarded all its work
+**Milestone:** V0.5
+**Symptom:** ingesting 300 chunks hit a 429 partway through and raised. `documents` and `chunks`
+were both empty afterwards — every successfully embedded chunk was lost.
+**Expected:** work already done survives a later failure.
+**Root cause:** `ingest_directory` ran the whole corpus inside **one** `session_scope`, so the
+transaction rolled back everything. The rollback was correct behaviour; the transaction boundary
+was wrong. Compounding it, the embedding quota turned out to be per-minute and content-counted,
+so a large ingest hitting a limit was near-certain rather than unlikely.
+**Fix:** one transaction **per document**, plus paced batches and retry honouring the provider's
+`retryDelay`.
+**How it was found:** the first real ingest of a real corpus. No unit test would have caught it —
+`FakeEmbeddings` never rate-limits, and a 3-document fixture never runs long enough to fail
+partway.
+**Lesson:** **transaction boundaries should follow units of useful work, not units of code.** All
+300 chunks in one transaction reads as "atomic ingestion" and is actually "lose everything on any
+failure". Ask what the caller wants to keep when it fails halfway — here, every document already
+finished. Corollary: a long-running loop over an external API needs its failure behaviour designed,
+not inherited from whatever `with` block happens to enclose it.
+**Test added:** `test_reingesting_unchanged_content_is_a_noop` covers the hash path; the
+transaction boundary is exercised by the real ingest, which is honest about the limits of fakes.

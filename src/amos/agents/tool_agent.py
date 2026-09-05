@@ -250,8 +250,15 @@ def _fallback_response(text: str) -> AgentResponse:
     )
 
 
-def build_default_registry(sandbox_root: Any) -> ToolRegistry:
-    """The V0.2 tool set: deterministic, reversible, safe."""
+def build_default_registry(sandbox_root: Any, extra_tools: list[Any] | None = None) -> ToolRegistry:
+    """The default tool set: deterministic, reversible, safe.
+
+    `extra_tools` carries tools that need runtime dependencies — V0.5's
+    retrieval tool needs a database session and an embedding provider, which
+    this function has no business constructing.
+    """
     from amos.tools.builtin import CalculatorTool, HttpGetTool, ReadFileTool
 
-    return ToolRegistry([CalculatorTool(), HttpGetTool(), ReadFileTool(sandbox_root)])
+    tools = [CalculatorTool(), HttpGetTool(), ReadFileTool(sandbox_root)]
+    tools.extend(extra_tools or [])
+    return ToolRegistry(tools)

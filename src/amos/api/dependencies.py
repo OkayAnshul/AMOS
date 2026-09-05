@@ -15,6 +15,9 @@ from amos.config import Settings
 from amos.llm.base import LLMProvider
 from amos.llm.gemini import GeminiProvider
 from amos.orchestration.orchestrator import Orchestrator
+from amos.rag.embeddings import GeminiEmbeddings
+from amos.rag.retrieval import SearchKnowledgeTool
+from amos.rag.store import SessionScopedVectorStore
 from amos.tools.registry import ToolRegistry
 
 
@@ -22,8 +25,33 @@ def build_provider(settings: Settings) -> LLMProvider:
     return GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model)
 
 
-def build_registry(settings: Settings) -> ToolRegistry:
-    return build_default_registry(Path(settings.tool_sandbox_root).resolve())
+def build_retrieval_tool(
+    settings: Settings, session_factory: object | None
+) -> SearchKnowledgeTool | None:
+    """The retrieval tool, when there is a database to retrieve from.
+
+    Returns None without persistence, so the agent simply has one tool fewer
+    rather than a tool that fails on every call.
+    """
+    if session_factory is None:
+        return None
+    return SearchKnowledgeTool(
+        SessionScopedVectorStore(session_factory),
+        GeminiEmbeddings(
+            settings.require_api_key(),
+            model=settings.embedding_model,
+            dimensions=settings.embedding_dimensions,
+        ),
+        min_score=settings.retrieval_min_score,
+    )
+
+
+def build_registry(settings: Settings, session_factory: object | None = None) -> ToolRegistry:
+    retrieval = build_retrieval_tool(settings, session_factory)
+    return build_default_registry(
+        Path(settings.tool_sandbox_root).resolve(),
+        [retrieval] if retrieval is not None else [],
+    )
 
 
 def build_tool_agent(
@@ -45,6 +73,7 @@ def build_agent(
     settings: Settings,
     provider: LLMProvider | None = None,
     registry: ToolRegistry | None = None,
+    session_factory: object | None = None,
 ) -> Orchestrator | ToolUsingAgent:
     """The V0.4 orchestrator, or the V0.2 agent when planning is disabled.
 
@@ -52,7 +81,9 @@ def build_agent(
     which one is in use.
     """
     provider = provider or build_provider(settings)
-    runner = build_tool_agent(settings, provider, registry)
+    runner = build_tool_agent(
+        settings, provider, registry or build_registry(settings, session_factory)
+    )
     if not settings.planning_enabled:
         return runner
     return Orchestrator(

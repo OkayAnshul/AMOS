@@ -425,3 +425,91 @@ V0.5 — RAG. Full sequence in `engineering/current-state.md`. The embedding dim
 
 ## Recommended Commit
 Committed and pushed; merged to `main` and tagged `v0.4`.
+
+---
+
+# Session 6
+
+**Date:** 2026-09-05
+**Module:** V0.5 — Retrieval (RAG)
+**Objective:** A real retrieval pipeline with citations and a **measured** recall figure — not a
+vector database with a claim attached.
+
+## What We Changed
+`src/amos/rag/` — embeddings with mandatory re-normalisation, heading-aware chunking, VectorStore
+protocol with pgvector and in-memory implementations, ingestion with content hashing, retrieval as
+a Tool, and an evaluation harness. pgvector migration. Ingest/evaluate CLI. Wrote
+`docs/10-rag-architecture.md` with measured numbers and `docs/interview/rag.md`. 314 tests.
+
+## Files Changed
+`src/amos/rag/**`, `src/amos/database/models.py`, `src/amos/api/{app,dependencies}.py`,
+`src/amos/agents/tool_agent.py`, `src/amos/config.py`, `migrations/versions/*_v0_5_*`,
+`tests/unit/rag/**`, `tests/integration/test_persistence.py`, `docs/{10,22}`,
+`docs/interview/rag.md`, `engineering/*`.
+
+## Architecture Decisions
+- **Re-normalise every truncated embedding at the provider boundary**, with a test — not a
+  documented intention.
+- **Heading-aware chunking**, heading prepended to each of its chunks.
+- **Retrieval as a Tool**, so the agent decides; inherits validation, timeouts and trace visibility.
+- **Empty retrieval returns a refusal instruction**, never an empty list.
+- **Ingestion commits per document** — see the bug below.
+- **Ground truth is multi-source**, with strict and lenient recall both reported permanently.
+
+## Problems Encountered
+1. First ingest hit a 429 and **rolled back all 300 chunks** — every embedded chunk lost.
+2. The embedding quota behaved nothing like the chat quota.
+3. `recall@1 = 50%` on the first golden set, which looked like bad retrieval.
+
+## How We Solved Them
+1. One transaction **per document** rather than one for the corpus, plus paced batches and retry
+   honouring the provider's own `retryDelay`.
+2. Read the 429 body: **100 per minute**, counting *contents* not requests — so batching reduces
+   round trips but not quota, and unlike the daily chat quota, waiting actually works.
+3. Looked at *what* was retrieved instead of just the score. Every miss had returned an
+   `interview/*.md` doc — Q&A-formatted, and a genuinely correct answer. The labels were wrong,
+   not the retrieval. Widened ground truth, and report both figures permanently.
+
+## Tests Performed
+- 314 pass, 2 skipped. Includes a test asserting truncated vectors are not unit length without
+  re-normalisation, and one asserting the fake embedder makes similar texts similar (a random fake
+  would render every retrieval assertion meaningless).
+- pgvector integration tests at the real 1536 dimensionality.
+- Migration reverses (`upgrade → downgrade → upgrade`, table counts checked).
+- Live: ingested 28 docs / 300 chunks; re-ingest reported `0 documents (28 unchanged)`; measured
+  recall at k=1/3/5; two grounded demos including the refusal path.
+
+## Current System State
+V0.5 shipped and tagged. `main` runs and its tests pass.
+
+## Things I Learned
+- **A metric that disagrees with another metric is telling you something.** MRR was 0.917 at k=1
+  while single-label recall said 50%. The right document was almost always rank 1 the whole time.
+  When two measures disagree sharply, suspect the measurement before the system.
+- **Widening ground truth after seeing results is exactly how metrics get massaged.** Doing it was
+  correct here — the retrieved docs genuinely answer the questions — but it only stays honest
+  because both numbers are reported and the rule is written into the code the next person edits.
+- **Transaction boundaries should follow units of useful work, not units of code.** 300 chunks in
+  one transaction reads as "atomic" and means "lose everything on any failure".
+- **Fakes cannot rate-limit.** No unit test would have found the ingest rollback; only a real
+  corpus against a real quota did. Same lesson as V0.2's thought_signature, in a new costume.
+- The normalisation trap was real and large: 31% off unit length, accepted silently by pgvector.
+
+## Things I Should Investigate
+- Chunk-size sweep — 1000/150 was reasoned, never compared. The harness now exists.
+- Hybrid search: an exact identifier like `SKIP LOCKED` is probably better found by keyword.
+- Whether the interview docs dominating question-shaped queries is a corpus property worth
+  exploiting (index them separately?) or a distortion to control for.
+- `_finalise` has now been dead for three milestones. Delete it.
+
+## References
+- <https://ai.google.dev/gemini-api/docs/embeddings>
+- <https://github.com/pgvector/pgvector>
+
+## Next Exact Step
+V0.6 — Memory. The real deliverable is `docs/09-memory-architecture.md`: deciding which store
+each memory kind belongs in. **Not everything belongs in vectors** — exact recall of a stated fact
+is a relational lookup, and similarity search will occasionally return the wrong person's fact.
+
+## Recommended Commit
+Committed and pushed; merged to `main` and tagged `v0.5`.

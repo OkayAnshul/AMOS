@@ -4,9 +4,9 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V0.4 shipped — runnable.** Decomposes a goal into a task graph, runs independent
-> branches concurrently, retries what fails, contains what cannot be recovered, and records all
-> of it. See [`engineering/current-state.md`](engineering/current-state.md) for exactly where
+> **Status: V0.5 shipped — runnable.** Plans a goal into a task graph, uses tools, retrieves from
+> an indexed corpus with citations, and records all of it. Retrieval quality is measured, not
+> asserted. See [`engineering/current-state.md`](engineering/current-state.md) for exactly where
 > things stand.
 
 ---
@@ -35,8 +35,8 @@ That principle has visible consequences:
 | 0.1 ✅ | Grounded agent API | A typed, tested LLM service with provider abstraction and validated outputs |
 | 0.2 ✅ | Tool registry | An agent that autonomously selects and executes validated tools |
 | 0.3 ✅ | Persistence + trace | "What exactly happened on this request?" — answerable for any run |
-| **0.4 ✅** | **Planner / Executor** | **Goal decomposition into a durable task DAG with deterministic state** |
-| 0.5 | RAG | A retrieval pipeline with citations and a measured recall@k |
+| 0.4 ✅ | Planner / Executor | Goal decomposition into a durable task DAG with deterministic state |
+| **0.5 ✅** | **RAG** | **A retrieval pipeline with citations and a measured recall@k** |
 | 0.6 | Memory tiers | Recalls user facts and prior run outcomes across sessions |
 | 0.7 | Multi-agent | Specialised agents collaborate; a critic gates output |
 | 0.8 | Async execution | Long-running goals execute asynchronously with crash-safe job claiming |
@@ -175,6 +175,41 @@ A task that fails is retried with jittered backoff; if it exhausts its budget, i
 skipped transitively while unrelated branches still complete, and the run reports
 `PARTIALLY_COMPLETED` rather than discarding the work that succeeded.
 
+Index AMOS's own documentation and ask it about itself:
+
+```bash
+.venv/bin/python -m amos.rag.cli ingest docs        # 28 docs -> 300 chunks
+.venv/bin/python -m amos.rag.cli evaluate 5
+
+curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
+  -d '{"goal":"Search the AMOS docs and explain why pgvector was chosen over Qdrant."}'
+```
+
+It retrieves, cites, and — asked about something the docs do not cover — says so instead of
+inventing it:
+
+```
+Q: why pgvector instead of Qdrant?
+   search_knowledge -> ['03-architecture-decisions.md', ...]
+   "...chunk and embedding reside in the same row and transaction, avoiding the
+    dual-write consistency problem..."
+
+Q: what is AMOS's Kubernetes autoscaling policy?
+   "The documentation does not define one — Kubernetes is listed only as a
+    feature beyond V1.0 that is not promised."
+```
+
+**Measured**, not claimed — 28 documents, 300 chunks, 12-question golden set:
+
+| k | recall@k | MRR |
+|---|---|---|
+| 1 | 91.7% | 0.917 |
+| 3 | 100% | 0.958 |
+| 5 | 100% | 0.958 |
+
+Both a lenient and a strict figure are reported, because ground truth was widened after seeing
+initial results — the reasoning is in [`docs/10-rag-architecture.md`](docs/10-rag-architecture.md).
+
 Then ask what actually happened:
 
 ```bash
@@ -219,7 +254,7 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest        # 266 tests; 248 pass + 18 skip with no database
+.venv/bin/python -m pytest        # 314 tests; 296 pass + 18 skip with no database
 .venv/bin/mypy src                # strict
 .venv/bin/ruff check src tests
 ```
@@ -249,11 +284,12 @@ src/amos/
   tools/            Tool ABC, registry, calculator / read_file / http_get
   agents/           validate-and-repair loop + bounded tool loop
   orchestration/    state machine, plan validation, planner, executor, retries
+  rag/              chunking, embeddings, vector store, ingestion, retrieval, evaluation
   database/         models, async engine, repository
   api/              FastAPI app, run service, error -> status mapping
 migrations/         Alembic
 tests/              unit, integration, live (opt-in)
-docs/               architecture and decisions (17 written, 7 stubs)
+docs/               architecture and decisions (19 written, 5 stubs)
 engineering/        current-state, session log, learning log, decisions, bugs, experiments
 CLAUDE.md           working agreement and session protocol
 ```
