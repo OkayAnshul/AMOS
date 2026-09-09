@@ -4,10 +4,10 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V0.9 shipped — runnable.** Queues goals to worker processes that survive being killed
-> mid-run, routes work to specialised agents, plans task graphs, uses tools, retrieves with
-> citations, remembers facts across sessions, reviews its own answers, and emits standard traces
-> for all of it.
+> **Status: V1.0 — the roadmap is complete.** Queues goals to worker processes that survive being
+> killed mid-run, routes work to specialised agents, plans task graphs, uses tools, retrieves with
+> citations, remembers facts across sessions, reviews its own answers, emits standard traces, and
+> **measures its own quality**.
 > See [`engineering/current-state.md`](engineering/current-state.md) for exactly where things stand.
 >
 > New here? [`docs/25-build-journal.md`](docs/25-build-journal.md) explains how it was built,
@@ -44,8 +44,8 @@ That principle has visible consequences:
 | 0.6 ✅ | Memory tiers | Recalls user facts and prior run outcomes across sessions |
 | 0.7 ✅ | Multi-agent | Specialised agents collaborate; a critic gates output |
 | 0.8 ✅ | Async execution | Long-running goals execute asynchronously with crash-safe job claiming |
-| **0.9 ✅** | **Observability** | **Full distributed trace of any run** |
-| 1.0 | Evaluation | Quality is measured, not asserted |
+| 0.9 ✅ | Observability | Full distributed trace of any run |
+| **1.0 ✅** | **Evaluation** | **Quality is measured, not asserted** |
 
 Full detail, including failure modes and stopping points, in
 [`docs/19-roadmap.md`](docs/19-roadmap.md).
@@ -279,10 +279,27 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest        # 441 tests; skips the database ones if none is running
-.venv/bin/mypy src                # strict
-.venv/bin/ruff check src tests
+make check      # lint + types + 480 tests
+make test       # tests only; database ones skip if none is running
 ```
+
+CI runs the suite **with and without a database**, applies migrations in **both directions**, and
+runs with **no API key** — which turns "tests never touch the network" from documentation into
+something enforced.
+
+### Measured, not asserted
+
+| What | Command | Result |
+|---|---|---|
+| End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
+| Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
+| Agent routing | `make routing` | 10/10 |
+| Tests | `make test` | 480 |
+
+Every one of those sets is small and was written by the person who built the system. They are a
+regression gate, not a characterisation of quality, and
+[`docs/16-evaluation.md`](docs/16-evaluation.md) says so next to every number — including the two
+occasions the metric was wrong and the system was right.
 
 The state machine is tested exhaustively: all 11 legal transitions, and **all 53 illegal ones
 asserted to raise** — plus a test that the transition table and the test's expectations agree, so
@@ -314,6 +331,7 @@ src/amos/
   agents/           specialists, router, critic, team, message contracts
   worker/           SKIP LOCKED queue, worker loop
   telemetry/        OpenTelemetry spans and metrics
+  evaluation/       golden goals, deterministic scorers, groundedness judge
   database/         models, async engine, repository
   api/              FastAPI app, run service, error -> status mapping
 migrations/         Alembic
