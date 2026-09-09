@@ -7,6 +7,7 @@ tests can build an app with or without a database.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from collections.abc import Callable
 
@@ -26,6 +27,8 @@ from amos.database.repository import RunRepository
 from amos.errors import AmosError, ConfigurationError
 from amos.memory.episodic import EpisodicMemory
 from amos.observability import log_event
+from amos.telemetry.metrics import instruments, safe_labels
+from amos.telemetry.tracing import describe_goal, span
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +46,12 @@ class RunService:
         agent: object,
         session_factory: async_sessionmaker[AsyncSession] | None,
         episodic: Callable[[AsyncSession], EpisodicMemory] | None = None,
+        trace_content: bool = False,
     ) -> None:
         self._agent = agent
         self._factory = session_factory
         self._episodic = episodic
+        self._trace_content = trace_content
 
     @property
     def persistence_enabled(self) -> bool:
@@ -111,9 +116,15 @@ class RunService:
 
         # 3. Execute outside any transaction — an LLM call can take seconds and
         #    holding a database connection open across it would exhaust the pool.
+        started = time.perf_counter()
         try:
-            result = await self._agent.run(goal)  # type: ignore[attr-defined]
+            with span(
+                "run.execute",
+                **{"amos.run_id": str(run_id), **describe_goal(goal, self._trace_content)},
+            ):
+                result = await self._agent.run(goal)  # type: ignore[attr-defined]
         except AmosError as exc:
+            instruments().runs.add(1, safe_labels(outcome="FAILED"))
             async with session_scope(self._factory) as session:
                 repo = RunRepository(session)
                 run = await repo.get_trace(run_id)  # type: ignore[assignment]
@@ -143,6 +154,19 @@ class RunService:
                     run_id=str(run_id),
                     error=type(exc).__name__,
                 )
+
+        instruments().runs.add(1, safe_labels(outcome=result.outcome))
+        instruments().run_duration.record(
+            int((time.perf_counter() - started) * 1000), safe_labels(outcome=result.outcome)
+        )
+        for record in result.llm_calls:
+            instruments().llm_calls.add(
+                1, safe_labels(provider=record.provider, model=record.model)
+            )
+            instruments().llm_tokens.add(
+                record.prompt_tokens + record.output_tokens,
+                safe_labels(provider=record.provider, model=record.model),
+            )
 
         log_event(logger, "run.persisted", run_id=str(run_id))
         return result, run_id

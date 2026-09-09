@@ -51,6 +51,22 @@ class Settings(BaseSettings):
             "Truncated embeddings are re-normalised (ADR-008)."
         ),
     )
+    otlp_endpoint: str = Field(
+        default="",
+        description=(
+            "OTLP HTTP traces endpoint, e.g. http://localhost:4318/v1/traces. "
+            "Empty disables tracing entirely (every span becomes a no-op)."
+        ),
+    )
+    otel_service_name: str = Field(default="amos")
+    trace_content: bool = Field(
+        default=False,
+        description=(
+            "Record goal text in span attributes. OFF by default: a goal is user "
+            "content and spans are shipped, stored and searchable."
+        ),
+    )
+
     worker_poll_interval: float = Field(
         default=2.0, gt=0, le=60, description="Seconds between polls when the queue is empty."
     )
