@@ -381,3 +381,30 @@ inversion that reintroduces staleness through a longer path: metadata is a build
 describes the last build, not the source.
 **Test added:** `test_the_version_is_defined_in_exactly_one_place` asserts no version literal
 returns to `app.py` or `pyproject.toml`.
+
+---
+
+## 2026-09-09 — ORM models and database schema had silently diverged
+**Milestone:** V0.8 (introduced at V0.6)
+**Symptom:** none. Everything worked. Found while adding V0.8's claim columns.
+**Root cause:** `runs.lesson` had been added to the database by a hand-written V0.6 migration while
+the matching `str.replace` patch to `models.py` **silently failed** — the same class of bug as the
+unregistered memory tools. Five columns were in the database and absent from the model.
+
+Nothing broke because `amos.memory.episodic` reads and writes those columns through **raw SQL**,
+so the missing ORM attribute was never accessed. The drift was invisible precisely because the one
+code path that used the column did not go through the model.
+**Fix:** synchronised the models, and added `tests/integration/test_schema_drift.py` comparing
+`Base.metadata` against `information_schema` for every table, in both directions.
+**How it was found:** writing a one-off script to diff the model against the live schema before
+adding new columns — not by anything failing.
+**Lessons:**
+1. **Migrations and models are two descriptions of one schema, and nothing was comparing them.**
+   Hand-written migrations make that drift possible; autogenerate would have caught it, but
+   autogenerate cannot express `CREATE EXTENSION` or a `vector` column, so some migrations must be
+   hand-written. The answer is a drift test, not avoiding hand-written migrations.
+2. **A silent patch failure is now the third distinct bug of that shape** (V0.6 tools, V0.6
+   `build_registry`, this). Every one was invisible to the test suite.
+3. The exemption list is explicit rather than a blanket "ignore mismatches" — `vector` columns are
+   named individually, so the check keeps its teeth.
+**Test added:** `test_schema_drift.py` (9 tests, parametrised per table).

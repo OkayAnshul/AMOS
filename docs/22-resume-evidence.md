@@ -13,7 +13,7 @@ demo does not go on a resume.**
 
 ## Current status
 
-**V0.7 shipped.** Seven claims are evidenced. Everything below them remains unbuilt and unclaimable.
+**V0.8 shipped.** Eight claims are evidenced. Everything below them remains unbuilt and unclaimable.
 
 ## Evidence table
 
@@ -26,7 +26,7 @@ demo does not go on a resume.**
 | Retrieval pipeline with citation grounding and measured recall@k | V0.5 | `src/amos/rag/**` | 48 RAG tests + evaluation harness | `search_knowledge` tool, `rag.cli evaluate` | ✅ **shipped** |
 | Tiered memory: semantic, episodic and working stores | V0.6 | `src/amos/memory/**` | 28 memory + wiring tests | cross-process recall demo | ✅ **shipped** |
 | Multi-agent orchestration with structured contracts and a critic gate | V0.7 | `src/amos/agents/{registry,router,critic,team,messages}.py` | 37 agent tests | routing 10/10; reviewed answer demo | ✅ **shipped** |
-| Asynchronous execution with crash-safe job claiming via `SKIP LOCKED` | V0.8 | — | — | — | ⬜ not built |
+| Asynchronous execution with crash-safe job claiming via `SKIP LOCKED` | V0.8 | `src/amos/worker/**` | 20 queue + worker tests | SIGKILL recovery demo | ✅ **shipped** |
 | Distributed tracing with OpenTelemetry | V0.9 | — | — | — | ⬜ not built |
 | Evaluation harness gating regressions in CI | V1.0 | — | — | — | ⬜ not built |
 
@@ -446,3 +446,51 @@ work and agents do not hand tasks to each other. No dynamic agent creation; the 
 startup. No per-agent memory. One critic for every kind of answer. **Routing measured on 10
 self-authored cases**, which cannot distinguish a good router from easy questions. Still
 synchronous — no worker and no queue, so this is **not** distributed task processing.
+
+
+---
+
+### V0.8 — Asynchronous Execution
+
+**What was implemented:** Goals queued and executed by separate worker processes claiming work
+from PostgreSQL with `SELECT ... FOR UPDATE SKIP LOCKED`, with visibility-timeout crash recovery
+and a poison-message ceiling.
+
+**Evidence (files):**
+- `src/amos/worker/queue.py` — atomic claim, reclaim, give-up
+- `src/amos/worker/runner.py` — the loop; survives any single run failing
+- `src/amos/api/persistence.py` — `enqueue_only`, the 202 path
+- migration adds run-level claim columns and **removes** V0.4's speculative task-level ones
+
+**Tests (418 total; 20 for the queue and worker):** concurrent workers claim **disjoint** runs
+(the test that would fail without `SKIP LOCKED`); an abandoned run is reclaimed while a healthy one
+is not stolen; a reclaimed run shows `attempt_count = 2`; a run exhausting its attempts stops being
+claimed; an unexpected exception does not kill the worker.
+
+**Demo (live):** `POST /v1/goals/async` returned **202 in 54 ms** with no LLM call in the request
+path. A worker claimed the run; it was killed with **`SIGKILL`** mid-execution; a second worker
+swept, reclaimed and completed it — `attempt_count = 2`, correct answer, different `claimed_by`.
+
+**Technical explanation (unaided):** The claim is a single `UPDATE ... WHERE id = (SELECT ... FOR
+UPDATE SKIP LOCKED)`, so selecting-and-locking and the status change happen in one transaction and
+two workers cannot both see a run as queued. Without `SKIP LOCKED` a second worker would block on
+the locked row and the workers would serialise into one. Crash recovery needs no failure detection:
+a run held in RUNNING past the visibility timeout is returned to the queue, because the only thing
+observable about a dead worker is that its run stopped progressing. Delivery is at-least-once —
+exactly-once is unavailable, since a worker can finish and die before recording it — so the correct
+mitigation is idempotent work rather than a stronger delivery claim.
+
+**Likely interview questions:** `docs/interview/async.md`.
+
+**Honest resume wording:**
+> Implemented asynchronous job processing on PostgreSQL using `SELECT ... FOR UPDATE SKIP LOCKED`
+> for atomic multi-worker claiming, with visibility-timeout recovery of runs abandoned by crashed
+> workers, an attempt ceiling for poison messages, and at-least-once delivery semantics stated
+> explicitly rather than overclaimed; verified by killing a worker mid-execution.
+
+**What this does NOT demonstrate:** **not a distributed system** — multiple processes on one
+machine sharing one database; recovery from a *process* crash, not a host failure or network
+partition. No `LISTEN`/`NOTIFY` (polling only). No priority, fairness or starvation protection. No
+dead-letter queue. No heartbeats — liveness is inferred from a timestamp alone. No graceful
+shutdown: `SIGTERM` mid-run relies on the same timeout as a crash. **Task-level idempotency keys
+are not implemented**, so re-execution safety currently rests on every tool being read-only.

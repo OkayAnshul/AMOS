@@ -464,6 +464,8 @@ Kept in one place because the corrections are more instructive than the successe
 | 13 | the test fake was deterministic | `hash()` is randomised per process | flaky retrieval tests since V0.5 |
 | 14 | package metadata gives the current version | it gives the last *build's* version | `/health` reporting a stale version |
 | 15 | `recall_past_runs` belongs to the analyst | it is a lookup, so it belongs to the researcher | the routing measurement caught it |
+| 16 | `tasks.claimed_at` would be needed at V0.8 | claiming is per-run; the granularity was wrong | schema documenting an abandoned plan |
+| 17 | models and migrations were in sync | five columns had diverged for two milestones | invisible until something used the ORM |
 
 Six of these came from documentation being wrong or untested. **Documentation is not behaviour.**
 
@@ -669,3 +671,85 @@ is one definition in `amos.__version__` with the build reading from it.
 
 *When a fact appears in three places, the fix is one definition — not better discipline about
 updating three.*
+
+---
+
+## Chapter 9 — V0.8: asynchronous execution, and admitting what you cannot guarantee
+
+**Goal:** goals that take minutes should not hold an HTTP connection, and a worker crash should not
+lose work.
+
+### The whole mechanism, in one statement
+
+```sql
+UPDATE runs SET status='RUNNING', claimed_at=now(), claimed_by=:worker,
+                attempt_count = attempt_count + 1
+ WHERE id = (SELECT id FROM runs WHERE status='QUEUED'
+              ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+RETURNING id, goal_text, attempt_count
+```
+
+`FOR UPDATE` locks the row. **Without `SKIP LOCKED`, a second worker blocks** on the row the first
+holds, so N workers serialise into one — and it still looks like it works, because jobs get
+processed, just never concurrently. `SKIP LOCKED` steps over locked rows.
+
+The claim and the state change are **one statement in one transaction**, which is what makes a dead
+worker recoverable without any recovery code: the database releases the lock when the connection
+dies, and the row is never in a half-claimed limbo.
+
+No broker. No Celery. The database AMOS already had.
+
+### The demo worth remembering
+
+Worker A claimed a run and was killed with `SIGKILL` — no cleanup, no chance to update anything.
+The run sat in `RUNNING`, `claimed_by` naming a dead process. Worker B started, swept, reclaimed
+it, and finished it. `attempt_count` went to 2, so the retry is visible in the data.
+
+**Nothing detects that a worker died.** Only that a run has been held longer than the visibility
+timeout. That is the whole recovery mechanism, and it is about ten lines of SQL.
+
+### Saying what you cannot do
+
+**Exactly-once delivery is not available and AMOS does not claim it.** A worker can finish a run
+and die before recording that it did; the timeout then makes it claimable and it runs twice.
+
+The correct response is idempotent work, not a stronger promise. AMOS's honest position:
+
+| | |
+|---|---|
+| Every tool read-only | ✅ re-execution wastes tokens, corrupts nothing |
+| `remember_fact` | ⚠️ a duplicate could store the same fact twice — **supersession makes that harmless by luck, not design** |
+| Task-level idempotency keys | ❌ not implemented |
+
+That middle row is written down as a gap. It is exactly the kind of thing that is comfortable to
+leave unmentioned, because nothing is currently broken by it.
+
+The visibility timeout has its own admitted failure: a worker that is merely *slow* can have its
+run stolen and executed twice. The default is 600s because the cost of waiting is latency and the
+cost of being aggressive is duplicate work.
+
+### The speculative column that guessed wrong
+
+V0.4 added `tasks.claimed_at` and a partial claimable index, with the comment *"present now because
+adding a column later to a table with rows is a migration."*
+
+The reasoning was sound. The guess was wrong: claiming happens at the **run** level, because a run
+is what a client submits and polls, and a run's internal concurrency is already handled inside one
+worker. The column never anticipated the right granularity.
+
+V0.8 **removed both** rather than carry schema documenting an abandoned plan. The cost of the
+speculation was never the column itself — it was that a column in a schema looks like a decision
+somebody made for a reason.
+
+### And a silent divergence that had been running for two milestones
+
+While adding the new columns, a quick diff of the ORM models against the live schema found **five
+columns in the database and absent from the models**. A V0.6 `str.replace` patch had silently
+failed — the third distinct bug of that exact shape.
+
+Nothing had broken, because the one code path using those columns (`memory/episodic.py`) goes
+through **raw SQL**. The drift was invisible precisely because the model was never consulted.
+
+Migrations and models are two descriptions of one schema, and nothing was comparing them.
+`test_schema_drift.py` now does, in both directions, with `vector` columns exempted **by name**
+rather than by a blanket ignore — an exemption list that names things keeps its teeth.
