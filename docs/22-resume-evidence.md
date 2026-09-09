@@ -13,7 +13,7 @@ demo does not go on a resume.**
 
 ## Current status
 
-**V0.8 shipped.** Eight claims are evidenced. Everything below them remains unbuilt and unclaimable.
+**V0.9 shipped.** Nine claims are evidenced. Only V1.0 remains unbuilt.
 
 ## Evidence table
 
@@ -27,7 +27,7 @@ demo does not go on a resume.**
 | Tiered memory: semantic, episodic and working stores | V0.6 | `src/amos/memory/**` | 28 memory + wiring tests | cross-process recall demo | ✅ **shipped** |
 | Multi-agent orchestration with structured contracts and a critic gate | V0.7 | `src/amos/agents/{registry,router,critic,team,messages}.py` | 37 agent tests | routing 10/10; reviewed answer demo | ✅ **shipped** |
 | Asynchronous execution with crash-safe job claiming via `SKIP LOCKED` | V0.8 | `src/amos/worker/**` | 20 queue + worker tests | SIGKILL recovery demo | ✅ **shipped** |
-| Distributed tracing with OpenTelemetry | V0.9 | — | — | — | ⬜ not built |
+| Distributed tracing with OpenTelemetry | V0.9 | `src/amos/telemetry/**` | 23 telemetry tests | live collector capture | ✅ **shipped** |
 | Evaluation harness gating regressions in CI | V1.0 | — | — | — | ⬜ not built |
 
 ## Words that must never be used unless earned
@@ -494,3 +494,51 @@ partition. No `LISTEN`/`NOTIFY` (polling only). No priority, fairness or starvat
 dead-letter queue. No heartbeats — liveness is inferred from a timestamp alone. No graceful
 shutdown: `SIGTERM` mid-run relies on the same timeout as a crash. **Task-level idempotency keys
 are not implemented**, so re-execution safety currently rests on every tool being read-only.
+
+
+---
+
+### V0.9 — Observability
+
+**What was implemented:** OpenTelemetry spans for runs, LLM calls and tool calls, plus metrics for
+calls, tokens, outcomes and duration — with user content and high-cardinality values excluded by
+construction.
+
+**Evidence (files):**
+- `src/amos/telemetry/tracing.py` — spans, GenAI semantic conventions, forbidden-key filter
+- `src/amos/telemetry/metrics.py` — instruments and the label allowlist
+- `otel-collector.yaml`, `compose.yaml` — local collector behind a profile
+
+**Tests (441 total; 23 telemetry):** goal text absent from attributes by default;
+`trace_content` defaults to False; sensitive keys dropped; `run_id`/`goal`/`user`/`request_id`
+rejected as metric labels; exceptions mark spans as errors; the V0.1 request id lands on spans;
+spans are safe to create with tracing disabled.
+
+**Demo:** against a local collector —
+```
+run.execute    amos.goal.length: Int(19)    amos.request_id: 0013d45719d8413d
+llm.complete   gen_ai.request.model: gemini-3.5-flash-lite
+tool.execute   amos.tool.name: calculator
+```
+Length, not text: the content rule holding in exported data.
+
+**Technical explanation (unaided):** The request id threaded through logs since V0.1 becomes a span
+attribute, so traces correlate with logs that predate tracing entirely — the milestone is small
+because correlation was already solved. Goal text is excluded from spans by default because spans
+are shipped, stored and searchable, and the default must be the safe direction since an opt-out
+ships content from every deployment that forgot to configure it. Metric labels come from a closed
+allowlist because an unbounded label creates one time series per distinct value; the same values
+are fine as span attributes, since a span is one event rather than a dimension.
+
+**Likely interview questions:** `docs/interview/observability.md`.
+
+**Honest resume wording:**
+> Instrumented an LLM agent platform with OpenTelemetry traces and metrics following the GenAI
+> semantic conventions, with user content excluded from span attributes by default and metric
+> labels restricted to a closed allowlist to bound cardinality.
+
+**What this does NOT demonstrate:** **trace context does not propagate into workers** — a queued
+run starts a separate trace. No sampling: every span is exported, which is fine at this volume and
+wrong at any real one. No dashboards, no alerting, no SLOs — metrics are emitted and nothing
+consumes them. FastAPI is not auto-instrumented, so there are no HTTP-level spans. One local
+collector printing to a log; **nothing here is evidence of production monitoring**.
