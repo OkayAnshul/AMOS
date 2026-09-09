@@ -334,3 +334,50 @@ one real fact.
 **Fix:** assert a delta (`before + 2`).
 **Lesson:** **a test over a shared table must measure its own effect, not the table's total.**
 Transactional isolation makes tests independent of each other, not independent of the world.
+
+---
+
+## 2026-09-09 — A "deterministic" test fake was randomised per process
+**Milestone:** V0.7 (introduced at V0.5)
+**Symptom:** `test_relevant_passage_ranks_first` failed in a full-suite run and passed in
+isolation, then passed on re-run. Classic flake.
+**Root cause:** `FakeEmbeddings` built its vectors with Python's built-in `hash()`, which is
+**randomised per process** by PYTHONHASHSEED. Every run produced different embeddings, so whether
+the relevant chunk ranked first depended on the seed. Its docstring said "deterministic".
+**Fix:** `blake2b` — stable across processes and Python versions.
+**How it was found:** noticing that a test which passes alone and fails in a suite is usually
+shared state or nondeterminism, then checking `hash()` across three interpreters.
+**Lesson — the interesting half:** `test_fake_embeddings_are_deterministic` **existed and passed
+throughout**, because it compared two calls *inside one process*, where `hash()` is perfectly
+stable. The test measured the wrong scope, so it certified exactly the property it was missing.
+
+**Testing determinism requires comparing against a value fixed OUTSIDE the process.** The
+replacement test shells out to a second interpreter and pins the result.
+
+More generally: a test that can only observe one process cannot detect process-level
+nondeterminism, and its name will confidently claim otherwise. The V0.5 flakiness was latent for
+two milestones behind a green test.
+**Test added:** `test_fake_embeddings_are_stable_ACROSS_processes`.
+
+---
+
+## 2026-09-09 — The version was a literal in three files and drifted
+**Milestone:** V0.7
+**Symptom:** `test_health_reports_version` failed after the V0.7 bump. `/health` reported `0.6.0`
+while `pyproject.toml` said `0.7.0`.
+**Root cause:** the version existed as a literal in `pyproject.toml`, `FastAPI(version=...)` and
+the `/health` body. A patch script updated two of them and aborted before the third, which is a
+symptom rather than the cause — three copies of one fact will drift eventually regardless.
+**First fix, which was wrong:** `importlib.metadata.version("amos")`. That reads the version
+recorded at **install** time; in an editable install it is whatever `pip install -e` last saw, so
+bumping pyproject changed nothing and `/health` then reported `0.3.0` — stale in a new way, and
+harder to notice.
+**Actual fix:** `__version__` defined in `src/amos/__init__.py`, with
+`[tool.hatch.version] path = "src/amos/__init__.py"` so the build reads it from the code. One
+definition; everything else derives.
+**Lesson:** **when a fact appears in three places, the fix is one definition — not better
+discipline about updating three.** And "read it from the package metadata" is a plausible-looking
+inversion that reintroduces staleness through a longer path: metadata is a build artefact, so it
+describes the last build, not the source.
+**Test added:** `test_the_version_is_defined_in_exactly_one_place` asserts no version literal
+returns to `app.py` or `pyproject.toml`.

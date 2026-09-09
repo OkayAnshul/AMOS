@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from amos.agents.agent import GroundedAgent
+from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent, build_default_registry
 from amos.config import Settings
 from amos.llm.base import LLMProvider
@@ -94,16 +95,30 @@ def build_agent(
     provider: LLMProvider | None = None,
     registry: ToolRegistry | None = None,
     session_factory: object | None = None,
-) -> Orchestrator | ToolUsingAgent:
+) -> Orchestrator | ToolUsingAgent | AgentTeam:
     """The V0.4 orchestrator, or the V0.2 agent when planning is disabled.
 
     Both satisfy `run(goal) -> AgentResult`, so nothing downstream branches on
     which one is in use.
     """
     provider = provider or build_provider(settings)
-    runner = build_tool_agent(
-        settings, provider, registry or build_registry(settings, session_factory)
-    )
+    tools = registry or build_registry(settings, session_factory)
+
+    # V0.7: the team is a task runner like any other single agent, because they
+    # all satisfy `run(goal) -> AgentResult`. That interface holding across five
+    # milestones is why this is a substitution rather than a rewrite.
+    runner: ToolUsingAgent | AgentTeam
+    if settings.multi_agent_enabled:
+        runner = AgentTeam(
+            provider,
+            tools,
+            timeout=settings.llm_timeout_seconds,
+            temperature=settings.llm_temperature,
+            max_revisions=settings.max_revisions,
+            critic_enabled=settings.critic_enabled,
+        )
+    else:
+        runner = build_tool_agent(settings, provider, tools)
     if not settings.planning_enabled:
         return runner
     return Orchestrator(

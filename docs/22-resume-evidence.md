@@ -13,7 +13,7 @@ demo does not go on a resume.**
 
 ## Current status
 
-**V0.6 shipped.** Six claims are evidenced. Everything below them remains unbuilt and unclaimable.
+**V0.7 shipped.** Seven claims are evidenced. Everything below them remains unbuilt and unclaimable.
 
 ## Evidence table
 
@@ -25,7 +25,7 @@ demo does not go on a resume.**
 | Goal decomposition into a persisted task DAG with enforced state machine and bounded retries | V0.4 | `src/amos/orchestration/**` | 130 orchestration tests | 3-task DAG demo | ✅ **shipped** |
 | Retrieval pipeline with citation grounding and measured recall@k | V0.5 | `src/amos/rag/**` | 48 RAG tests + evaluation harness | `search_knowledge` tool, `rag.cli evaluate` | ✅ **shipped** |
 | Tiered memory: semantic, episodic and working stores | V0.6 | `src/amos/memory/**` | 28 memory + wiring tests | cross-process recall demo | ✅ **shipped** |
-| Multi-agent orchestration with structured contracts and a critic gate | V0.7 | — | — | — | ⬜ not built |
+| Multi-agent orchestration with structured contracts and a critic gate | V0.7 | `src/amos/agents/{registry,router,critic,team,messages}.py` | 37 agent tests | routing 10/10; reviewed answer demo | ✅ **shipped** |
 | Asynchronous execution with crash-safe job claiming via `SKIP LOCKED` | V0.8 | — | — | — | ⬜ not built |
 | Distributed tracing with OpenTelemetry | V0.9 | — | — | — | ⬜ not built |
 | Evaluation harness gating regressions in CI | V1.0 | — | — | — | ⬜ not built |
@@ -34,7 +34,7 @@ demo does not go on a resume.**
 
 | Word | Requires | Currently |
 |---|---|---|
-| "multi-agent" | ≥2 genuinely specialised agents collaborating | ❌ zero agents |
+| "multi-agent" | ≥2 genuinely specialised agents collaborating | ✅ **earned at V0.7** — disjoint tool allowlists, enforced structurally |
 | "RAG" | a real pipeline with measured retrieval quality | ❌ not built |
 | "autonomous" | the system decides, not a human | ❌ nothing runs |
 | "distributed system" | actually distributed — AMOS is a modular monolith | ❌ never, per ADR-004 |
@@ -394,3 +394,55 @@ stored only when the model calls the tool. **`remember_fact` persists a decision
 with no approval step and no provenance check on content** — a prompt-injected instruction could
 write a false fact the system repeats later. Conversation memory is deliberately not built, because
 there is no multi-turn conversation API.
+
+
+---
+
+### V0.7 — Multi-Agent
+
+**What was implemented:** Specialised agents differing in enforced capability, a router that
+assigns tasks and is measured, structured inter-agent messages, and a critic that gates output
+through a bounded revision loop.
+
+**Evidence (files):**
+- `src/amos/agents/registry.py` — `AgentSpec` with a tool allowlist; `registry_from()` enforces it
+- `src/amos/agents/router.py` — validated routing with fallback, plus `evaluate_routing`
+- `src/amos/agents/critic.py` — no tools; `apply_report` attaches unresolved objections
+- `src/amos/agents/team.py` — routing, specialised execution, bounded revision
+- `src/amos/agents/messages.py` — `AgentTask`, `CriticReport`, `RoutingDecision`
+
+**Measured:** routing **10/10** on a labelled set (`python -m amos.agents.cli`) — after a fix the
+measurement itself surfaced. **Caveat carried alongside the number:** ten self-authored cases,
+with both the system and one label changed between runs.
+
+**Tests (389 total; 37 for agents):** researcher cannot calculate and analyst cannot reach the
+network, asserted structurally; the critic has zero tools; a critic that never accepts cannot loop
+forever; unresolved objections reach the user and confidence is downgraded; a broken critic
+accepts rather than blocking; a hallucinated agent name falls back.
+
+**Demo:** *"According to the AMOS documentation, why was Celery rejected for the job queue?"* →
+routed to researcher → `search_knowledge` → answer citing `03-architecture-decisions.md` → critic
+`accept`. 4 calls, 3100 tokens.
+
+**Technical explanation (unaided):** Agents differ in capability rather than wording: each is
+constructed with a registry containing only its allowlisted tools, so an agent requesting a tool
+outside its allowlist gets NOT_FOUND through the existing machinery rather than a new enforcement
+path. The two routable allowlists are disjoint, because overlapping capability makes routing
+arbitrary. The critic deliberately has no tools — one that can fetch new sources is doing research
+and its verdict becomes unfalsifiable. The revision loop is bounded in code because two models can
+disagree indefinitely, and when the budget is exhausted the answer is returned with the objections
+attached and confidence downgraded rather than discarded or silently accepted.
+
+**Likely interview questions:** `docs/interview/multi-agent.md`.
+
+**Honest resume wording:**
+> Built a multi-agent layer with specialisation enforced by per-agent tool allowlists rather than
+> prompting, structured inter-agent message contracts, LLM-based task routing validated against a
+> registry with fallback, and a critic gate with a bounded revision loop that surfaces unresolved
+> objections instead of suppressing them; routing accuracy measured on a labelled set.
+
+**What this does NOT demonstrate:** **no agent-to-agent delegation** — the orchestrator assigns
+work and agents do not hand tasks to each other. No dynamic agent creation; the roster is fixed at
+startup. No per-agent memory. One critic for every kind of answer. **Routing measured on 10
+self-authored cases**, which cannot distinguish a good router from easy questions. Still
+synchronous — no worker and no queue, so this is **not** distributed task processing.

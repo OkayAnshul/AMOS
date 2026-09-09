@@ -57,9 +57,35 @@ async def test_fake_embeddings_satisfy_the_protocol() -> None:
 
 
 async def test_fake_embeddings_are_deterministic() -> None:
-    """Otherwise every retrieval test would be flaky for the wrong reason."""
+    """Otherwise every retrieval test is flaky for the wrong reason."""
     fake = FakeEmbeddings()
     assert await fake.embed_query("hello world") == await fake.embed_query("hello world")
+
+
+async def test_fake_embeddings_are_stable_ACROSS_processes() -> None:
+    """The version that actually matters.
+
+    Comparing two calls inside one process passes even with Python's randomised
+    `hash()`, which is exactly how the original flakiness survived a test named
+    "deterministic". This pins a value computed by a *different* interpreter.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import asyncio;from amos.rag.embeddings import FakeEmbeddings;"
+        "print(asyncio.run(FakeEmbeddings(dimensions=8).embed_query('pgvector qdrant')))"
+    )
+    first = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    ).stdout
+    second = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    ).stdout
+    assert first == second
+
+    fake = FakeEmbeddings(dimensions=8)
+    assert str(await fake.embed_query("pgvector qdrant")) + "\n" == first
 
 
 async def test_fake_embeddings_are_normalised() -> None:

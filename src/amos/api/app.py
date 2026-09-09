@@ -14,7 +14,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from amos import __version__
 from amos.agents.schemas import AgentResult, GoalRequest, RunTrace
+from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent
 from amos.api.dependencies import build_agent
 from amos.api.persistence import RunService
@@ -62,7 +64,7 @@ def _status_for(exc: AmosError) -> int:
 
 def create_app(
     settings: Settings | None = None,
-    agent: Orchestrator | ToolUsingAgent | None = None,
+    agent: Orchestrator | ToolUsingAgent | AgentTeam | None = None,
     run_service: RunService | None = None,
 ) -> FastAPI:
     """Build the app.
@@ -120,8 +122,8 @@ def create_app(
 
     app = FastAPI(
         title="AMOS",
-        description="Autonomous Multi-Agent Operating System — V0.6",
-        version="0.6.0",
+        description="Autonomous Multi-Agent Operating System — V0.7",
+        version=__version__,
         lifespan=lifespan,
     )
     app.state.agent = agent
@@ -162,7 +164,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "version": "0.6.0"}
+        return {"status": "ok", "version": __version__}
 
     @app.post("/v1/goals", response_model=AgentResult)
     async def submit_goal(
