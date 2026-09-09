@@ -270,3 +270,67 @@ is not "the service is running" (V0.3's postgres:18 bug — the second time this
 Also: when a flaky failure stops reproducing before you capture it, say so. A confident
 post-hoc diagnosis of a test you never saw fail is a guess wearing evidence's clothes.
 **Test added:** none — this is test infrastructure. The retry is the fix.
+
+---
+
+## 2026-09-09 — Memory tools were built, tested, documented, and never registered
+**Milestone:** V0.6
+**Symptom:** the first cross-session demo failed. Session 1 answered *"I have noted that your
+preferred backend language is Python"* — and the `memories` table was empty. Session 2 reached for
+`search_knowledge` instead of `recall_facts`.
+**Expected:** `remember_fact` is called, the fact persists, a later process recalls it.
+**Root cause:** two layers, and the first diagnosis was wrong.
+
+*First (incorrect) reading:* "the model chose badly; the tool descriptions overlap." Plausible, and
+it fit the symptom.
+
+*Actual cause:* the tools were never offered. The startup log showed
+`["calculator", "http_get", "read_file", "search_knowledge"]` — four tools, not seven. A
+`str.replace` patch to `build_registry` had **silently failed to apply** because ruff had
+reformatted the signature the pattern matched against. The import patch failed the same way. The
+model could not have called a tool it was never given.
+**Fix:** rewrote `build_registry` with a patcher that exits non-zero when its pattern is absent,
+and added `tests/unit/test_tool_wiring.py` asserting exactly which tools the agent receives under
+each configuration.
+**How it was found:** reading the startup log line that lists registered tools, instead of
+theorising about model behaviour. The evidence was one grep away from a diagnosis that would have
+been wrong.
+**Lessons:**
+1. **Unit tests verify components; nothing was verifying they were connected.** 344 tests passed
+   with the feature entirely unreachable. Wiring is a behaviour and needs its own test.
+2. **A silent `str.replace` no-op is a whole class of bug** — the third occurrence in this project.
+   Editing by pattern match must fail loudly when the pattern is missing.
+3. **When a symptom is consistent with "the model did something odd", check the deterministic
+   explanation first.** LLM systems make it far too easy to attribute a plain wiring bug to model
+   behaviour, and that explanation is unfalsifiable enough to be comfortable.
+**Test added:** `tests/unit/test_tool_wiring.py` (6 tests).
+
+---
+
+## 2026-09-09 — Foreign key rejected the supersession ordering the comment defended
+**Milestone:** V0.6
+**Symptom:** `ForeignKeyViolationError: Key (superseded_by)=(...) is not present in table
+"memories"` on every contradiction test.
+**Root cause:** `remember()` marked the old row `superseded_by = new_id` **before** inserting the
+new row — so the FK pointed at a row that did not exist yet. The code carried a comment explaining
+that this ordering was necessary to avoid briefly having two current facts.
+**Fix:** insert first, then update, excluding the new row (`AND id <> :new_id`, or it supersedes
+itself and the subject ends up with *zero* current facts).
+**Lesson:** the comment was wrong twice — the ordering it defended was impossible, and the danger
+it warned about was not real, since both statements run in one transaction and no other transaction
+observes the intermediate state. **A confident comment justifying an impossible design is worse
+than no comment**, because it discourages the next reader from checking. Same shape as V0.2's
+`"Verified against the API"` docstring that had never been verified.
+**Test added:** the whole contradiction-resolution suite.
+
+---
+
+## 2026-09-09 — A test asserted an absolute count over a shared table
+**Milestone:** V0.6
+**Symptom:** `test_count_reports_only_current_facts` passed, then failed after a live demo stored
+one real fact.
+**Root cause:** the test asserted `count_current() == 2`. The rollback fixture isolates a test's
+*own* writes; it does not remove rows other things committed.
+**Fix:** assert a delta (`before + 2`).
+**Lesson:** **a test over a shared table must measure its own effect, not the table's total.**
+Transactional isolation makes tests independent of each other, not independent of the world.
