@@ -461,6 +461,9 @@ Kept in one place because the corrections are more instructive than the successe
 | 10 | a green suite means it runs | pytest's path masked a broken install | shipping a package that cannot import |
 | 11 | the memory tools were wired in | a silent patch no-op meant they were never registered | a documented feature the agent cannot reach |
 | 12 | supersede-then-insert is the safe order | the foreign key makes it impossible | — caught immediately |
+| 13 | the test fake was deterministic | `hash()` is randomised per process | flaky retrieval tests since V0.5 |
+| 14 | package metadata gives the current version | it gives the last *build's* version | `/health` reporting a stale version |
+| 15 | `recall_past_runs` belongs to the analyst | it is a lookup, so it belongs to the researcher | the routing measurement caught it |
 
 Six of these came from documentation being wrong or untested. **Documentation is not behaviour.**
 
@@ -572,3 +575,97 @@ The comment was wrong twice — the ordering it defended was impossible, and the
 about was not real (both statements share a transaction, so no other transaction sees the
 intermediate state). **A confident comment justifying an impossible design is worse than no
 comment.** Same shape as V0.2's `"Verified against the API"` docstring that had never been verified.
+
+---
+
+## Chapter 8 — V0.7: making "multi-agent" an honest word
+
+**Goal:** specialised agents that genuinely differ, communicating in structured messages, with a
+critic gating the output.
+
+Note where this sits: **"multi-agent" is not claimed anywhere before V0.7.** Six milestones of
+`22-resume-evidence.md` say "not built" on that row, because one agent with three prompts is not
+a multi-agent system and an interviewer will ask exactly that.
+
+### The property that makes it real
+
+Agents differ in **capability, enforced by construction**. Each is handed a `ToolRegistry`
+containing only its allowlisted tools, so a Researcher asking for `calculator` gets `NOT_FOUND`
+through the machinery V0.2 already built — no new enforcement path.
+
+| Agent | Tools | Cannot |
+|---|---|---|
+| Researcher | search, fetch, read, recall | compute |
+| Analyst | calculator | search, fetch, recall |
+| Critic | **none** | anything but judge |
+
+The two routable allowlists are **disjoint**, deliberately. Overlapping capability makes routing
+arbitrary, because either agent could do the work.
+
+**The critic has no tools** because a critic that can fetch new sources is doing research, and its
+verdict becomes unfalsifiable — it can always find something to justify what it already concluded.
+
+### The bound that keeps two models from arguing forever
+
+Critic and producer can disagree indefinitely. `max_revisions` caps it in code — the same
+principle as V0.4's tool-loop cap: *the bound is the guarantee, the prompt is a request.*
+
+When the budget runs out with objections outstanding, the answer is returned **with the objections
+attached and confidence downgraded**, not discarded and not silently presented as accepted. Three
+options; the other two are "throw away work that is probably partly right" and "tell the user a
+lie they cannot detect."
+
+And a **broken critic accepts**. It is a quality gate, not a correctness requirement: if the
+reviewer breaks, blocking a correct answer is worse than passing an unreviewed one.
+
+### The measurement that caught my mistake
+
+Routing scored **90% (9/10)** on the first run. The miss:
+
+```
+"Check whether previous runs solved a similar goal"
+  expected analyst, routed to researcher
+```
+
+**The router was right. I was wrong.** I had assigned `recall_past_runs` to the analyst, reasoning
+that past outcomes inform judgement. But recalling a past run is a *lookup* — structurally
+identical to searching documents or recalling a fact. The tool was on the wrong agent.
+
+Moved it; routing went to **100% (10/10)**, and the two allowlists became fully disjoint, which is
+a better design independent of the score.
+
+**This is the same shape as V0.5's recall problem and deserves the same scrutiny.** The
+distinction I would defend: in V0.5 I changed the *ground truth* to match the output; here I
+changed the *system* because the disagreement revealed a real design error, and the label followed
+the code. The caveat stands regardless — ten self-authored cases cannot tell a good router from a
+set of easy questions.
+
+### What five milestones of a stable interface bought
+
+`AgentTeam` satisfies `run(goal) -> AgentResult` — the same signature every agent has had since
+V0.1. So adding an entire agent layer touched the executor, the orchestrator and `RunService` not
+at all.
+
+That interface was defined in V0.1 for a reason that had nothing to do with multi-agent: tests
+needed a fake provider. It has now absorbed tools, orchestration, memory and specialisation
+without changing.
+
+### Two bugs worth keeping
+
+**A "deterministic" test fake that was randomised per process.** `FakeEmbeddings` used Python's
+built-in `hash()`, which is seeded per process, so retrieval tests passed or failed by luck. The
+flake had been latent since V0.5.
+
+The instructive part: `test_fake_embeddings_are_deterministic` **existed and passed the whole
+time**, because it compared two calls *inside one process* where `hash()` is perfectly stable. It
+measured the wrong scope and certified precisely the property it was missing. **Testing
+determinism requires a value fixed outside the process** — the replacement shells out to a second
+interpreter.
+
+**The version was a literal in three files and drifted.** The first fix —
+`importlib.metadata.version()` — was a plausible-looking inversion that reintroduced staleness
+through a longer path, because metadata describes the last *build*, not the source. The real fix
+is one definition in `amos.__version__` with the build reading from it.
+
+*When a fact appears in three places, the fix is one definition — not better discipline about
+updating three.*
