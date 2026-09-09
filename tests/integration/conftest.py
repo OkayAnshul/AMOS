@@ -13,11 +13,13 @@ recreating a schema per test.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -27,15 +29,29 @@ TEST_DATABASE_URL = os.getenv(
 )
 
 
-async def _database_reachable() -> bool:
-    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
-    try:
-        async with engine.connect():
+async def _database_reachable(attempts: int = 5, delay: float = 1.0) -> bool:
+    """Can we actually run a query?
+
+    Opening a connection is not the same as the server being ready — a Postgres
+    container that has just started accepts connections while still
+    initialising, so a bare `connect()` can succeed and the next statement fail.
+    This ran a query and still saw one flaky failure immediately after
+    `podman start`, so it retries briefly rather than reporting a cold container
+    as "no database".
+    """
+    for attempt in range(attempts):
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(sa_text("SELECT 1"))
             return True
-    except Exception:
-        return False
-    finally:
-        await engine.dispose()
+        except Exception:
+            if attempt == attempts - 1:
+                return False
+            await asyncio.sleep(delay)
+        finally:
+            await engine.dispose()
+    return False
 
 
 @pytest_asyncio.fixture

@@ -248,3 +248,25 @@ finished. Corollary: a long-running loop over an external API needs its failure 
 not inherited from whatever `with` block happens to enclose it.
 **Test added:** `test_reingesting_unchanged_content_is_a_noop` covers the hash path; the
 transaction boundary is exercised by the real ingest, which is honest about the limits of fakes.
+
+---
+
+## 2026-09-09 — One database test failed immediately after starting the container
+**Milestone:** between V0.5 and V0.6
+**Symptom:** `pytest` run seconds after `podman start amos-postgres` reported `1 failed`. A
+re-run passed. The specific test was not captured before it stopped reproducing.
+**Expected:** either the suite passes, or the database tests skip.
+**Root cause:** not conclusively identified — recorded honestly as such. The likely cause is that
+`_database_reachable()` opened a connection to a container still initialising: Postgres accepts
+connections slightly before it is ready to serve, so the probe succeeded and a later statement in
+the test failed.
+**Fix:** the probe now executes `SELECT 1` rather than only connecting, and retries up to five
+times with a 1s gap. A cold container is now waited for rather than reported as absent.
+**How it was found:** the start-of-session check that the system still runs before building on
+it — the reason that step exists.
+**Lesson:** **a readiness probe must exercise the thing you actually need, not the nearest cheap
+proxy.** "Can I open a socket" is not "can I run a query", the same way "the container started"
+is not "the service is running" (V0.3's postgres:18 bug — the second time this shape has appeared).
+Also: when a flaky failure stops reproducing before you capture it, say so. A confident
+post-hoc diagnosis of a test you never saw fail is a guess wearing evidence's clothes.
+**Test added:** none — this is test infrastructure. The retry is the fix.
