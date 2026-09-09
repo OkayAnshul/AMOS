@@ -24,6 +24,7 @@ looks fine and retrieves badly.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import math
 import re
@@ -200,9 +201,18 @@ class GeminiEmbeddings:
 class FakeEmbeddings:
     """Deterministic embeddings for tests.
 
-    Hash-based rather than random, so the same text always yields the same
-    vector and similarity between two texts is stable across runs. Vectors are
-    normalised, like the real thing.
+    Uses a **stable** hash (blake2b), not Python's built-in `hash()`.
+
+    That distinction is not pedantry. `hash()` is randomised per process by
+    PYTHONHASHSEED, so a fake built on it produces different vectors on every
+    run — and a retrieval test that asserts "the relevant chunk ranks first"
+    then passes or fails depending on the seed. This fake originally used
+    `hash()` and was documented as deterministic; the flakiness only appeared
+    when a full-suite run happened to draw an unlucky seed.
+
+    The determinism test did not catch it either, because it compared two calls
+    **inside one process**, where `hash()` is perfectly stable. Testing
+    determinism requires comparing against a value fixed outside the process.
     """
 
     name = "fake"
@@ -228,7 +238,7 @@ class FakeEmbeddings:
         """
         vector = [0.0] * self.dimensions
         for word in text.lower().split():
-            vector[hash(word) % self.dimensions] += 1.0
+            vector[_stable_hash(word) % self.dimensions] += 1.0
         if not any(vector):
             vector[0] = 1.0
         return normalise(vector)
@@ -244,3 +254,12 @@ def _retry_delay_from(message: str, default: float = 35.0) -> float:
     if match:
         return min(float(match.group(1)) + 2.0, 120.0)
     return default
+
+
+def _stable_hash(text: str) -> int:
+    """A hash that is identical across processes and Python versions.
+
+    `hash()` is randomised per process (PYTHONHASHSEED), which makes anything
+    built on it unreproducible between runs.
+    """
+    return int.from_bytes(hashlib.blake2b(text.encode("utf-8"), digest_size=8).digest())

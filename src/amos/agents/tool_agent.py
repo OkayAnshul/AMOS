@@ -74,6 +74,7 @@ class ToolUsingAgent:
         timeout: float = 30.0,
         max_iterations: int = 5,
         temperature: float = 0.2,
+        system_instruction: str | None = None,
     ) -> None:
         if max_iterations < 1:
             raise ValueError("max_iterations must be at least 1")
@@ -82,6 +83,9 @@ class ToolUsingAgent:
         self._timeout = timeout
         self._max_iterations = max_iterations
         self._temperature = temperature
+        # V0.7: specialised agents supply their own instruction. Defaults to the
+        # general one, so every earlier caller is unaffected.
+        self._system_instruction = system_instruction or SYSTEM_INSTRUCTION
 
     @property
     def tool_names(self) -> list[str]:
@@ -99,7 +103,7 @@ class ToolUsingAgent:
             response = await self._provider.complete(
                 LLMRequest(
                     history=history,
-                    system_instruction=SYSTEM_INSTRUCTION,
+                    system_instruction=self._system_instruction,
                     tools=self._registry.specs(),
                     # Tools and a response schema can be combined, so a turn
                     # that stops calling tools already carries the structured
@@ -123,12 +127,20 @@ class ToolUsingAgent:
             )
 
             if not response.wants_tools:
-                if isinstance(response.parsed, AgentResponse):
-                    final = response.parsed
-                else:
-                    # Fallback: the model stopped calling tools but did not
-                    # produce a valid object. One explicit attempt to get one.
-                    final = await self._finalise(goal, history, response.text, calls)
+                # The schema is requested on every turn, so a turn that stops
+                # calling tools already carries the validated answer.
+                #
+                # There used to be a `_finalise()` fallback here that made one
+                # more call when `parsed` was None. It never fired across four
+                # milestones, so it was untested code on a path nobody had
+                # observed. Deleted rather than carried: `_fallback_response`
+                # handles the case without an extra request, and an unexercised
+                # recovery path is a liability, not a safety net.
+                final = (
+                    response.parsed
+                    if isinstance(response.parsed, AgentResponse)
+                    else _fallback_response(response.text)
+                )
                 total_ms = int((time.perf_counter() - started) * 1000)
                 log_event(
                     logger,
@@ -191,54 +203,6 @@ class ToolUsingAgent:
             latency_ms=outcome.latency_ms,
         )
         return outcome
-
-    async def _finalise(
-        self,
-        goal: str,
-        history: list[Turn],
-        draft: str,
-        calls: list[LLMCallRecord],
-    ) -> AgentResponse:
-        """Fallback: ask once more for a schema-valid answer.
-
-        Only reached when the model stopped calling tools but returned something
-        that did not validate. The normal path costs no extra call, because the
-        schema is requested on every turn of the loop.
-        """
-        summary_turns = [
-            *history,
-            Turn(
-                role="user",
-                text=(
-                    "Now give your final answer to the original goal, as JSON matching "
-                    f"the required schema.\n\nOriginal goal: {goal}"
-                    + (f"\n\nYour draft answer: {draft}" if draft.strip() else "")
-                ),
-            ),
-        ]
-        response = await self._provider.complete(
-            LLMRequest(
-                history=summary_turns,
-                system_instruction=SYSTEM_INSTRUCTION,
-                response_schema=AgentResponse,
-                temperature=self._temperature,
-            ),
-            timeout=self._timeout,
-        )
-        calls.append(
-            LLMCallRecord(
-                provider=response.provider,
-                model=response.model,
-                prompt_tokens=response.prompt_tokens,
-                output_tokens=response.output_tokens,
-                latency_ms=response.latency_ms,
-                repair_attempt=0,
-            )
-        )
-
-        if isinstance(response.parsed, AgentResponse):
-            return response.parsed
-        return _fallback_response(response.text or draft)
 
 
 def _fallback_response(text: str) -> AgentResponse:
