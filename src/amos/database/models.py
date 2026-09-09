@@ -75,10 +75,25 @@ class Run(Base):
     error: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Episodic memory (V0.6). Deliberately columns on `runs` rather than an
+    # `episodes` table: an episode IS a run, and a separate table would duplicate
+    # goal, status, tokens and timings to add only an embedding and a lesson.
+    lesson: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # V0.8: run-level claiming. A worker takes a whole run; the DAG's internal
+    # concurrency is already handled inside the executor.
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # NOTE: `runs.goal_embedding vector(1536)` exists in the database but is
+    # deliberately absent here — SQLAlchemy core has no `vector` type. It is read
+    # and written through raw SQL in `amos.memory.episodic`, and
+    # `test_models_match_the_database_schema` allowlists it explicitly so the
+    # drift check stays meaningful.
 
     tasks: Mapped[list[Task]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="Task.position"
@@ -95,6 +110,15 @@ class Run(Base):
 
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="runs_idempotency_unique"),
+        # The index the worker claims through. Partial, because QUEUED runs are a
+        # small and shrinking fraction of all runs — an index over every run ever
+        # executed would be mostly dead weight on the hot path.
+        Index(
+            "idx_runs_claimable",
+            "status",
+            "created_at",
+            postgresql_where=(status == "QUEUED"),
+        ),
         Index(
             "idx_runs_idempotency",
             "idempotency_key",
@@ -221,21 +245,21 @@ class Task(Base):
     # Claimed-at supports the V0.8 visibility timeout. Present now because
     # adding a column later to a table with rows is a migration; adding it now
     # is a default.
-    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="tasks")
 
     __table_args__ = (
         UniqueConstraint("run_id", "plan_ref", name="tasks_run_planref_unique"),
         Index("idx_tasks_run_state", "run_id", "state"),
-        # Partial: READY tasks are a small fraction of all tasks, and this is
-        # the index the V0.8 worker will claim through.
-        Index(
-            "idx_tasks_claimable",
-            "state",
-            "created_at",
-            postgresql_where=(state == "READY"),
-        ),
+        # There used to be a `claimed_at` column and a partial claimable index
+        # here, added at V0.4 with the comment "present now because adding a
+        # column later to a table with rows is a migration".
+        #
+        # V0.8 removed both. The reasoning was sound and the guess was wrong:
+        # claiming happens at the RUN level, not the task level, because a run is
+        # what a client submits and polls, and a run's internal task concurrency
+        # is already handled inside one worker. The speculative column did not
+        # merely go unused — it anticipated the wrong granularity.
     )
 
 
