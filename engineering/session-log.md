@@ -630,3 +630,57 @@ over `runs`, three memory tools. Migration for `memories` + episodic columns. Wr
 V0.7 — Multi-agent. Delete `_finalise` first. Specialised agents need **distinct tool allowlists**,
 not just distinct prompts, and routing accuracy must be measured or "specialised" is an unmeasured
 claim. Full sequence in `engineering/current-state.md`.
+
+## Session 7 (continued) — V0.7
+
+**Module:** V0.7 — Multi-Agent
+**Objective:** Make "multi-agent" an honest word: agents that differ in capability, structured
+messages, and a critic gate.
+
+## What We Changed
+`src/amos/agents/{registry,messages,router,critic,team,cli}.py`. Deleted `_finalise` (dead four
+milestones). Fixed the randomised test fake and the version drift. Wrote
+`docs/07-agent-specification.md`, `docs/interview/multi-agent.md`, journal chapter 8. 389 tests.
+
+## Architecture Decisions
+- **Specialisation is a tool allowlist enforced by construction**, not a prompt. Disjoint
+  allowlists, because overlapping capability makes routing arbitrary.
+- **The critic has no tools** — one that can fetch new sources makes its own verdict unfalsifiable.
+- **The revise loop is bounded in code**; unresolved objections are attached to the answer with
+  confidence downgraded, never hidden.
+- **A broken critic accepts** — it is a quality gate, not a correctness requirement.
+- **Version defined in `amos.__version__`**, with the build reading it.
+
+## Problems Encountered
+1. A flaky retrieval test — passing alone, failing in the suite.
+2. `/health` reported the wrong version after the bump.
+3. Routing scored 90%, and the miss looked like a router error.
+4. `model_copy(update=...)` left a raw string where an enum was annotated.
+
+## How We Solved Them
+1. `FakeEmbeddings` used Python's `hash()`, randomised per process. **The existing determinism
+   test passed throughout**, because it compared two calls inside one process. Replaced with
+   blake2b; the new test shells out to a second interpreter.
+2. The version was a literal in three files. First fix — `importlib.metadata` — was a plausible
+   inversion that reintroduced staleness, since metadata describes the last *build*. Real fix: one
+   definition in code, build derives.
+3. **The router was right and my design was wrong.** `recall_past_runs` is a lookup, so it belongs
+   to the researcher. Moved it; routing went to 10/10 and the allowlists became disjoint.
+4. `model_copy` does not re-validate. Passed the enum member instead of its value.
+
+## Tests Performed
+- 389 pass, 2 skipped. Routing measured 10/10 live.
+- Demo: a documentation question routed to the researcher, retrieved with citations, critic
+  accepted. 4 calls, 3100 tokens.
+
+## Things I Learned
+- **A test can certify exactly the property it is missing.** The determinism test measured the
+  wrong scope for two milestones.
+- **When a fact appears in three places, the fix is one definition** — not discipline about three.
+- **A measurement can catch an error in your design rather than the model's behaviour**, which is
+  not what I built it to find.
+- `model_copy(update=)` bypasses validation — a typed field can silently hold the wrong type.
+
+## Next Exact Step
+V0.8 — asynchronous execution. `tasks.claimed_at` and the partial claimable index already exist
+from V0.4, so this adds a worker rather than a migration.
