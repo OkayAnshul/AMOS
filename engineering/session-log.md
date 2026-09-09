@@ -684,3 +684,52 @@ milestones). Fixed the randomised test fake and the version drift. Wrote
 ## Next Exact Step
 V0.8 — asynchronous execution. `tasks.claimed_at` and the partial claimable index already exist
 from V0.4, so this adds a worker rather than a migration.
+
+## Session 7 (continued) — V0.8
+
+**Module:** V0.8 — Asynchronous Execution
+**Objective:** Queue goals to workers; survive a worker crash.
+
+## What We Changed
+`src/amos/worker/{queue,runner,__main__}.py`, run-level claim columns, `POST /v1/goals/async`.
+Removed V0.4's speculative task-level claim column. Added `test_schema_drift.py`. Wrote
+`docs/12-event-system.md`, `docs/interview/async.md`, journal chapter 9. 418 tests.
+
+## Architecture Decisions
+- **Claim at run level, not task level.** A run is what a client submits and polls; internal task
+  concurrency is already handled inside one worker. This corrected V0.4's speculative column, which
+  anticipated the wrong granularity and was **removed** rather than carried.
+- **Polling, not `LISTEN`/`NOTIFY`** — a second mechanism (dedicated connection, reconnects, lost
+  notifications) to save latency nobody is measuring.
+- **At-least-once, stated explicitly.** Exactly-once is unavailable; the mitigation is idempotent
+  work, and `remember_fact` is recorded as a real gap rather than a solved problem.
+- **The worker swallows every exception**, bounded by an attempt ceiling — a worker that dies on
+  one bad run turns a poison message into a total outage.
+
+## Problems Encountered
+1. ORM models and the database schema had silently diverged — five columns.
+
+## How We Solved Them
+1. Found by diffing `Base.metadata` against `information_schema` before adding new columns, not by
+   anything failing. A V0.6 `str.replace` patch had no-opped; nothing broke because the only code
+   using those columns goes through raw SQL. Added `test_schema_drift.py` comparing both directions,
+   with `vector` columns exempted **by name** so the check keeps its teeth.
+
+## Tests Performed
+- 418 pass. Concurrent workers claim disjoint runs; an abandoned run is reclaimed while a healthy
+  one is not stolen; the attempt ceiling stops poison messages.
+- **Live crash demo:** worker A claimed a run, `kill -9`, worker B swept/reclaimed/completed.
+  `attempt_count = 2`, correct answer, different `claimed_by`.
+- Async submission measured at **202 in 54 ms** with no LLM call in the request path.
+
+## Things I Learned
+- **Migrations and models are two descriptions of one schema, and nothing was comparing them.**
+- **A speculative column is worse than a missing one**, because a column in a schema looks like a
+  decision someone made for a reason. V0.4's guess was not just unused — it was the wrong shape.
+- Crash recovery needs no failure detection. Nothing observes that a worker died, only that a run
+  has been held too long. Ten lines of SQL.
+- The most valuable paragraphs in `12-event-system.md` are the ones saying what is *not* guaranteed.
+
+## Next Exact Step
+V0.9 — observability. The request id threaded since V0.1 becomes the OTel trace id. Watch metric
+cardinality, and keep goal text out of span attributes.
