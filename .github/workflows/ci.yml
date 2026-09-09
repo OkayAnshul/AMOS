@@ -1,0 +1,87 @@
+# Continuous integration.
+#
+# Listed as technical debt from V0.3 onward: "No CI. Tests only run when someone
+# runs them." This closes it.
+#
+# Deliberately NOT here: the evaluation suite and the live API tests. Both cost
+# real Gemini calls against a 20-request/day free-tier quota, so running them per
+# push would exhaust the day's budget on the first few commits. They are run
+# deliberately, by a person, and their numbers are recorded in docs/16-evaluation.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      # Same image as compose.yaml, so CI and local development agree.
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: amos
+          POSTGRES_PASSWORD: amos
+          POSTGRES_DB: amos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U amos -d amos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      AMOS_DATABASE_URL: postgresql+asyncpg://amos:amos@localhost:5432/amos
+      # No API key. Every test in the default suite uses FakeProvider (N-14), so
+      # CI proving it runs without one is the requirement being enforced rather
+      # than merely documented.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Migrations apply and reverse
+        # Both directions. A migration that only goes forward is a one-way door,
+        # and V0.4 shipped an irreversible one that was caught by hand.
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Lint
+        run: ruff check src tests
+
+      - name: Format
+        run: ruff format --check src tests
+
+      - name: Types
+        run: mypy src
+
+      - name: Tests
+        run: pytest -q
+
+  no-database:
+    # The project claims the app and most of its tests run with no database.
+    # An untested claim is a wish, so it gets its own job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Tests without a database
+        run: pytest -q
