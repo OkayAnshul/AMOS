@@ -147,8 +147,18 @@ async def test_similarity_never_returns_superseded_facts(db_session: AsyncSessio
 
 
 async def test_count_reports_only_current_facts(db_session: AsyncSession) -> None:
+    """Asserts a delta, not an absolute.
+
+    The first version compared `count_current()` to a fixed number and broke the
+    moment a live demo stored a real fact — the rollback fixture isolates this
+    test's writes, not everyone else's rows. A test over a shared table must
+    measure its own effect.
+    """
     store = memory(db_session)
-    await store.remember("a", "1")
-    await store.remember("a", "2")
-    await store.remember("b", "1")
-    assert await store.count_current() == 2
+    before = await store.count_current()
+
+    await store.remember("count_test_a", "1")
+    await store.remember("count_test_a", "2")  # supersedes, so no net increase
+    await store.remember("count_test_b", "1")
+
+    assert await store.count_current() == before + 2
