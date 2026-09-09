@@ -79,6 +79,13 @@ class AgentResult(BaseModel):
     latency_ms: int = 0
 
 
+class QueuedRun(BaseModel):
+    """The response to an async submission. Poll GET /v1/runs/{run_id}."""
+
+    run_id: str
+    status: str = "QUEUED"
+
+
 class TaskRecord(BaseModel):
     """A task's outcome, as the caller sees it.
 

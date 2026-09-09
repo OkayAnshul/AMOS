@@ -51,6 +51,25 @@ class Settings(BaseSettings):
             "Truncated embeddings are re-normalised (ADR-008)."
         ),
     )
+    worker_poll_interval: float = Field(
+        default=2.0, gt=0, le=60, description="Seconds between polls when the queue is empty."
+    )
+    worker_max_attempts: int = Field(
+        default=3, ge=1, le=10, description="Attempts before a run is given up as poison."
+    )
+    worker_visibility_timeout: int = Field(
+        default=600,
+        ge=10,
+        description="Seconds before a RUNNING run is presumed abandoned and reclaimed.",
+    )
+    async_enabled: bool = Field(
+        default=False,
+        description=(
+            "Return 202 and queue the run for a worker, instead of executing it "
+            "inside the request. Requires a worker process."
+        ),
+    )
+
     multi_agent_enabled: bool = Field(
         default=True,
         description="V0.7 specialised agents. Adds a routing call per task.",

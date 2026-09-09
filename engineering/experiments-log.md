@@ -285,3 +285,31 @@ surfaced."* Not "routing is 100% accurate."
 
 The honest weakness: a set this small, self-authored, cannot distinguish a good router from a set
 of easy cases.
+
+---
+
+## 2026-09-09 — Does crash recovery actually work?
+**Milestone:** V0.8
+**Hypothesis:** a worker killed mid-run leaves the run recoverable by another worker, with no
+cleanup code and nothing detecting the death.
+**Method:**
+1. Queued a run.
+2. Started worker A; waited until `status = RUNNING` and `claimed_by = likoarc:212664`.
+3. `kill -9` — no signal handler, no cleanup, no chance to update anything.
+4. Confirmed the run was stuck in `RUNNING`, owned by a dead process.
+5. Started worker B with `visibility_timeout=10`.
+
+**Result:**
+```
+worker.started → worker.reclaimed → worker.claimed → worker.completed
+status      COMPLETED
+claimed_by  likoarc:212858     (a different process)
+attempt_count 2                (the retry is visible in the data)
+answer      279                (31% of 900, correct)
+```
+**Conclusion:** confirmed. Recovery needs no failure detection — only the observation that a run has
+been `RUNNING` longer than the timeout allows.
+**Also measured:** `POST /v1/goals/async` returned **202 in 54 ms** with no LLM call in the request
+path, versus seconds-to-minutes for the synchronous endpoint.
+**What this does not show:** one machine, one database, three processes. Recovery from a *process*
+crash, not a host or network partition. Nothing here is evidence about distributed behaviour.
