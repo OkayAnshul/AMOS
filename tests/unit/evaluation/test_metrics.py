@@ -116,10 +116,15 @@ def test_partial_completion_still_counts_as_completed() -> None:
 
 
 def test_a_crashed_run_is_scored_not_skipped() -> None:
-    """A run that raised must count as a failure, not vanish from the denominator."""
+    """A run that raised must not vanish silently.
+
+    Note it is scored as *unmeasurable* rather than *failed* here, because a
+    timeout is an infrastructure limit — see the parametrised test below. A
+    genuine crash (a ValueError, say) still counts as a failure.
+    """
     score = score_case(GoalCase(goal="g"), None, error="ProviderTimeoutError")
     assert not score.passed
-    assert "ProviderTimeoutError" in score.failures[0]
+    assert score.unmeasurable is not None
 
 
 # ---------- refusal: the case that matters most ----------
@@ -173,3 +178,74 @@ def test_golden_cases_are_checkable_without_reading_the_answer() -> None:
 def test_the_golden_set_is_small_enough_to_actually_run() -> None:
     """A suite that cannot be run against a 20-request/day quota is not a gate."""
     assert len(GOLDEN_GOALS) <= 10
+
+
+# ---------- a rate limit is not a quality failure ----------
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "ProviderRateLimitError: quota exceeded",
+        "ProviderTimeoutError: timed out",
+        "Gemini quota exceeded. 429 RESOURCE_EXHAUSTED",
+    ],
+)
+def test_infrastructure_errors_are_unmeasurable_not_failures(error: str) -> None:
+    """Scoring a rate limit as a failure makes the metric say "the system
+    answered badly" when it means "we could not measure"."""
+    score = score_case(GoalCase(goal="g"), None, error=error)
+
+    assert not score.measured
+    assert score.unmeasurable is not None
+    assert score.failures == [], "an infrastructure limit is not a quality defect"
+
+
+def test_a_real_error_is_still_a_failure() -> None:
+    """The distinction must not become an excuse — a genuine crash still counts."""
+    score = score_case(GoalCase(goal="g"), None, error="ValueError: bad plan")
+
+    assert score.measured
+    assert not score.passed
+    assert score.failures
+
+
+# ---------- the refusal detector's own brittleness ----------
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        # The phrasing the first version MISSED, taken verbatim from a live run.
+        "According to the AMOS documentation, Kubernetes is listed under the roadmap "
+        "for beyond V1.0. Therefore, AMOS does not have a Kubernetes autoscaling "
+        "policy or configured replica counts.",
+        "AMOS is not deployed anywhere and there is no autoscaling configuration.",
+        "No such policy exists in the documentation.",
+        "This is not implemented and not planned.",
+        "The documentation does not define replica counts.",
+    ],
+)
+def test_real_refusal_phrasings_are_recognised(answer: str) -> None:
+    """Regression cases from actual model output.
+
+    The first detector scored a correct refusal as a failure because the model
+    phrased it in a way the marker list did not cover — a metric manufacturing a
+    false finding. Every phrasing seen in a live run gets pinned here.
+    """
+    score = score_case(GoalCase(goal="g", expects_refusal=True), result(answer=answer))
+    assert score.refused_correctly, f"missed refusal phrasing: {answer[:60]}"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "AMOS runs 3 replicas with HPA scaling at 70% CPU utilisation.",
+        "The autoscaling policy targets 80% memory with a minimum of 2 pods.",
+    ],
+)
+def test_confident_inventions_are_still_caught(answer: str) -> None:
+    """Broadening the markers must not make everything look like a refusal —
+    otherwise the metric passes the failure it exists to catch."""
+    score = score_case(GoalCase(goal="g", expects_refusal=True), result(answer=answer))
+    assert not score.refused_correctly

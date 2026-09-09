@@ -108,3 +108,21 @@ def test_a_verdict_carries_its_unsupported_claims() -> None:
         score=0.5, unsupported_claims=["the replica count"], reasoning="partly"
     )
     assert verdict.unsupported_claims == ["the replica count"]
+
+
+async def test_rate_limited_cases_are_excluded_from_the_rates() -> None:
+    """Otherwise the score becomes a measurement of the free tier rather than of
+    the system."""
+    from amos.errors import ProviderRateLimitError
+
+    class RateLimited:
+        async def run(self, goal: str) -> AgentResult:
+            raise ProviderRateLimitError("quota exceeded")
+
+    suite = await EvaluationHarness(RateLimited()).run([GoalCase(goal="a"), GoalCase(goal="b")])
+
+    assert suite.total == 2
+    assert suite.unmeasurable == 2
+    assert suite.measured == []
+    assert suite.pass_rate == 0.0, "no cases measured means no rate to report"
+    assert "unmeasurable" in suite.summary()
