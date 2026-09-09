@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 
 import pytest
 
@@ -60,3 +61,24 @@ def sample_response() -> AgentResponse:
         confidence=Confidence.HIGH,
         caveats=[],
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_request_id() -> Iterator[None]:
+    """Reset the request-id contextvar between tests.
+
+    It is a module-level ContextVar, so a test that sets one leaks it into every
+    test that runs afterwards in the same process. That surfaced as a telemetry
+    test setting "abc123def456" and an unrelated agent test then asserting a
+    16-character generated id — a failure in a file that had not changed.
+
+    Autouse, because remembering to clean up global state per test is exactly the
+    discipline that fails silently.
+    """
+    from amos.observability import _request_id
+
+    token = _request_id.set(None)
+    try:
+        yield
+    finally:
+        _request_id.reset(token)

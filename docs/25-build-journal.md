@@ -753,3 +753,58 @@ through **raw SQL**. The drift was invisible precisely because the model was nev
 Migrations and models are two descriptions of one schema, and nothing was comparing them.
 `test_schema_drift.py` now does, in both directions, with `vector` columns exempted **by name**
 rather than by a blanket ignore — an exemption list that names things keeps its teeth.
+
+---
+
+## Chapter 10 — V0.9: observability, and the seam paying off
+
+**Goal:** emit standard traces and metrics.
+
+This was the smallest milestone in the project, and the reason is the interesting part.
+
+### The hard part was done in V0.1
+
+Every log line has carried a request id since the first milestone. Every run has been persisted
+and queryable since V0.3. **Correlation was already solved.** V0.9 adds a standard wire format on
+top of work done for entirely different reasons — the request id existed because debugging needed
+it, not because tracing was planned.
+
+That is what a seam is worth. Nine milestones later, the thing it enables costs an afternoon
+instead of a refactor.
+
+### Two rules, and why they are tests rather than documentation
+
+**User content stays out of spans by default.** A goal can contain a name, a pasted document, a
+credential. Spans are shipped, stored and searchable — putting user input in them by default is a
+data-handling decision disguised as a debugging convenience.
+
+The *direction of the default* is the whole decision. An opt-out would ship content from every
+deployment that forgot to configure it, and defaults are what systems actually run with.
+
+Verified in the exported data, not just asserted:
+```
+run.execute   amos.goal.length: Int(19)   amos.request_id: 0013d45719d8413d
+```
+Length, not text.
+
+**Unbounded values never become metric labels.** A run id as a metric label means one time series
+per run — the standard way to take a monitoring backend down. The same value as a span attribute
+is fine, because a span is one event rather than a dimension.
+
+`ALLOWED_LABELS` is a closed set, and it is an allowlist rather than a blocklist for the same
+reason `http_get` uses one: a blocklist must anticipate every unbounded field and fails open when
+it misses one. That is now the third place in this codebase where the same reasoning applied.
+
+### The bug that came from my own test
+
+A telemetry test called `set_request_id("abc123def456")`, and the request id is a module-level
+`ContextVar` — so it leaked into every test that ran afterwards. An unrelated agent test asserting
+a 16-character generated id started failing, in a file that had not changed.
+
+Fixed with an autouse fixture resetting the contextvar per test. **Autouse, because remembering to
+clean up global state per test is exactly the discipline that fails silently.**
+
+Also worth knowing: `trace.set_tracer_provider()` can only be called **once per process**. Later
+calls are ignored *with a warning, not an error*, so a per-test provider works for the first test
+and silently records nothing thereafter — presenting as "no spans captured" rather than "your
+fixture is wrong".
