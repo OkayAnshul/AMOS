@@ -9,6 +9,7 @@ a single headline score usually does.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -34,16 +35,30 @@ class SuiteResult:
         return len(self.scores)
 
     @property
+    def measured(self) -> list[CaseScore]:
+        """Cases that produced evidence about quality.
+
+        A rate-limited case is excluded rather than counted as a failure: it says
+        nothing about the system, and including it would make the score a
+        measurement of the free tier.
+        """
+        return [s for s in self.scores if s.measured]
+
+    @property
+    def unmeasurable(self) -> int:
+        return self.total - len(self.measured)
+
+    @property
     def passed(self) -> int:
-        return sum(1 for s in self.scores if s.passed)
+        return sum(1 for s in self.measured if s.passed)
 
     @property
     def pass_rate(self) -> float:
-        return self.passed / self.total if self.total else 0.0
+        return self.passed / len(self.measured) if self.measured else 0.0
 
     def rate(self, attribute: str) -> float:
         """Pass rate for one deterministic check, over the cases it applies to."""
-        applicable = [s for s in self.scores if getattr(s, attribute) is not None]
+        applicable = self.measured
         if not applicable:
             return 0.0
         return sum(1 for s in applicable if getattr(s, attribute)) / len(applicable)
@@ -64,7 +79,14 @@ class SuiteResult:
 
     def summary(self) -> str:
         lines = [
-            f"cases            {self.passed}/{self.total} passed ({self.pass_rate:.0%})",
+            f"cases            {self.passed}/{len(self.measured)} passed ({self.pass_rate:.0%})",
+        ]
+        if self.unmeasurable:
+            lines.append(
+                f"unmeasurable     {self.unmeasurable} "
+                f"(rate-limited or timed out — excluded, not counted as failures)"
+            )
+        lines += [
             "",
             "deterministic:",
             f"  completion     {self.rate('completed'):.0%}",
@@ -74,7 +96,7 @@ class SuiteResult:
         ]
         refusal_cases = [
             s
-            for s in self.scores
+            for s in self.measured
             if s.refused_correctly or "should have refused" in " ".join(s.failures)
         ]
         if refusal_cases:
@@ -96,14 +118,27 @@ class SuiteResult:
 class EvaluationHarness:
     """Runs goals and scores them."""
 
-    def __init__(self, agent: object, judge: GroundednessJudge | None = None) -> None:
+    def __init__(
+        self,
+        agent: object,
+        judge: GroundednessJudge | None = None,
+        *,
+        pace_seconds: float = 0.0,
+    ) -> None:
         self._agent = agent
         self._judge = judge
+        # gemini-3.5-flash-lite is limited to 15 requests per MINUTE (a different
+        # quota shape from flash's 20/day), and one case can cost several calls.
+        # Firing them back to back guarantees a 429 partway through the suite —
+        # which then looks like a quality failure unless paced.
+        self._pace = pace_seconds
 
     async def run(self, cases: list[GoalCase]) -> SuiteResult:
         suite = SuiteResult()
 
-        for case in cases:
+        for index, case in enumerate(cases):
+            if index and self._pace:
+                await asyncio.sleep(self._pace)
             result: AgentResult | None = None
             error: str | None = None
             try:

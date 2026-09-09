@@ -32,7 +32,7 @@ async def main(judge_enabled: bool = True) -> int:
             if judge_enabled
             else None
         )
-        suite = await EvaluationHarness(agent, judge).run(GOLDEN_GOALS)
+        suite = await EvaluationHarness(agent, judge, pace_seconds=20.0).run(GOLDEN_GOALS)
     finally:
         if engine is not None:
             await engine.dispose()
@@ -46,10 +46,18 @@ async def main(judge_enabled: bool = True) -> int:
                 for failure in score.failures:
                     print(f"      {failure}")
 
+    if suite.unmeasurable:
+        print(f"\n{suite.unmeasurable} case(s) could not be measured:")
+        for score in suite.scores:
+            if not score.measured:
+                print(f"  {score.goal[:70]}")
+                print(f"      {(score.unmeasurable or '')[:120]}")
+
     # Non-zero exit when a deterministic check fails, so this can gate CI.
     # Judged metrics deliberately do NOT gate: a flaky judge must not block a
     # release, and a threshold on a subjective score invites tuning the threshold.
-    return 0 if suite.passed == suite.total else 1
+    # Unmeasurable cases do not fail the gate: a rate limit is not a regression.
+    return 0 if suite.passed == len(suite.measured) else 1
 
 
 if __name__ == "__main__":

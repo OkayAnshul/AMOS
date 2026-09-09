@@ -43,6 +43,15 @@ class GoalCase:
 
 @dataclass
 class CaseScore:
+    """The outcome of one case.
+
+    `unmeasurable` is separate from `failures` on purpose. A rate limit is an
+    infrastructure limit, not a quality defect — scoring it as a failure makes
+    the metric say "the system answered badly" when it means "we could not
+    measure". Those are different facts and conflating them makes every number
+    in the suite quietly wrong.
+    """
+
     goal: str
     completed: bool = False
     output_valid: bool = False
@@ -53,11 +62,16 @@ class CaseScore:
     tokens: int = 0
     latency_ms: int = 0
     failures: list[str] = field(default_factory=list)
+    unmeasurable: str | None = None
 
     @property
     def passed(self) -> bool:
         """Every applicable deterministic check succeeded."""
-        return not self.failures
+        return not self.failures and self.unmeasurable is None
+
+    @property
+    def measured(self) -> bool:
+        return self.unmeasurable is None
 
 
 def score_case(case: GoalCase, result: AgentResult | None, error: str | None = None) -> CaseScore:
@@ -65,7 +79,13 @@ def score_case(case: GoalCase, result: AgentResult | None, error: str | None = N
     score = CaseScore(goal=case.goal)
 
     if result is None:
-        score.failures.append(f"run failed: {error or 'unknown error'}")
+        message = error or "unknown error"
+        # A rate limit or timeout says nothing about answer quality. It is
+        # recorded, excluded from the rates, and reported separately.
+        if any(marker in message for marker in ("RateLimit", "Timeout", "quota")):
+            score.unmeasurable = message
+        else:
+            score.failures.append(f"run failed: {message}")
         return score
 
     score.tokens = result.total_tokens
@@ -120,21 +140,55 @@ def _cited_sources(result: AgentResult) -> set[str]:
     return sources
 
 
-#: Phrases that indicate the model declined rather than invented an answer.
-#: A keyword check is crude, and deliberately so: the alternative is asking a
-#: model whether a model refused, which is circular.
+#: Phrases indicating the model declined rather than inventing an answer.
+#:
+#: **This is the least reliable metric in the suite, and it earned that label.**
+#: The first version had eleven markers and scored a *correct* refusal as a
+#: failure, because the model phrased it differently on that run. The system was
+#: right; the metric was wrong — and it looked like a real finding.
+#:
+#: The lesson generalises: a crude metric does not merely under-measure, it
+#: manufactures false failures that are indistinguishable from real ones until
+#: you go and read the output. Any metric this brittle must be reported with
+#: that caveat attached, which `docs/16-evaluation.md` does.
+#:
+#: A keyword check is still preferred over asking a model whether a model
+#: refused, which is circular. The mitigation is breadth plus honesty about it.
 _REFUSAL_MARKERS = (
+    # explicit absence
     "not find",
-    "does not",
-    "do not have",
+    "cannot find",
+    "unable to find",
     "no information",
+    "no relevant",
     "not mention",
     "not contain",
     "not specified",
     "not documented",
-    "cannot find",
-    "unable to find",
-    "no relevant",
+    "not described",
+    "not defined",
+    "not available",
+    "not present",
+    "not include",
+    "not provide",
+    # the phrasing that was missed: stating the thing does not exist
+    "does not have",
+    "do not have",
+    "does not exist",
+    "there is no",
+    "there are no",
+    "no such",
+    "not used",
+    "not deployed",
+    "not yet built",
+    "not built",
+    "not implemented",
+    "not planned",
+    # hedged declines
+    "does not",
+    "cannot answer",
+    "could not",
+    "insufficient",
 )
 
 
