@@ -29,7 +29,7 @@ import logging
 
 from amos.agents.messages import CriticReport, Verdict
 from amos.agents.registry import CRITIC
-from amos.agents.schemas import AgentResponse
+from amos.agents.schemas import AgentResponse, Confidence
 from amos.llm.base import LLMCallRecord, LLMProvider, LLMRequest
 from amos.observability import log_event
 
@@ -129,11 +129,15 @@ def apply_report(answer: AgentResponse, report: CriticReport) -> AgentResponse:
     caveats.extend(f"Unsupported claim: {claim}" for claim in report.unsupported_claims)
     caveats.extend(f"Not addressed: {gap}" for gap in report.missing_from_answer)
 
+    # NOTE: `model_copy(update=...)` does NOT re-validate, so passing the string
+    # "low" here would leave `confidence` holding a str where the annotation says
+    # Confidence — invisible until something does `is Confidence.LOW`. Pass the
+    # enum member, not its value.
     return answer.model_copy(
         update={
             "caveats": caveats,
             # Downgraded, not preserved: an answer carrying unresolved objections
             # cannot honestly still be "high confidence".
-            "confidence": "low",
+            "confidence": Confidence.LOW,
         }
     )
