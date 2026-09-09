@@ -4,8 +4,9 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V0.6 shipped — runnable.** Plans a goal into a task graph, uses tools, retrieves from
-> an indexed corpus with citations, remembers facts across sessions, and records all of it.
+> **Status: V0.7 shipped — runnable.** Routes work to specialised agents, plans goals into task
+> graphs, uses tools, retrieves with citations, remembers facts across sessions, reviews its own
+> answers, and records all of it.
 > See [`engineering/current-state.md`](engineering/current-state.md) for exactly where things stand.
 >
 > New here? [`docs/25-build-journal.md`](docs/25-build-journal.md) explains how it was built,
@@ -39,8 +40,8 @@ That principle has visible consequences:
 | 0.3 ✅ | Persistence + trace | "What exactly happened on this request?" — answerable for any run |
 | 0.4 ✅ | Planner / Executor | Goal decomposition into a durable task DAG with deterministic state |
 | 0.5 ✅ | RAG | A retrieval pipeline with citations and a measured recall@k |
-| **0.6 ✅** | **Memory tiers** | **Recalls user facts and prior run outcomes across sessions** |
-| 0.7 | Multi-agent | Specialised agents collaborate; a critic gates output |
+| 0.6 ✅ | Memory tiers | Recalls user facts and prior run outcomes across sessions |
+| **0.7 ✅** | **Multi-agent** | **Specialised agents collaborate; a critic gates output** |
 | 0.8 | Async execution | Long-running goals execute asynchronously with crash-safe job claiming |
 | 0.9 | Observability | Full distributed trace of any run |
 | 1.0 | Evaluation | Quality is measured, not asserted |
@@ -256,7 +257,7 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest        # 350 tests; skips the database ones if none is running
+.venv/bin/python -m pytest        # 389 tests; skips the database ones if none is running
 .venv/bin/mypy src                # strict
 .venv/bin/ruff check src tests
 ```
@@ -288,6 +289,7 @@ src/amos/
   orchestration/    state machine, plan validation, planner, executor, retries
   rag/              chunking, embeddings, vector store, ingestion, retrieval, evaluation
   memory/           semantic facts, episodic runs, memory tools
+  agents/           specialists, router, critic, team, message contracts
   database/         models, async engine, repository
   api/              FastAPI app, run service, error -> status mapping
 migrations/         Alembic
