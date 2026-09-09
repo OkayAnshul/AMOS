@@ -459,6 +459,8 @@ Kept in one place because the corrections are more instructive than the successe
 | 8 | embedding quota resembles chat quota | 100/min, counts contents | failed ingests |
 | 9 | one transaction is safer | it discards partial work | lost 300 chunks |
 | 10 | a green suite means it runs | pytest's path masked a broken install | shipping a package that cannot import |
+| 11 | the memory tools were wired in | a silent patch no-op meant they were never registered | a documented feature the agent cannot reach |
+| 12 | supersede-then-insert is the safe order | the foreign key makes it impossible | — caught immediately |
 
 Six of these came from documentation being wrong or untested. **Documentation is not behaviour.**
 
@@ -494,3 +496,79 @@ Nothing in this journal is estimated:
 
 Anything that cannot be reproduced by a command in this repository is not claimed. That rule is
 also what keeps [`22-resume-evidence.md`](22-resume-evidence.md) honest.
+
+---
+
+## Chapter 7 — V0.6: memory, and resisting the obvious answer
+
+**Goal:** facts that survive a restart, and past runs that can be found again.
+
+The code was the easy part. The decision was **which store each kind of memory belongs in**, and
+the reflexive answer — embed everything, search by similarity — is wrong.
+
+### Why facts are relational, not vectors
+
+| | Why similarity fails |
+|---|---|
+| "What is the user's name?" | returns the *most similar* fact; in a store with several names, sometimes the wrong person's. No threshold fixes it — the failure is semantic |
+| A fact that changed | a vector index has no notion of *superseded*; it returns old and new, ranked by distance, with nothing to say which is true |
+| "Where did this come from?" | provenance is a foreign key, not a nearest neighbour |
+
+So: `subject` is a normalised key for exact lookup and contradiction detection; the embedding is a
+**secondary** index for questions that arrive without a key. `recall_facts` tries exact first,
+always.
+
+Contradiction resolution is **newest-wins, decided in code**. Superseded rows are kept, so a
+changed fact stays auditable and a bad write stays recoverable.
+
+### Episodic memory has no table
+
+An episode **is** a run. Goal, outcome, tokens, duration — `runs` already stores all of it. A
+separate table would duplicate every column to add an embedding and a lesson.
+
+So episodic memory is two columns plus queries: **an index on an existing store, not a new store.**
+Before adding somewhere to put things, check whether the thing already has a home.
+
+One consequence of an earlier decision surfaced here: V0.3 writes the run row *before* executing,
+so by the time a goal asks "have I done this before?", it is already the most similar past goal.
+`exclude_run_id` exists because otherwise episodic recall returns the question as its own answer.
+
+### The bug that matters most in this project so far
+
+The first cross-session demo failed. Session 1 replied *"I have noted that your preferred backend
+language is Python."* The `memories` table was empty.
+
+My first diagnosis was **wrong**: "the model chose badly, the tool descriptions overlap." Plausible,
+and it fit the symptom.
+
+The startup log said otherwise:
+
+```
+"tools": ["calculator", "http_get", "read_file", "search_knowledge"]
+```
+
+Four tools, not seven. The memory tools had been written, tested and documented — and **never
+registered**. A `str.replace` patch to `build_registry` had silently no-opped because formatting
+had changed the text it matched. The model could not have called a tool it was never given.
+
+Three lessons, in increasing order of importance:
+
+1. **A silent `str.replace` no-op is a class of bug** — the third occurrence here. Patching by
+   pattern must fail loudly when the pattern is missing.
+2. **Unit tests verify components; nothing verified they were connected.** 344 tests passed with
+   the feature completely unreachable. `test_tool_wiring.py` now asserts exactly which tools the
+   agent receives. *Wiring is a behaviour and needs a test.*
+3. **When a symptom is consistent with "the model did something odd", check the deterministic
+   explanation first.** LLM systems make it far too easy to blame the model, because that
+   explanation is unfalsifiable enough to be comfortable. The evidence was one `grep` away.
+
+### And a comment that defended an impossible design
+
+`remember()` originally superseded the old row *before* inserting the new one, with a comment
+explaining why that ordering was necessary. Postgres rejected it: `superseded_by` is a foreign key,
+and the new row did not exist yet.
+
+The comment was wrong twice — the ordering it defended was impossible, and the danger it warned
+about was not real (both statements share a transaction, so no other transaction sees the
+intermediate state). **A confident comment justifying an impossible design is worse than no
+comment.** Same shape as V0.2's `"Verified against the API"` docstring that had never been verified.
