@@ -28,5 +28,19 @@ services:
       timeout: 3s
       retries: 20
 
+  # Optional. Only needed when AMOS_OTLP_ENDPOINT is set; the app runs fine
+  # without it, and every span becomes a no-op. Deliberately a local collector
+  # rather than a SaaS: nothing about a single-user project justifies shipping
+  # traces to a vendor.
+  otel-collector:
+    image: docker.io/otel/opentelemetry-collector-contrib:latest
+    container_name: amos-otel
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel/config.yaml:ro,Z
+    ports:
+      - "4318:4318"   # OTLP/HTTP
+    profiles: ["observability"]
+
 volumes:
   amos-pgdata:

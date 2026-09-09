@@ -21,6 +21,8 @@ from typing import Any, ClassVar
 from pydantic import BaseModel, Field, ValidationError
 
 from amos.errors import ToolTimeoutError, ToolValidationError
+from amos.telemetry.metrics import instruments, safe_labels
+from amos.telemetry.tracing import span
 
 
 class Permission(StrEnum):
@@ -109,7 +111,17 @@ class Tool(ABC):
         """Do the work. `args` is already validated against `input_schema`."""
         raise NotImplementedError
 
-    async def execute(self, call: ToolCall) -> ToolOutcome:
+    async def execute(self, call: ToolCall) -> ToolOutcome:  # noqa: D401
+        with span("tool.execute", **{"amos.tool.name": self.name}) as current:
+            outcome = await self._execute_inner(call)
+            current.set_attribute("amos.tool.status", outcome.status.value)
+            current.set_attribute("amos.latency_ms", outcome.latency_ms)
+            instruments().tool_calls.add(
+                1, safe_labels(tool=self.name, status=outcome.status.value)
+            )
+            return outcome
+
+    async def _execute_inner(self, call: ToolCall) -> ToolOutcome:
         """Validate, run under a timeout, and never raise.
 
         Returns a ToolOutcome in every case. A tool failure is data the agent

@@ -22,6 +22,7 @@ from amos.errors import (
     ProviderTimeoutError,
 )
 from amos.llm.base import LLMRequest, LLMResponse, Turn
+from amos.telemetry.tracing import span
 from amos.tools.base import ToolCall
 
 
@@ -62,6 +63,19 @@ class GeminiProvider:
             config.automatic_function_calling = types.AutomaticFunctionCallingConfig(disable=True)
 
         started = time.perf_counter()
+        with span(
+            "llm.complete",
+            **{"gen_ai.system": self.name, "gen_ai.request.model": self._model},
+        ):
+            return await self._complete_inner(request, config, timeout, started)
+
+    async def _complete_inner(
+        self,
+        request: LLMRequest,
+        config: types.GenerateContentConfig,
+        timeout: float,
+        started: float,
+    ) -> LLMResponse:
         try:
             # Every external call is bounded (requirement N-4). The SDK's own
             # timeout handling is not relied upon.

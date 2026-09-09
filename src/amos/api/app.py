@@ -41,6 +41,8 @@ from amos.observability import (
 )
 from amos.orchestration.orchestrator import Orchestrator
 from amos.rag.embeddings import GeminiEmbeddings
+from amos.telemetry.metrics import configure_metrics
+from amos.telemetry.tracing import configure_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,8 @@ def create_app(
     """
     settings = settings or get_settings()
     configure_logging(settings.log_level)
+    tracing_on = configure_tracing(settings)
+    configure_metrics(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -103,7 +107,9 @@ def create_app(
                 def episodic(session: object) -> EpisodicMemory:
                     return EpisodicMemory(session, embeddings)  # type: ignore[arg-type]
 
-            app.state.run_service = RunService(app.state.agent, factory, episodic)
+            app.state.run_service = RunService(
+                app.state.agent, factory, episodic, trace_content=settings.trace_content
+            )
 
         log_event(
             logger,
@@ -112,6 +118,7 @@ def create_app(
             env=settings.env,
             tools=app.state.agent.tool_names,
             planning=isinstance(app.state.agent, Orchestrator),
+            tracing=tracing_on,
             persistence=app.state.run_service.persistence_enabled,
         )
         try:
