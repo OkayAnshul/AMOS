@@ -733,3 +733,60 @@ Removed V0.4's speculative task-level claim column. Added `test_schema_drift.py`
 ## Next Exact Step
 V0.9 — observability. The request id threaded since V0.1 becomes the OTel trace id. Watch metric
 cardinality, and keep goal text out of span attributes.
+
+## Session 7 (continued) — V0.9 and V1.0
+
+**Modules:** V0.9 Observability, V1.0 Evaluation
+**Objective:** Emit standard telemetry; make every quality claim checkable by a command.
+
+## What We Changed
+`src/amos/telemetry/{tracing,metrics}.py`, `src/amos/evaluation/**`, `.github/workflows/ci.yml`,
+`Makefile`, `otel-collector.yaml`. Wrote `docs/{14,16}`, `docs/interview/{observability,evaluation}.md`,
+journal chapters 10 and 11. 480 tests.
+
+## Architecture Decisions
+- **Goal text is not a span attribute by default.** Spans are shipped, stored and searchable; the
+  safe direction must be the default, because an opt-out ships content from every deployment that
+  forgot.
+- **Metric labels come from a closed allowlist** — an unbounded label is one time series per value.
+- **Deterministic and judged metrics are reported separately, never averaged**, and only the
+  deterministic ones gate CI.
+- **A rate limit is unmeasurable, not a failure.** Otherwise part of the score measures the free tier.
+- CI runs the suite with *and without* a database, migrations in *both* directions, and with **no
+  API key** — enforcing N-14 rather than documenting it.
+
+## Problems Encountered
+1. A telemetry test leaked the request-id contextvar into unrelated tests.
+2. `score = -1` as a sentinel was rejected by the field's own bound.
+3. The evaluation suite scored a rate limit as a quality failure.
+4. The refusal case scored 0/1 — apparently the worst possible failure.
+
+## How We Solved Them
+1. Autouse fixture resetting the contextvar. Autouse, because remembering to clean up global state
+   per test is exactly the discipline that fails silently.
+2. Replaced with an explicit `judged` flag. A magic number in a numeric field gets averaged by
+   accident even when it does construct.
+3. Classed as `unmeasurable`, excluded from rates and from the gate. Also surfaced a **fourth quota
+   shape**: `flash-lite` is 15/minute where `flash` is 20/day.
+4. **Read the output.** The system had refused correctly, in wording the keyword detector did not
+   cover. The metric was wrong, not the system.
+
+## Tests Performed
+- 480 pass. Live: traces captured by a local collector showing `amos.goal.length` and no goal text.
+- `make eval` → 6/6 deterministic, groundedness 1.00, 21252 tokens.
+
+## Things I Learned
+- **A crude metric manufactures false failures indistinguishable from real ones until you read the
+  output.** I was one paragraph from reporting a brittle detector as a quality finding.
+- **A rate limit is not a quality failure**, and conflating them makes every number partly a
+  measurement of the free tier.
+- Broadening a detector needs a matching test that it still catches the failure it exists for —
+  otherwise the fix passes everything.
+- `set_tracer_provider` works once per process; later calls are ignored *with a warning*, so a
+  per-test provider silently records nothing after the first test.
+- The observability milestone was the smallest in the project, because correlation was solved in
+  V0.1 by a request id added for debugging.
+
+## Next Exact Step
+**The roadmap is complete.** The outstanding work is the advance gate: ten interview documents,
+never met. Start with `docs/25-build-journal.md`.

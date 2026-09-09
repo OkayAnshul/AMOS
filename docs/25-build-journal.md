@@ -466,6 +466,9 @@ Kept in one place because the corrections are more instructive than the successe
 | 15 | `recall_past_runs` belongs to the analyst | it is a lookup, so it belongs to the researcher | the routing measurement caught it |
 | 16 | `tasks.claimed_at` would be needed at V0.8 | claiming is per-run; the granularity was wrong | schema documenting an abandoned plan |
 | 17 | models and migrations were in sync | five columns had diverged for two milestones | invisible until something used the ORM |
+| 18 | `score = -1` works as a sentinel | the field's own bound rejects it | a magic number that gets averaged by accident |
+| 19 | a rate-limited case is a failure | it is *unmeasurable* | the score partly measures the free tier |
+| 20 | the refusal case failed | the **detector** failed; the system refused correctly | reporting a brittle metric as a real finding |
 
 Six of these came from documentation being wrong or untested. **Documentation is not behaviour.**
 
@@ -808,3 +811,75 @@ Also worth knowing: `trace.set_tracer_provider()` can only be called **once per 
 calls are ignored *with a warning, not an error*, so a per-test provider works for the first test
 and silently records nothing thereafter — presenting as "no spans captured" rather than "your
 fixture is wrong".
+
+---
+
+## Chapter 11 — V1.0: evaluation, and the metric that lied twice
+
+**Goal:** make every quality claim in the repo checkable by a command.
+
+### Two kinds of evidence, kept apart
+
+Most questions about an agent run can be settled by **code**: did it complete, is the output valid,
+did the expected tool run, is the required fact present, was the right source cited, did it refuse
+when the corpus had nothing. Facts in the trace, not opinions — reproducible, free, and unable to
+be talked into agreeing.
+
+One cannot: **is the answer supported by what was retrieved?** String overlap does not answer it. A
+correct paraphrase shares few words; a fabrication can share many.
+
+So there is exactly one LLM-judged metric, and it is reported separately and never averaged into a
+headline score — because the judge is the same model family as the system it judges. Only the
+deterministic checks gate CI.
+
+### The results
+
+```
+cases          6/6 (100%)      retrieval  recall@5 100%, MRR 0.958
+tool selection 100%            routing    10/10
+refusal        1/1             tests      480
+groundedness   1.00  (judged — weaker evidence)
+```
+
+And immediately after, the caveat that travels with them everywhere: six goals, twelve retrieval
+questions and ten routing cases, **all written by the person who built the system**. Enough to
+catch a regression. Nowhere near enough to characterise quality.
+
+### It lied twice, and both times it was the metric
+
+**A rate limit is not a quality failure.** The first run scored 5/6, the failure being
+`ProviderRateLimitError`. That is an infrastructure limit — scoring it as a failure makes the suite
+say *"the system answered badly"* when it means *"we could not measure"*. Cases are now
+*unmeasurable*: excluded from the rates, reported separately, and not failing the gate. Otherwise
+part of the score is a measurement of the free tier.
+
+(It also surfaced a fourth quota shape: `flash-lite` is **15 per minute** where `flash` is 20 per
+day.)
+
+**The second one nearly became a false finding.** The refusal case scored 0/1 — "should have
+refused but produced a confident answer". The most important case in the suite, apparently failing
+in the worst way possible: inventing a Kubernetes policy that does not exist.
+
+Reading the actual output showed the system had refused correctly:
+
+> *"Therefore, AMOS does not have a Kubernetes autoscaling policy or configured replica counts."*
+
+The model had phrased it in wording my keyword detector did not cover.
+
+**A crude metric does not merely under-measure. It manufactures false failures that are
+indistinguishable from real ones until you go and read the output.** I was one paragraph away from
+writing up a brittle detector as a quality finding about the system.
+
+The fix has two halves, and the second matters as much as the first: broaden the markers, *and*
+add a test asserting confident inventions are still caught — because broadening a detector until
+everything looks like a refusal would pass the exact failure it exists to catch.
+
+### CI, finally
+
+Technical debt since V0.3. It runs the suite **with and without a database** (because "most tests
+need no database" is a claim, and an untested claim is a wish), applies migrations in **both
+directions** (V0.4 shipped an irreversible one, caught by hand), and runs with **no API key** —
+which turns "tests never touch the network" from documentation into something enforced.
+
+It deliberately does *not* run the evaluation suite. That costs quota, and a gate that fails for
+reasons unrelated to the change is worse than no gate.
