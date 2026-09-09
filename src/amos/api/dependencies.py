@@ -14,6 +14,7 @@ from amos.agents.tool_agent import ToolUsingAgent, build_default_registry
 from amos.config import Settings
 from amos.llm.base import LLMProvider
 from amos.llm.gemini import GeminiProvider
+from amos.memory.tools import RecallFactsTool, RecallPastRunsTool, RememberFactTool
 from amos.orchestration.orchestrator import Orchestrator
 from amos.rag.embeddings import GeminiEmbeddings
 from amos.rag.retrieval import SearchKnowledgeTool
@@ -47,11 +48,30 @@ def build_retrieval_tool(
 
 
 def build_registry(settings: Settings, session_factory: object | None = None) -> ToolRegistry:
-    retrieval = build_retrieval_tool(settings, session_factory)
-    return build_default_registry(
-        Path(settings.tool_sandbox_root).resolve(),
-        [retrieval] if retrieval is not None else [],
-    )
+    """The tool set. Database-backed tools appear only when there is a database.
+
+    Without persistence the agent simply has fewer tools, rather than tools that
+    fail on every call.
+    """
+    extra: list[object] = []
+    if session_factory is not None:
+        retrieval = build_retrieval_tool(settings, session_factory)
+        if retrieval is not None:
+            extra.append(retrieval)
+        if settings.memory_enabled:
+            embeddings = GeminiEmbeddings(
+                settings.require_api_key(),
+                model=settings.embedding_model,
+                dimensions=settings.embedding_dimensions,
+            )
+            extra.extend(
+                [
+                    RememberFactTool(session_factory, embeddings),
+                    RecallFactsTool(session_factory, embeddings),
+                    RecallPastRunsTool(session_factory, embeddings),
+                ]
+            )
+    return build_default_registry(Path(settings.tool_sandbox_root).resolve(), extra)
 
 
 def build_tool_agent(

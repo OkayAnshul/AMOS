@@ -1,0 +1,89 @@
+"""What tools does the agent actually get?
+
+This file exists because of a real bug: the V0.6 memory tools were written,
+tested and documented, but a patch to `build_registry` silently failed to apply,
+so they were never registered. Every unit test passed. The agent was simply
+offered four tools instead of seven, and answered "I have noted that" without
+having stored anything.
+
+Nothing asserted the registry's contents, so nothing caught it. That is the gap
+these tests close: **the wiring is a behaviour, and behaviours need tests.**
+"""
+
+from __future__ import annotations
+
+from amos.api.dependencies import build_registry
+from amos.config import Settings
+
+
+def settings(**overrides: object) -> Settings:
+    base: dict[str, object] = {
+        "gemini_api_key": "test-key",
+        "database_url": "postgresql+asyncpg://user:pw@localhost/db",
+    }
+    base.update(overrides)
+    return Settings(_env_file=None, **base)  # type: ignore[arg-type]
+
+
+def test_all_tools_are_registered_when_a_database_is_present() -> None:
+    assert build_registry(settings(), object()).names == [
+        "calculator",
+        "http_get",
+        "read_file",
+        "recall_facts",
+        "recall_past_runs",
+        "remember_fact",
+        "search_knowledge",
+    ]
+
+
+def test_database_backed_tools_are_absent_without_a_database() -> None:
+    """Fewer tools, not tools that fail on every call."""
+    assert build_registry(settings(), None).names == [
+        "calculator",
+        "http_get",
+        "read_file",
+    ]
+
+
+def test_memory_can_be_disabled_independently_of_retrieval() -> None:
+    names = build_registry(settings(memory_enabled=False), object()).names
+    assert "search_knowledge" in names
+    assert "remember_fact" not in names
+
+
+def test_every_tool_declares_a_distinct_name() -> None:
+    names = build_registry(settings(), object()).names
+    assert len(names) == len(set(names))
+
+
+def test_no_registered_tool_holds_write_permission() -> None:
+    """The registry refuses WRITE/DESTRUCTIVE, but assert it at the wiring level
+    too — a tool's permission could be changed without anyone re-reading the
+    registry's guard."""
+    from amos.tools.base import Permission
+
+    registry = build_registry(settings(), object())
+    assert all(
+        tool.permission in (Permission.PURE, Permission.READ_LOCAL, Permission.NETWORK_READ)
+        for tool in registry
+    )
+
+
+def test_tool_descriptions_are_distinct_enough_to_choose_between() -> None:
+    """`search_knowledge` and `recall_facts` were confused by the model in the
+    first V0.6 demo: one searches ingested documents, the other recalls facts the
+    user stated. Their descriptions must not be paraphrases of each other."""
+    registry = build_registry(settings(), object())
+    knowledge = registry.get("search_knowledge").description.lower()
+    facts = registry.get("recall_facts").description.lower()
+
+    # Each names its own subject...
+    assert "ingested documents" in knowledge
+    assert "the user told you" in facts
+
+    # ...and each explicitly points at the other, which is what actually stops
+    # the model conflating them. Checking for the absence of a word would be
+    # brittle: "does not search documentation" legitimately contains "document".
+    assert "recall_facts" in knowledge
+    assert "search_knowledge" in facts
