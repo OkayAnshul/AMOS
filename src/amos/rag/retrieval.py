@@ -50,9 +50,10 @@ class SearchKnowledgeTool(Tool):
 
     name: ClassVar[str] = "search_knowledge"
     description: ClassVar[str] = (
-        "Search AMOS's indexed documents for passages relevant to a question. "
-        "Use this whenever the answer might be in the project's documentation "
-        "rather than in your own knowledge. Returns passages with citations."
+        "Search the INGESTED DOCUMENTS (project documentation and files) for "
+        "passages relevant to a question. Use for questions about how the system "
+        "works or what the documentation says. Returns passages with citations. "
+        "Do NOT use this to recall things the user told you - that is recall_facts."
     )
     input_schema: ClassVar[type[BaseModel]] = SearchKnowledgeArgs
     permission: ClassVar[Permission] = Permission.READ_LOCAL
