@@ -87,3 +87,21 @@ def test_tool_descriptions_are_distinct_enough_to_choose_between() -> None:
     # brittle: "does not search documentation" legitimately contains "document".
     assert "recall_facts" in knowledge
     assert "search_knowledge" in facts
+
+
+def test_the_version_is_defined_in_exactly_one_place() -> None:
+    """The version was previously a literal in three files and drifted the first
+    time only some were updated. It now lives in `amos.__version__`, with the
+    build deriving from it — and the health endpoint reading it, not repeating it.
+    """
+    from pathlib import Path
+
+    from amos import __version__
+
+    app_source = Path("src/amos/api/app.py").read_text()
+    assert f'"{__version__}"' not in app_source, "version literal reappeared in app.py"
+    assert "__version__" in app_source
+
+    pyproject = Path("pyproject.toml").read_text()
+    assert 'dynamic = ["version"]' in pyproject
+    assert f'version = "{__version__}"' not in pyproject

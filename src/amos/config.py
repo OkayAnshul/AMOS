@@ -51,6 +51,18 @@ class Settings(BaseSettings):
             "Truncated embeddings are re-normalised (ADR-008)."
         ),
     )
+    multi_agent_enabled: bool = Field(
+        default=True,
+        description="V0.7 specialised agents. Adds a routing call per task.",
+    )
+    critic_enabled: bool = Field(
+        default=True,
+        description="V0.7 critic review. Adds a call per answer; costly on a 20/day quota.",
+    )
+    max_revisions: int = Field(
+        default=1, ge=0, le=3, description="Bound on the critic/producer argument."
+    )
+
     memory_enabled: bool = Field(
         default=True,
         description="V0.6 semantic and episodic memory tools. Needs a database.",
