@@ -408,3 +408,60 @@ adding new columns — not by anything failing.
 3. The exemption list is explicit rather than a blanket "ignore mismatches" — `vector` columns are
    named individually, so the check keeps its teeth.
 **Test added:** `test_schema_drift.py` (9 tests, parametrised per table).
+
+---
+
+## 2026-09-09 — `/health` reported version 0.7.0 from a v1.0 build
+**Milestone:** found by end-to-end verification after V1.0
+**Symptom:** `curl localhost:8000/health` returned `{"status":"ok","version":"0.7.0"}` on a tree
+tagged `v1.0`.
+**Root cause:** `__version__` in `src/amos/__init__.py` was never bumped for V0.8, V0.9 or V1.0.
+The V0.7 fix had correctly made it the *single source* of truth — and then nobody updated the
+source.
+**Why nothing caught it:** `test_the_version_is_defined_in_exactly_one_place` asserted the version
+was not duplicated. It never asserted the value was **right**. And the API test hardcoded
+`"0.7.0"`, so it passed by agreeing with the bug — the very duplication the V0.7 fix removed,
+reintroduced in the test suite.
+**Fix:** bumped to 1.0.0; the API test now reads `__version__` instead of repeating it; added
+`test_the_version_matches_the_latest_git_tag`.
+**How it was found:** running the app and reading the health response during end-to-end
+verification. Not by any test.
+**Lesson:** **"defined in one place" is a weaker property than "correct".** A single-source test
+proves there is one copy, not that the copy is current — and a second assertion that hardcodes the
+value passes by matching the mistake. Tie the check to something that changes for an independent
+reason (here, the git tag).
+Also, again: **a green suite does not prove the application behaves correctly** — the same lesson
+as V0.1's broken editable install, in a new place.
+**Test added:** `test_the_version_matches_the_latest_git_tag`.
+
+---
+
+## 2026-09-09 — `remember_fact` is called unreliably
+**Milestone:** found by end-to-end verification after V1.0
+**Symptom:** *"Remember for later sessions: my final year project is called AMOS and my mentor is
+Dr Sharma"* produced a call to **`recall_facts`**, not `remember_fact`. Nothing was stored, and the
+model replied as though it had been. A near-identical goal moments later
+(*"Remember this for future sessions: my mentor is Dr Sharma"*) called `remember_fact` correctly
+and stored the row.
+**Expected:** a goal stating a durable fact reliably stores it.
+**Root cause:** model tool selection. This is the *second* occurrence of the same shape — V0.6
+fixed a case where the tools were never registered at all, and sharpened the two descriptions.
+That was a real bug; **this is a different one underneath it, which the first fix masked.** The
+descriptions are now disjoint and the system prompt says explicitly not to claim a fact was noted
+without calling the tool, and the model still sometimes reaches for recall when asked to remember.
+**Status: NOT FIXED.** Recorded rather than papered over.
+**Why prompting is the wrong fix:** three attempts have now gone into instructions. AMOS's own
+governing rule says the answer — *"LLMs handle uncertainty; software handles guarantees"*
+(`docs/02-system-architecture.md`). If storing a stated fact must be reliable, it cannot be left to
+tool selection. Options, none yet chosen:
+  1. A deterministic post-run step that extracts stated facts and writes them — code decides, not
+     the model.
+  2. A critic-style check: if the answer claims something was remembered, verify a write happened,
+     and fail the run if not. Turns a silent lie into a visible error.
+  3. Accept it, and stop having the model *claim* it remembered — the worst property here is not
+     the missed write, it is confidently reporting a write that did not occur.
+**Lesson:** **a fix that makes a symptom rarer can hide a second cause.** V0.6's wiring bug was
+real and its fix was correct, and it also stopped the underlying unreliability from being visible.
+When a bug has two causes, fixing the loud one buys silence, not correctness.
+**Test added:** none yet — a non-deterministic failure needs a repeated-trial harness to measure a
+rate, not a single assertion. Logged as the honest next piece of work.
