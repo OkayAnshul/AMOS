@@ -23,7 +23,7 @@ from amos.agents.schemas import (
 from amos.database.engine import session_scope
 from amos.database.models import Run
 from amos.database.repository import RunRepository
-from amos.errors import AmosError
+from amos.errors import AmosError, ConfigurationError
 from amos.memory.episodic import EpisodicMemory
 from amos.observability import log_event
 
@@ -51,6 +51,36 @@ class RunService:
     @property
     def persistence_enabled(self) -> bool:
         return self._factory is not None
+
+    async def enqueue_only(
+        self, goal: str, request_id: str, idempotency_key: str | None = None
+    ) -> uuid.UUID:
+        """Record the run and hand it to the queue, without executing it.
+
+        The async path (V0.8). The HTTP request returns as soon as the row is
+        durable, which is the point: a goal taking minutes should not hold a
+        connection open, and a client disconnect should not lose the work.
+        """
+        from amos.worker.queue import enqueue
+
+        if self._factory is None:
+            raise ConfigurationError("Async submission requires a database. Set AMOS_DATABASE_URL.")
+
+        if idempotency_key:
+            async with session_scope(self._factory) as session:
+                existing = await RunRepository(session).find_by_idempotency_key(idempotency_key)
+                if existing is not None:
+                    return existing.id
+
+        async with session_scope(self._factory) as session:
+            run = await RunRepository(session).create_run(
+                goal=goal, request_id=request_id, idempotency_key=idempotency_key
+            )
+            run_id = run.id
+            await enqueue(session, run_id)
+
+        log_event(logger, "run.queued", run_id=str(run_id))
+        return run_id
 
     async def execute(
         self, goal: str, request_id: str, idempotency_key: str | None = None
