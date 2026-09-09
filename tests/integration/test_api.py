@@ -29,7 +29,12 @@ def test_health_reports_version(valid_json: str) -> None:
     with build_client(FakeProvider([valid_json])) as client:
         response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["version"] == "0.7.0"
+    # Read from the single source rather than repeating the literal — a
+    # hardcoded version here is the same duplication that let __version__ sit at
+    # 0.7.0 through three milestones.
+    from amos import __version__
+
+    assert response.json()["version"] == __version__
 
 
 def test_goal_answered_without_tools(valid_json: str) -> None:
