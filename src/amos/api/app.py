@@ -11,11 +11,11 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from amos import __version__
-from amos.agents.schemas import AgentResult, GoalRequest, RunTrace
+from amos.agents.schemas import AgentResult, GoalRequest, QueuedRun, RunTrace
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent
 from amos.api.dependencies import build_agent
@@ -186,6 +186,29 @@ def create_app(
         if run_id is not None:
             result.run_id = str(run_id)
         return result
+
+    @app.post("/v1/goals/async", status_code=202, response_model=QueuedRun)
+    async def submit_goal_async(
+        payload: GoalRequest,
+        response: Response,
+        idempotency_key: str | None = Header(default=None, alias="idempotency-key"),
+    ) -> QueuedRun:
+        """Queue a goal for a worker and return immediately.
+
+        202 Accepted, not 200: the work has been *accepted*, not *done*. Returning
+        200 here would tell a client the goal was completed when it has not
+        started.
+        """
+        service: RunService = app.state.run_service
+        run_id = await service.enqueue_only(
+            payload.goal,
+            request_id=get_request_id() or "",
+            idempotency_key=idempotency_key,
+        )
+        # Location points at where the outcome will appear, so a client does not
+        # have to construct the polling URL itself.
+        response.headers["location"] = f"/v1/runs/{run_id}"
+        return QueuedRun(run_id=str(run_id), status="QUEUED")
 
     @app.get("/v1/runs/{run_id}", response_model=RunTrace)
     async def get_run_trace(run_id: str) -> RunTrace:
