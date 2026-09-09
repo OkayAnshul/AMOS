@@ -68,6 +68,12 @@ class AgentResult(BaseModel):
         default="COMPLETED",
         description="COMPLETED, PARTIALLY_COMPLETED or FAILED (V0.4).",
     )
+    agent_name: str | None = Field(
+        default=None, description="Which specialist handled this (V0.7)."
+    )
+    critic_verdict: str | None = Field(
+        default=None, description="accept or revise, when a critic reviewed it (V0.7)."
+    )
     repair_count: int = 0
     total_tokens: int = 0
     latency_ms: int = 0

@@ -334,3 +334,27 @@ one real fact.
 **Fix:** assert a delta (`before + 2`).
 **Lesson:** **a test over a shared table must measure its own effect, not the table's total.**
 Transactional isolation makes tests independent of each other, not independent of the world.
+
+---
+
+## 2026-09-09 — A "deterministic" test fake was randomised per process
+**Milestone:** V0.7 (introduced at V0.5)
+**Symptom:** `test_relevant_passage_ranks_first` failed in a full-suite run and passed in
+isolation, then passed on re-run. Classic flake.
+**Root cause:** `FakeEmbeddings` built its vectors with Python's built-in `hash()`, which is
+**randomised per process** by PYTHONHASHSEED. Every run produced different embeddings, so whether
+the relevant chunk ranked first depended on the seed. Its docstring said "deterministic".
+**Fix:** `blake2b` — stable across processes and Python versions.
+**How it was found:** noticing that a test which passes alone and fails in a suite is usually
+shared state or nondeterminism, then checking `hash()` across three interpreters.
+**Lesson — the interesting half:** `test_fake_embeddings_are_deterministic` **existed and passed
+throughout**, because it compared two calls *inside one process*, where `hash()` is perfectly
+stable. The test measured the wrong scope, so it certified exactly the property it was missing.
+
+**Testing determinism requires comparing against a value fixed OUTSIDE the process.** The
+replacement test shells out to a second interpreter and pins the result.
+
+More generally: a test that can only observe one process cannot detect process-level
+nondeterminism, and its name will confidently claim otherwise. The V0.5 flakiness was latent for
+two milestones behind a green test.
+**Test added:** `test_fake_embeddings_are_stable_ACROSS_processes`.
