@@ -51,6 +51,12 @@ class Settings(BaseSettings):
             "Truncated embeddings are re-normalised (ADR-008)."
         ),
     )
+    memory_enabled: bool = Field(
+        default=True,
+        description="V0.6 semantic and episodic memory tools. Needs a database.",
+    )
+    memory_min_score: float = Field(default=0.30, ge=0.0, le=1.0)
+
     retrieval_top_k: int = Field(default=5, ge=1, le=20)
     retrieval_min_score: float = Field(default=0.30, ge=0.0, le=1.0)
 

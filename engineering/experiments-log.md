@@ -227,3 +227,23 @@ consumes 50 units.
 **Decision affected:** ingestion paces batches and honours the provider's own `retryDelay` on a
 429. Guessing a backoff when the server has told you exactly how long to wait is strictly worse.
 Batch size reduced 50 → 25.
+
+---
+
+## 2026-09-09 — Does memory actually survive a process restart?
+**Milestone:** V0.6
+**Hypothesis:** a fact stored in one server process is recallable by a different process.
+**Method:** started the app, stated a preference, **killed the process**, started a fresh one, and
+asked for the preference back.
+**Result:**
+```
+process A: remember_fact -> ok  subject=user_preferred_backend_language  replaced=None
+           (process killed)
+process B: recall_facts  -> ok  match=similar  found=1
+           "Your preferred backend language is Python."
+```
+**Conclusion:** confirmed across processes, which is the only test that means anything for
+"across sessions" — the same process answering from a variable would look identical from outside.
+**Detail worth noting:** the match was `similar`, not `exact`. The model queried with a natural
+phrase rather than the stored subject key, so the secondary vector index handled it. Both paths
+are load-bearing: exact for known keys, similarity for how questions are actually phrased.

@@ -13,7 +13,7 @@ demo does not go on a resume.**
 
 ## Current status
 
-**V0.5 shipped.** Five claims are evidenced. Everything below them remains unbuilt and unclaimable.
+**V0.6 shipped.** Six claims are evidenced. Everything below them remains unbuilt and unclaimable.
 
 ## Evidence table
 
@@ -24,7 +24,7 @@ demo does not go on a resume.**
 | Durable execution history with full request tracing and idempotent submission | V0.3 | `src/amos/database/**`, `src/amos/api/persistence.py` | 18 DB integration tests | `GET /v1/runs/{id}` | ✅ **shipped** |
 | Goal decomposition into a persisted task DAG with enforced state machine and bounded retries | V0.4 | `src/amos/orchestration/**` | 130 orchestration tests | 3-task DAG demo | ✅ **shipped** |
 | Retrieval pipeline with citation grounding and measured recall@k | V0.5 | `src/amos/rag/**` | 48 RAG tests + evaluation harness | `search_knowledge` tool, `rag.cli evaluate` | ✅ **shipped** |
-| Tiered memory: semantic, episodic and working stores | V0.6 | — | — | — | ⬜ not built |
+| Tiered memory: semantic, episodic and working stores | V0.6 | `src/amos/memory/**` | 28 memory + wiring tests | cross-process recall demo | ✅ **shipped** |
 | Multi-agent orchestration with structured contracts and a critic gate | V0.7 | — | — | — | ⬜ not built |
 | Asynchronous execution with crash-safe job claiming via `SKIP LOCKED` | V0.8 | — | — | — | ⬜ not built |
 | Distributed tracing with OpenTelemetry | V0.9 | — | — | — | ⬜ not built |
@@ -347,3 +347,50 @@ not whether the answer was faithful to it. Chunk size was reasoned, not swept. T
 **12 questions written by the same person as the corpus**, and ground truth was widened after
 seeing initial results — both the strict and lenient figures are reported for that reason. Corpus
 is 300 chunks; nothing here is evidence of behaviour at scale.
+
+
+---
+
+### V0.6 — Memory
+
+**What was implemented:** Semantic memory (durable facts with deterministic contradiction
+resolution) and episodic memory (past runs findable by goal similarity), exposed as agent tools and
+verified to survive a process restart.
+
+**Evidence (files):**
+- `src/amos/memory/semantic.py` — normalised subject keys, supersession chain, exact-before-similar
+- `src/amos/memory/episodic.py` — similarity over `runs`, no new table
+- `src/amos/memory/tools.py` — `remember_fact`, `recall_facts`, `recall_past_runs`
+- `migrations/versions/*_v0_6_memory.py` — `memories` table, partial index on current facts
+- `tests/unit/test_tool_wiring.py` — asserts which tools the agent actually receives
+
+**Tests (350 total):** exactly one current fact per subject after repeated writes; superseded facts
+retained and inspectable; similarity never returns superseded values; the current run excluded from
+its own episodic recall; subject normalisation across capitalisation and punctuation.
+
+**Demo:** stated a preference in one server process, **killed it**, started a new process, and the
+fact was recalled — the only test that means anything for "across sessions".
+
+**Technical explanation (unaided):** Facts live in a relational table rather than a vector index
+because exact recall is a key lookup (similarity returns the *most similar* fact, which in a store
+with several names is sometimes the wrong person's), because contradictions need ordering (a vector
+index has no notion of superseded), and because provenance is a join. The embedding is a secondary
+index for questions arriving without a key. A new fact supersedes the old one — newest wins,
+decided in code — and superseded rows are kept so a changed fact stays auditable and a bad write
+stays recoverable. Episodic memory adds no table: an episode is a run, so it is two columns on
+`runs` plus queries, an index on an existing store rather than a duplicate of it.
+
+**Likely interview questions:** `docs/interview/memory.md`.
+
+**Honest resume wording:**
+> Designed a tiered memory system distinguishing semantic, episodic and working memory, with facts
+> in relational storage using normalised keys and a supersession chain for deterministic
+> contradiction resolution, and vector similarity as a secondary index; episodic recall implemented
+> as an index over existing run records rather than a duplicate store.
+
+**What this does NOT demonstrate:** no forgetting, TTL or decay — memories accumulate forever. No
+cross-subject conflict detection. No user scoping (single user). No automatic extraction: facts are
+stored only when the model calls the tool. **`remember_fact` persists a decision the model made,
+with no approval step and no provenance check on content** — a prompt-injected instruction could
+write a false fact the system repeats later. Conversation memory is deliberately not built, because
+there is no multi-turn conversation API.

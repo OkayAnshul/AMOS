@@ -561,3 +561,72 @@ The reading list now exists to close them. After that, V0.6 — Memory.
 
 ## Recommended Commit
 `docs: add the complete study plan — prerequisites, architecture, algorithms`
+
+---
+
+# Session 7
+
+**Date:** 2026-09-09
+**Module:** V0.6 — Memory
+**Objective:** Facts that survive a restart; past runs findable by similarity. Plus a build journal
+covering the whole project from zero.
+
+## What We Changed
+`src/amos/memory/` — semantic store with normalised keys and a supersession chain, episodic recall
+over `runs`, three memory tools. Migration for `memories` + episodic columns. Wrote
+`docs/09-memory-architecture.md`, `docs/interview/memory.md`, and **`docs/25-build-journal.md`**
+(the construction narrative Anshul asked for). Hardened the database readiness probe. 350 tests.
+
+## Architecture Decisions
+- **Facts are relational-first**, with vectors as a secondary index. Exact recall is a key lookup;
+  contradictions need ordering; provenance is a join.
+- **Contradiction resolution is newest-wins, in code.** Superseded rows kept.
+- **Episodic memory adds no table** — an episode IS a run, so it is two columns plus queries.
+- **The lesson is derived, not generated** — an LLM call per run to restate recorded facts would
+  cost ~5% of the daily quota.
+- **Conversation memory deliberately not built** — no multi-turn API exists to remember.
+
+## Problems Encountered
+1. A flaky database test immediately after starting the container, which stopped reproducing.
+2. **The memory tools were never registered.** Demo said "I have noted that"; table was empty.
+3. `ForeignKeyViolationError` on every contradiction test.
+4. A test asserting an absolute row count broke when a live demo added a real fact.
+
+## How We Solved Them
+1. The readiness probe now runs `SELECT 1` and retries, instead of treating "socket opened" as
+   "ready". Recorded honestly that the specific failing test was never captured.
+2. **My first diagnosis was wrong** — I blamed overlapping tool descriptions. The startup log
+   showed four tools instead of seven: a `str.replace` patch had silently no-opped after ruff
+   reformatted its target. Added `test_tool_wiring.py` and a fail-loud patcher.
+3. Insert-then-update. The FK made supersede-first impossible, and the comment defending that
+   ordering was wrong about the danger too — one transaction, so no other transaction sees the
+   intermediate state.
+4. Assert a delta, not an absolute. Rollback isolates a test's own writes, not the world's.
+
+## Tests Performed
+- 350 pass, 2 skipped. Cross-process demo: stated a preference, killed the process, recalled it
+  from a new one.
+- Migration reverses (`upgrade → downgrade → upgrade`).
+- `mypy --strict` and `ruff` clean.
+
+## Things I Learned
+- **Unit tests verify components; nothing was verifying they were connected.** 344 tests passed
+  with the memory feature completely unreachable. Wiring is a behaviour and needs a test.
+- **When a symptom fits "the model did something odd", check the deterministic explanation first.**
+  LLM systems make that attribution far too easy, and it is unfalsifiable enough to be comfortable.
+  The evidence was one grep away.
+- **A silent `str.replace` no-op is a class of bug** — third occurrence. Patching by pattern must
+  fail loudly.
+- **A confident comment justifying an impossible design is worse than no comment.** Same shape as
+  V0.2's `"Verified against the API"`.
+- A test over a shared table must measure its own effect, not the table's total.
+
+## Things I Should Investigate
+- `_finalise` has been dead for four milestones. Delete it at V0.7.
+- Nothing scans a finished run for facts worth remembering — automatic extraction is unbuilt.
+- Memories accumulate forever; no eviction story.
+
+## Next Exact Step
+V0.7 — Multi-agent. Delete `_finalise` first. Specialised agents need **distinct tool allowlists**,
+not just distinct prompts, and routing accuracy must be measured or "specialised" is an unmeasured
+claim. Full sequence in `engineering/current-state.md`.
