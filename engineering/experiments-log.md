@@ -247,3 +247,41 @@ process B: recall_facts  -> ok  match=similar  found=1
 **Detail worth noting:** the match was `similar`, not `exact`. The model queried with a natural
 phrase rather than the stored subject key, so the secondary vector index handled it. Both paths
 are load-bearing: exact for known keys, similarity for how questions are actually phrased.
+
+---
+
+## 2026-09-09 — Routing accuracy, and the router catching a design error
+**Milestone:** V0.7
+**Question:** do the specialised agents get the right tasks? Without a number,
+"specialised agents" is three prompts and a hopeful story.
+**Method:** 10 labelled tasks (`ROUTING_CASES`), deliberately including cases whose *topic*
+suggests one agent while their *requirement* suggests another — a router that pattern-matches
+subject matter must fail those.
+**Result (first run): 90.0% (9/10).** The single miss:
+
+```
+"Check whether previous runs solved a similar goal"
+  expected analyst, routed to researcher
+```
+
+**Conclusion — the router was right and I was wrong.** I had assigned `recall_past_runs` to the
+analyst, reasoning that past outcomes inform judgement. But recalling a past run is a **lookup**,
+structurally identical to searching documents or recalling a fact. The tool was on the wrong agent.
+
+**Decision affected:** `recall_past_runs` moved to the researcher, and the analyst is now
+calculator-only — a sharper boundary that also makes the two allowlists fully disjoint.
+**Result (after the fix): 100.0% (10/10).**
+
+### What this does and does not show
+
+It shows the measurement doing its job: it caught an error in *my design*, not the model's
+behaviour, which is not what I expected it to find.
+
+It does **not** show that routing is 100% accurate in general. Ten cases, written by the person
+who wrote the agents, and I changed both the system and one label between runs — the exact
+pattern flagged as dangerous in V0.5's recall measurement. The defensible claim is: *"on a small
+labelled set, routing is correct after a tool-assignment fix that the measurement itself
+surfaced."* Not "routing is 100% accurate."
+
+The honest weakness: a set this small, self-authored, cannot distinguish a good router from a set
+of easy cases.

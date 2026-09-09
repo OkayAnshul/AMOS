@@ -63,7 +63,14 @@ class AgentSpec:
 RESEARCHER = AgentSpec(
     name="researcher",
     purpose="Find information from documents, the web, and remembered facts.",
-    tools=frozenset({"search_knowledge", "http_get", "read_file", "recall_facts"}),
+    # `recall_past_runs` lives here, not on the analyst. The first assignment put
+    # it with the analyst on the reasoning that past outcomes inform judgement —
+    # but recalling a past run is a *lookup*, the same shape as searching
+    # documents or recalling a fact. The router disagreed with the original
+    # labelling and was right; see engineering/experiments-log.md.
+    tools=frozenset(
+        {"search_knowledge", "http_get", "read_file", "recall_facts", "recall_past_runs"}
+    ),
     routing_hint="finding, looking up, reading, searching, what does X say",
     system_instruction="""You are AMOS's researcher. You find information; you do not analyse it.
 
@@ -76,13 +83,13 @@ RESEARCHER = AgentSpec(
 ANALYST = AgentSpec(
     name="analyst",
     purpose="Compute, compare and reason over information already gathered.",
-    tools=frozenset({"calculator", "recall_past_runs"}),
+    tools=frozenset({"calculator"}),
     routing_hint="calculate, compare, how much, which is larger, analyse, work out",
     system_instruction="""You are AMOS's analyst. You reason over information you are given.
 
 - Use the calculator for every arithmetic step. Do not compute in your head.
-- You cannot search or fetch anything. If information is missing, say precisely what
-  you need rather than guessing at it.
+- You cannot search, fetch or recall anything. If information is missing, say
+  precisely what you need rather than guessing at it.
 - Show the steps that led to your conclusion.""",
 )
 
