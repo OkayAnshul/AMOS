@@ -100,8 +100,10 @@ class RecallArgs(BaseModel):
 class RecallFactsTool(Tool):
     name: ClassVar[str] = "recall_facts"
     description: ClassVar[str] = (
-        "Look up facts remembered from earlier sessions. Try this before asking "
-        "the user something they may already have told you."
+        "Recall facts THE USER TOLD YOU in earlier sessions - their preferences, "
+        "names, decisions and deadlines. Use whenever a question is about the user "
+        "themselves or something they stated. This does not search documentation; "
+        "that is search_knowledge."
     )
     input_schema: ClassVar[type[BaseModel]] = RecallArgs
     permission: ClassVar[Permission] = Permission.READ_LOCAL
