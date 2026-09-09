@@ -29,6 +29,7 @@ from amos.errors import (
     ProviderTimeoutError,
     ToolLoopExhaustedError,
 )
+from amos.memory.episodic import EpisodicMemory
 from amos.observability import (
     configure_logging,
     get_request_id,
@@ -37,6 +38,7 @@ from amos.observability import (
     set_request_id,
 )
 from amos.orchestration.orchestrator import Orchestrator
+from amos.rag.embeddings import GeminiEmbeddings
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,18 @@ def create_app(
         # Persistence is optional so the app still runs without a database —
         # earlier milestones' behaviour stays reachable, and tests need no container.
         if app.state.run_service is None:
-            app.state.run_service = RunService(app.state.agent, factory)
+            episodic = None
+            if factory is not None and settings.memory_enabled:
+                embeddings = GeminiEmbeddings(
+                    settings.require_api_key(),
+                    model=settings.embedding_model,
+                    dimensions=settings.embedding_dimensions,
+                )
+
+                def episodic(session: object) -> EpisodicMemory:
+                    return EpisodicMemory(session, embeddings)  # type: ignore[arg-type]
+
+            app.state.run_service = RunService(app.state.agent, factory, episodic)
 
         log_event(
             logger,
@@ -107,8 +120,8 @@ def create_app(
 
     app = FastAPI(
         title="AMOS",
-        description="Autonomous Multi-Agent Operating System — V0.5",
-        version="0.5.0",
+        description="Autonomous Multi-Agent Operating System — V0.6",
+        version="0.6.0",
         lifespan=lifespan,
     )
     app.state.agent = agent
@@ -149,7 +162,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok", "version": "0.5.0"}
+        return {"status": "ok", "version": "0.6.0"}
 
     @app.post("/v1/goals", response_model=AgentResult)
     async def submit_goal(

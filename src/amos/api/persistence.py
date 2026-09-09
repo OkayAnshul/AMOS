@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -23,6 +24,7 @@ from amos.database.engine import session_scope
 from amos.database.models import Run
 from amos.database.repository import RunRepository
 from amos.errors import AmosError
+from amos.memory.episodic import EpisodicMemory
 from amos.observability import log_event
 
 logger = logging.getLogger(__name__)
@@ -40,9 +42,11 @@ class RunService:
         self,
         agent: object,
         session_factory: async_sessionmaker[AsyncSession] | None,
+        episodic: Callable[[AsyncSession], EpisodicMemory] | None = None,
     ) -> None:
         self._agent = agent
         self._factory = session_factory
+        self._episodic = episodic
 
     @property
     def persistence_enabled(self) -> bool:
@@ -93,6 +97,22 @@ class RunService:
             stored = await repo.get_trace(run_id)
             if stored is not None:
                 await repo.record_success(stored, result)
+
+        # 5. Make the run findable by similarity (episodic memory).
+        #    After the outcome, not before — the lesson is only knowable once the
+        #    run has finished. Failing to record an episode must never fail the
+        #    run: the answer is already correct and already persisted.
+        if self._episodic is not None:
+            try:
+                async with session_scope(self._factory) as session:
+                    await self._episodic(session).record(run_id, goal, _lesson_from(result))
+            except Exception as exc:  # noqa: BLE001
+                log_event(
+                    logger,
+                    "episode.record_failed",
+                    run_id=str(run_id),
+                    error=type(exc).__name__,
+                )
 
         log_event(logger, "run.persisted", run_id=str(run_id))
         return result, run_id
@@ -184,3 +204,23 @@ def _to_trace(run: Run) -> RunTrace:
             for t in run.tool_calls
         ],
     )
+
+
+def _lesson_from(result: AgentResult) -> str | None:
+    """A one-line summary of how the run went, for future episodic recall.
+
+    Derived from recorded facts, not asked of the model: an extra LLM call per
+    run to write a sentence would cost 5% of the daily quota, and the facts
+    already say what happened.
+    """
+    if not result.tasks:
+        return None
+    succeeded = sum(1 for t in result.tasks if t.state == "SUCCEEDED")
+    failed = [t for t in result.tasks if t.state not in ("SUCCEEDED", "SKIPPED")]
+    parts = [f"{succeeded}/{len(result.tasks)} tasks succeeded"]
+    if failed:
+        parts.append("failed: " + ", ".join(f"{t.plan_ref} ({t.error})" for t in failed[:3]))
+    tools = {o.name for o in result.tool_outcomes}
+    if tools:
+        parts.append("tools used: " + ", ".join(sorted(tools)))
+    return "; ".join(parts)[:1000]

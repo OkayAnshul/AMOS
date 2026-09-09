@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlalchemy import (
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -100,6 +101,60 @@ class Run(Base):
             postgresql_where=idempotency_key.isnot(None),
         ),
         Index("idx_runs_created", "created_at"),
+    )
+
+
+class Memory(Base):
+    """A durable fact about the user or the world (V0.6, semantic memory).
+
+    ## Why this is a relational table and not just vectors
+
+    The obvious move for "remember things" in an AI system is to embed everything
+    and search by similarity. That is wrong for facts, for three reasons this
+    schema encodes:
+
+    1. **Exact recall is a key lookup.** "What is the user's name?" should return
+       *the* name, not the most similar-looking fact. Similarity search will
+       occasionally hand back someone else's name with high confidence.
+    2. **Contradictions need ordering.** When a fact changes, the old one must
+       stop being current. Vector search has no notion of superseded.
+    3. **Provenance needs joins.** "Where did this come from?" is a foreign key
+       to a run, not a nearest neighbour.
+
+    So `subject` carries a normalised key for exact lookup and contradiction
+    detection, `embedding` supports similarity for questions that have no key,
+    and `superseded_by` makes "current" a deterministic query rather than a
+    ranking. Superseded rows are **kept**, so the history of a changed fact is
+    auditable.
+    """
+
+    __tablename__ = "memories"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    source_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("runs.id", ondelete="SET NULL"), nullable=True
+    )
+    # A chain, not a delete: the previous value of a changed fact stays
+    # inspectable, and "current" is `superseded_by IS NULL`.
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memories.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        # Partial: almost every query wants only current facts, and superseded
+        # rows accumulate without ever being read by the hot path.
+        Index(
+            "idx_memories_current",
+            "subject",
+            postgresql_where=(superseded_by.is_(None)),
+        ),
+        Index("idx_memories_source_run", "source_run_id"),
     )
 
 
