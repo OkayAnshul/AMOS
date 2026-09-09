@@ -171,5 +171,14 @@ ROUTING_CASES: list[RoutingCase] = [
         "researcher",
         note="Topic is a number, requirement is lookup.",
     ),
-    RoutingCase("Check whether previous runs solved a similar goal", "analyst"),
+    RoutingCase(
+        "Check whether previous runs solved a similar goal",
+        "researcher",
+        note=(
+            "Relabelled after measurement. Originally 'analyst', because "
+            "recall_past_runs was assigned there. The router chose researcher and "
+            "was right: recalling a past run is a lookup. The TOOL moved; the "
+            "label followed the fix, not the other way round."
+        ),
+    ),
 ]
