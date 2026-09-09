@@ -105,3 +105,30 @@ def test_the_version_is_defined_in_exactly_one_place() -> None:
     pyproject = Path("pyproject.toml").read_text()
     assert 'dynamic = ["version"]' in pyproject
     assert f'version = "{__version__}"' not in pyproject
+
+
+def test_the_version_matches_the_latest_git_tag() -> None:
+    """`__version__` was left at 0.7.0 through V0.8, V0.9 and V1.0.
+
+    Nothing caught it: the earlier test only asserted the version was defined in
+    one place, not that the value was *right*. `/health` cheerfully reported
+    0.7.0 from a v1.0 build, which is the kind of wrong that survives because it
+    is never fatal.
+    """
+    import subprocess
+
+    from amos import __version__
+
+    tags = subprocess.run(
+        ["git", "tag", "-l", "v*"], capture_output=True, text=True, check=False
+    ).stdout.split()
+    if not tags:
+        return  # a shallow clone or a fresh repo has no tags to compare against
+
+    def key(tag: str) -> tuple[int, ...]:
+        return tuple(int(part) for part in tag.lstrip("v").split("."))
+
+    latest = max(tags, key=key)
+    assert __version__.startswith(latest.lstrip("v")), (
+        f"__version__ is {__version__} but the latest tag is {latest}"
+    )
