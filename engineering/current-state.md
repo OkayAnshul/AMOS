@@ -105,8 +105,11 @@ project's two equal objectives, and it is the only one still outstanding:
 > A milestone is not complete until Anshul can answer that module's questions unaided.
 
 Recommended order:
-1. **`docs/25-build-journal.md`** — the narrative, eleven chapters, how it was built and what was
+1. **`docs/25-build-journal.md`** — the narrative, twelve chapters, how it was built and what was
    wrong. Read this first; it is the only document written to be read start to finish.
+1b. **`docs/build-along/`** — if the answer is "build it myself". Twelve documents: what file to
+   write, when, why now, and the trap waiting in each milestone. Contracts, not code — the git tags
+   are the answer key.
 2. `docs/24-study-plan.md` — what to study, tier by tier, with the algorithms at file:line.
 3. `docs/interview/*.md` — ten documents, in milestone order.
 

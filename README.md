@@ -12,6 +12,9 @@ failure.
 >
 > New here? [`docs/25-build-journal.md`](docs/25-build-journal.md) explains how it was built,
 > decision by decision, including everything that turned out to be wrong.
+>
+> Want to build it yourself? [`docs/build-along/`](docs/build-along/) is a file-by-file guide —
+> what to write, when, and why that file now rather than later.
 
 ---
 
