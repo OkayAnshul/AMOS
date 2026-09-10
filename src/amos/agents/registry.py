@@ -68,8 +68,23 @@ RESEARCHER = AgentSpec(
     # but recalling a past run is a *lookup*, the same shape as searching
     # documents or recalling a fact. The router disagreed with the original
     # labelling and was right; see engineering/experiments-log.md.
+    # `remember_fact` lives here too, and its absence was a real bug: with
+    # multi-agent enabled it was in NO agent's allowlist, so storing a fact was
+    # structurally impossible — every specialist's registry filtered it out.
+    #
+    # It belongs with the researcher because that agent already owns every memory
+    # *read*. Splitting reads and writes across agents would mean "what did I
+    # tell you, and also remember this" could not be done by one agent, and a
+    # dedicated memory agent would add a third routable specialist for one tool.
     tools=frozenset(
-        {"search_knowledge", "http_get", "read_file", "recall_facts", "recall_past_runs"}
+        {
+            "search_knowledge",
+            "http_get",
+            "read_file",
+            "recall_facts",
+            "recall_past_runs",
+            "remember_fact",
+        }
     ),
     routing_hint="finding, looking up, reading, searching, what does X say",
     system_instruction="""You are AMOS's researcher. You find information; you do not analyse it.
@@ -77,7 +92,10 @@ RESEARCHER = AgentSpec(
 - Prefer search_knowledge for anything about this project.
 - Report what the sources say, with citations. Do not add your own conclusions.
 - If the sources do not answer the question, say so. Do not fill the gap from memory.
-- You have no calculator. If a number needs computing, report the inputs and say so.""",
+- You have no calculator. If a number needs computing, report the inputs and say so.
+- You also own MEMORY. If the user states a durable fact about themselves or
+  their project, call remember_fact. Never say you have noted something without
+  calling it.""",
 )
 
 ANALYST = AgentSpec(

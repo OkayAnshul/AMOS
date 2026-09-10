@@ -132,3 +132,37 @@ def test_the_version_matches_the_latest_git_tag() -> None:
     assert __version__.startswith(latest.lstrip("v")), (
         f"__version__ is {__version__} but the latest tag is {latest}"
     )
+
+
+def test_every_registered_tool_is_reachable_by_at_least_one_agent() -> None:
+    """A tool nobody can call is a tool that does not exist.
+
+    This closes a real bug: `remember_fact` was registered globally and appeared
+    in `build_registry()`, but was in **no agent's allowlist** — so with
+    multi-agent enabled (the default) every specialist's registry filtered it
+    out and storing a fact was structurally impossible.
+
+    The existing wiring test passed throughout, because it checks the *global*
+    registry. Nothing checked that the per-agent filtering left every tool
+    reachable by somebody. Registration and reachability are different
+    properties.
+    """
+    from amos.agents.registry import AgentRegistry
+
+    registered = set(build_registry(settings(), object()).names)
+    reachable: set[str] = set()
+    for spec in AgentRegistry().specs:
+        reachable |= spec.tools
+
+    unreachable = registered - reachable
+    assert not unreachable, f"registered but no agent can call them: {sorted(unreachable)}"
+
+
+def test_each_agents_registry_contains_exactly_its_allowlist() -> None:
+    """The filtering itself, asserted against the real tool set."""
+    from amos.agents.registry import AgentRegistry
+
+    tools = build_registry(settings(), object())
+    for spec in AgentRegistry().specs:
+        filtered = set(spec.registry_from(tools).names)
+        assert filtered == spec.tools & set(tools.names), spec.name

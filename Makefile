@@ -43,5 +43,8 @@ eval:  ## End-to-end evaluation suite
 retrieval:  ## Retrieval recall@k and MRR
 	.venv/bin/python -m amos.rag.cli evaluate 5
 
+memory-trials:  ## Memory storage reliability (capture a baseline with AMOS_MEMORY_RECONCILE_ENABLED=false first)
+	.venv/bin/python -m amos.memory.cli 2
+
 routing:  ## Agent routing accuracy
 	.venv/bin/python -m amos.agents.cli
