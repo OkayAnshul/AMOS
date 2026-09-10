@@ -16,6 +16,17 @@ from typing import Any
 
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 
+#: The run currently executing. Mirrors the request id above, and exists for the
+#: same reason: something deep in the stack needs it and threading it through
+#: every signature would be worse.
+#:
+#: Concretely, `RememberFactTool` is constructed once at startup — before any run
+#: exists — so it cannot be given a run id as a constructor argument. Without
+#: this, `memories.source_run_id` was NULL for every row and "where did this fact
+#: come from?" was unanswerable, which is one of the three reasons
+#: docs/09-memory-architecture.md gives for memory being relational at all.
+_current_run_id: ContextVar[str | None] = ContextVar("current_run_id", default=None)
+
 
 def new_request_id() -> str:
     return uuid.uuid4().hex[:16]
@@ -27,6 +38,14 @@ def set_request_id(request_id: str) -> None:
 
 def get_request_id() -> str | None:
     return _request_id.get()
+
+
+def set_current_run_id(run_id: str | None) -> None:
+    _current_run_id.set(run_id)
+
+
+def get_current_run_id() -> str | None:
+    return _current_run_id.get()
 
 
 class JsonFormatter(logging.Formatter):

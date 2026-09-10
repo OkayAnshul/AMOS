@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from amos.memory.episodic import EpisodicMemory
 from amos.memory.semantic import SemanticMemory
+from amos.observability import get_current_run_id
 from amos.tools.base import Permission, Tool
 
 
@@ -70,13 +71,32 @@ class RememberFactTool(Tool):
         self._embeddings = embeddings
         self._run_id = run_id
 
+    def _source_run_id(self) -> uuid.UUID | None:
+        """Provenance for this fact.
+
+        The tool is built once at startup, before any run exists, so the run id
+        cannot be a constructor argument. It comes from a contextvar set by
+        RunService — the same pattern as the request id threaded since V0.1.
+        """
+        if self._run_id is not None:
+            return self._run_id
+        current = get_current_run_id()
+        if current is None:
+            return None
+        try:
+            return uuid.UUID(current)
+        except ValueError:
+            return None
+
     async def _run(self, args: RememberArgs) -> dict[str, Any]:
         from amos.database.engine import session_scope
 
         async with session_scope(self._factory) as session:
             memory = SemanticMemory(session, self._embeddings)
             previous = await memory.recall_exact(args.subject)
-            fact = await memory.remember(args.subject, args.content, source_run_id=self._run_id)
+            fact = await memory.remember(
+                args.subject, args.content, source_run_id=self._source_run_id()
+            )
 
         return {
             "stored": True,
