@@ -18,7 +18,7 @@ from amos import __version__
 from amos.agents.schemas import AgentResult, GoalRequest, QueuedRun, RunTrace
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent
-from amos.api.dependencies import build_agent
+from amos.api.dependencies import build_agent, build_provider, build_registry
 from amos.api.persistence import RunService
 from amos.config import Settings, get_settings
 from amos.database.engine import create_engine, create_session_factory
@@ -32,6 +32,7 @@ from amos.errors import (
     ToolLoopExhaustedError,
 )
 from amos.memory.episodic import EpisodicMemory
+from amos.memory.reconcile import MemoryReconciler
 from amos.observability import (
     configure_logging,
     get_request_id,
@@ -107,8 +108,21 @@ def create_app(
                 def episodic(session: object) -> EpisodicMemory:
                     return EpisodicMemory(session, embeddings)  # type: ignore[arg-type]
 
+            reconciler = None
+            if factory is not None:
+                reconciler = MemoryReconciler(
+                    build_provider(settings),
+                    build_registry(settings, factory),
+                    timeout=settings.llm_timeout_seconds,
+                    enabled=settings.memory_reconcile_enabled,
+                )
+
             app.state.run_service = RunService(
-                app.state.agent, factory, episodic, trace_content=settings.trace_content
+                app.state.agent,
+                factory,
+                episodic,
+                trace_content=settings.trace_content,
+                reconciler=reconciler,
             )
 
         log_event(
