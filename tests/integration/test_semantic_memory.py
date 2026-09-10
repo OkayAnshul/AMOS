@@ -162,3 +162,45 @@ async def test_count_reports_only_current_facts(db_session: AsyncSession) -> Non
     await store.remember("count_test_b", "1")
 
     assert await store.count_current() == before + 2
+
+
+async def test_provenance_records_which_run_learned_the_fact(
+    db_session: AsyncSession,
+) -> None:
+    """`source_run_id` was NULL for every row until this was wired.
+
+    The tool is constructed at startup, before any run exists, so the run id
+    cannot be a constructor argument — it comes from a contextvar set by
+    RunService. Provenance is one of the three reasons
+    docs/09-memory-architecture.md gives for memory being relational at all, so a
+    permanently-NULL column quietly removed a third of the justification.
+    """
+    from amos.database.repository import RunRepository
+
+    run = await RunRepository(db_session).create_run(goal="g", request_id="r")
+    store = memory(db_session)
+    await store.remember("traced_fact", "a fact", source_run_id=run.id)
+
+    result = await db_session.execute(
+        sql_text("SELECT source_run_id FROM memories WHERE subject = 'traced_fact'")
+    )
+    assert result.scalar_one() == run.id
+
+
+async def test_the_contextvar_supplies_the_run_id_when_none_is_passed(
+    db_session: AsyncSession,
+) -> None:
+    """The path that actually runs in production: RememberFactTool is built at
+    startup with no run id and reads the current one."""
+    import uuid as _uuid
+
+    from amos.memory.tools import RememberFactTool
+    from amos.observability import set_current_run_id
+
+    run_id = _uuid.uuid4()
+    set_current_run_id(str(run_id))
+    try:
+        tool = RememberFactTool(None, None)
+        assert tool._source_run_id() == run_id
+    finally:
+        set_current_run_id(None)

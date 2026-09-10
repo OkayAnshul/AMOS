@@ -26,7 +26,8 @@ from amos.database.models import Run
 from amos.database.repository import RunRepository
 from amos.errors import AmosError, ConfigurationError
 from amos.memory.episodic import EpisodicMemory
-from amos.observability import log_event
+from amos.memory.reconcile import MemoryReconciler
+from amos.observability import log_event, set_current_run_id
 from amos.telemetry.metrics import instruments, safe_labels
 from amos.telemetry.tracing import describe_goal, span
 
@@ -47,11 +48,13 @@ class RunService:
         session_factory: async_sessionmaker[AsyncSession] | None,
         episodic: Callable[[AsyncSession], EpisodicMemory] | None = None,
         trace_content: bool = False,
+        reconciler: MemoryReconciler | None = None,
     ) -> None:
         self._agent = agent
         self._factory = session_factory
         self._episodic = episodic
         self._trace_content = trace_content
+        self._reconciler = reconciler
 
     @property
     def persistence_enabled(self) -> bool:
@@ -114,6 +117,10 @@ class RunService:
             )
             run_id = run.id
 
+        # Provenance for anything remembered during this run. The tool is built
+        # at startup and cannot be given a run id, so it reads this.
+        set_current_run_id(str(run_id))
+
         # 3. Execute outside any transaction — an LLM call can take seconds and
         #    holding a database connection open across it would exhaust the pool.
         started = time.perf_counter()
@@ -131,6 +138,14 @@ class RunService:
                 if run is not None:
                     await repo.record_failure(run, type(exc).__name__, exc.message)
             raise
+
+        # 3.5 Reconcile what the answer CLAIMS with what was actually written.
+        #     Before recording, deliberately: the caveat must land in the
+        #     persisted trace, not be bolted on after it. A stored answer that
+        #     says "I've noted that" when nothing was written is exactly the lie
+        #     this step exists to prevent, and it would outlive the request.
+        if self._reconciler is not None:
+            result = await self._reconciler.reconcile(goal, result)
 
         # 4. Record the outcome.
         async with session_scope(self._factory) as session:

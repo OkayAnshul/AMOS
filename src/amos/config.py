@@ -103,6 +103,13 @@ class Settings(BaseSettings):
         description="V0.6 semantic and episodic memory tools. Needs a database.",
     )
     memory_min_score: float = Field(default=0.30, ge=0.0, le=1.0)
+    memory_reconcile_enabled: bool = Field(
+        default=True,
+        description=(
+            "Guarantee the system never claims to have remembered something it did "
+            "not store. Set false to capture a baseline."
+        ),
+    )
 
     retrieval_top_k: int = Field(default=5, ge=1, le=20)
     retrieval_min_score: float = Field(default=0.30, ge=0.0, le=1.0)

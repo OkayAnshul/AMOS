@@ -465,3 +465,40 @@ real and its fix was correct, and it also stopped the underlying unreliability f
 When a bug has two causes, fixing the loud one buys silence, not correctness.
 **Test added:** none yet — a non-deterministic failure needs a repeated-trial harness to measure a
 rate, not a single assertion. Logged as the honest next piece of work.
+
+---
+
+## 2026-09-10 — `remember_fact` was in NO agent's allowlist
+**Milestone:** fix after V1.0. **Closes the open entry from 2026-09-09.**
+**Symptom:** with multi-agent enabled — the default — a goal stating a durable fact was never
+stored. Measured over 8 trials: **store rate 0%, false-claim rate 38%.**
+**Root cause:** not model behaviour. `AgentSpec` allowlists were written at V0.7 and
+`remember_fact` was simply omitted from all three. Every specialist's registry filtered it out, so
+storing a fact was **structurally impossible** whenever routing was on. The tool worked perfectly
+when tested directly, which is why the earlier single-agent trials scored 100% and the failure
+looked intermittent.
+**Why nothing caught it:** `test_all_tools_are_registered_when_a_database_is_present` — added at
+V0.6 to close exactly this class — passes, because it checks the **global** registry.
+**Registration and reachability are different properties**, and nothing checked the second. A tool
+nobody can call is a tool that does not exist.
+**Fix:** `remember_fact` added to the researcher (which already owns every memory *read*), plus
+`test_every_registered_tool_is_reachable_by_at_least_one_agent` to close the class.
+**Measured after:** store rate **0% → 100%**, false claims **38% → 0%**.
+**How it was found:** the trial harness scored **100% on its first baseline** — it could not
+reproduce the bug, because every phrasing was a single fact run with multi-agent off. Adding
+compound goals and the full stack reproduced it instantly, and the `tools=[...]` column showed
+`search_knowledge` and `recall_facts` where `remember_fact` should have been.
+**Lessons:**
+1. **A measurement that cannot reproduce the bug is not a baseline.** The first 100% was the trial
+   set failing, not the system passing — the same shape as V1.0's refusal detector and V0.5's
+   golden set. This is now the third time a metric has been wrong before the system was.
+2. **Reproduce under the configuration that failed.** The original report was a compound goal
+   through the full stack; the trials were single facts with routing off. Different system.
+3. **Fixing a class of bug narrows it rather than closing it.** V0.6's wiring test genuinely closed
+   "tools not registered" and left "tools not reachable" wide open. The next one after this will be
+   something neither test covers.
+4. Again, and now four times: **when a symptom fits "the model chose badly", find the deterministic
+   explanation first.** Three prompt-level fixes went into a bug that was a missing string in a
+   frozenset.
+**Test added:** `test_every_registered_tool_is_reachable_by_at_least_one_agent`,
+`test_each_agents_registry_contains_exactly_its_allowlist`.
