@@ -31,6 +31,7 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 | End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (judged) |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
 | Routing | `make routing` | 10/10 |
+| Memory storage | `make memory-trials` | store 100% (8/8), false claims 0% |
 
 **All three sets are small and self-authored.** A regression gate, not a characterisation of
 quality. `docs/16-evaluation.md` carries that caveat next to every number.
@@ -39,7 +40,8 @@ quality. `docs/16-evaluation.md` carries that caveat next to every number.
 - **Not a distributed system** — multiple processes, one machine, one database
 - **At-least-once delivery**, not exactly-once. Safety rests on tools being read-only;
   `remember_fact` could store a fact twice, which supersession makes harmless *by luck*
-- **`remember_fact` persists a model decision** with no approval step and no provenance check
+- **`remember_fact` persists a model decision** with no approval step and no provenance check on
+  *content* (the source run is now recorded)
 - **Trace context does not propagate into workers** — a queued run is a separate trace
 - No forgetting/TTL; memories accumulate forever
 - No agent-to-agent delegation; the orchestrator assigns work
@@ -61,7 +63,7 @@ quality. `docs/16-evaluation.md` carries that caveat next to every number.
 `main` (V1.0 merged from `feat/v1.0-evaluation`)
 
 ## Known Bugs
-None open. Twenty-two fixed across Phase 0–V1.0, all in `engineering/bugs-log.md` with the lesson
+None open. Twenty-four fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson
 each taught. The corrections table in `docs/25-build-journal.md` lists twenty things believed that
 were false.
 
@@ -71,6 +73,8 @@ were false.
 - Backups: a documented `pg_dump` with **no restore drill**.
 - `AgentTask` is defined but unused — no agent-to-agent delegation.
 - No regression tracking over time; each eval run prints a number and nothing stores it.
+- `MemoryReconciler` has **never been observed to fire** since the allowlist fix. Delete it if that
+  is still true at the next milestone — the rule that removed `_finalise`.
 
 ## Environment
 | Thing | State |
