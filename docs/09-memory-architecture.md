@@ -146,6 +146,36 @@ fetched by `http_get` could still talk the model into remembering something fals
 at `READ_LOCAL` permission rather than `WRITE` precisely because the registry refuses `WRITE` until
 the approval workflow in `13-security.md` exists.
 
+## Reliability — measured
+
+Storage was **structurally impossible** with multi-agent enabled until 2026-09-10:
+`remember_fact` was in no `AgentSpec` allowlist, so every specialist's registry filtered it out.
+
+| Configuration | store rate | false-claim rate |
+|---|---|---|
+| Allowlist broken (the original bug) | **0%** (0/8) | **38%** |
+| Allowlist fixed | **100%** (8/8) | **0%** |
+
+Reproduce: `make memory-trials`. Ground truth is read from the `memories` table, not from the tool
+outcome — the outcome says a call was made, the row says the write landed.
+
+### The honesty guarantee
+
+`MemoryReconciler` (`src/amos/memory/reconcile.py`) compares what an answer *claims* against what
+was *written*, and when they disagree it allows one bounded retry through the real tool, then
+appends an explicit `NOT STORED` caveat and downgrades confidence.
+
+| | |
+|---|---|
+| **Guaranteed** | The system never claims to have remembered something it did not store |
+| **Best effort** | The fact usually does get stored |
+| **Not promised** | That every stated fact is always stored — that needs extraction, which is another model-decided write |
+
+**It has never been observed to fire since the allowlist was fixed.** It is kept because the
+failure was real and measured at 38%, its cost is zero on the common paths, and the guarantee does
+not depend on the allowlist staying correct. If it still has not fired by a future milestone,
+delete it — the same rule that removed `_finalise` at V0.7.
+
 ## Not done
 
 - **No forgetting.** Memories accumulate forever; there is no TTL, decay or eviction.

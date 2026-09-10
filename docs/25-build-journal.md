@@ -469,6 +469,8 @@ Kept in one place because the corrections are more instructive than the successe
 | 18 | `score = -1` works as a sentinel | the field's own bound rejects it | a magic number that gets averaged by accident |
 | 19 | a rate-limited case is a failure | it is *unmeasurable* | the score partly measures the free tier |
 | 20 | the refusal case failed | the **detector** failed; the system refused correctly | reporting a brittle metric as a real finding |
+| 21 | memory failed intermittently, from model choice | `remember_fact` was in **no agent's allowlist** — structurally impossible | three prompt fixes aimed at a missing frozenset entry |
+| 22 | the first trial baseline (100%) meant memory worked | the trial set could not reproduce the bug | declaring a fix for a failure never reproduced |
 
 Six of these came from documentation being wrong or untested. **Documentation is not behaviour.**
 
@@ -883,3 +885,77 @@ which turns "tests never touch the network" from documentation into something en
 
 It deliberately does *not* run the evaluation suite. That costs quota, and a gate that fails for
 reasons unrelated to the change is worse than no gate.
+
+
+---
+
+## Chapter 12 — After V1.0: the bug that three prompt fixes could not reach
+
+The roadmap was complete. End-to-end verification then found `remember_fact` being called
+unreliably — sometimes storing, sometimes replying *"I have noted that"* with nothing written.
+
+Three fixes had already gone into this by prompting: a registry repair at V0.6, disambiguated tool
+descriptions, an explicit system-prompt rule. Each made it rarer. None made it stop.
+
+### Building the measurement first, and it saying "no"
+
+A non-deterministic failure needs a **rate**, so the first thing built was a trial harness — six
+phrasings, repeated, ground truth read from the `memories` table rather than from the tool outcome.
+
+The baseline came back **100%. Zero false claims.** It could not reproduce the bug at all.
+
+That was the measurement working. Every trial phrasing was a *single fact* run with multi-agent
+**off**. The original failure was a *compound* goal through the **full stack**. Different system.
+
+Adding compound goals and turning routing on:
+
+```
+store rate     0%  (0/8)
+FALSE CLAIMS   3  (38%)
+
+  tools=['search_knowledge']   ← CLAIMED IT WAS
+  tools=['recall_facts']
+  tools=['search_knowledge']
+```
+
+`search_knowledge`. `recall_facts`. **Never `remember_fact`.**
+
+### The actual cause
+
+`remember_fact` was in **no agent's allowlist**. Written at V0.7, omitted from all three specs. With
+routing enabled, every specialist's registry filtered it out and storing a fact was *structurally
+impossible*.
+
+Not model behaviour. A missing string in a frozenset.
+
+```
+allowlist broken   → 0% stored,  38% false claims
+allowlist fixed    → 100% stored, 0% false claims
+```
+
+### Four lessons, and one that keeps recurring
+
+**A measurement that cannot reproduce the bug is not a baseline.** The first 100% was the trial set
+failing, not the system passing. Third time a metric has been wrong before the system was — after
+V0.5's golden set and V1.0's refusal detector.
+
+**Registration and reachability are different properties.** V0.6 added a wiring test after tools
+were never registered. It passes here, because it checks the *global* registry. Nothing checked
+that per-agent filtering left every tool reachable by somebody. **Fixing a class of bug narrows it
+rather than closing it** — the next one will be something neither test covers.
+
+**When a symptom fits "the model chose badly", find the deterministic explanation first.** Fourth
+occurrence. Three prompt-level fixes went into a bug that was one missing string.
+
+### And the fix that did nothing
+
+The honesty reconciler — detect claimed-but-not-stored, one bounded retry, caveat if it still
+fails — was built before the root cause was found. Measured afterwards, it **contributed nothing**:
+the allowlist fix accounts for the entire improvement, and it has never been observed to fire.
+
+It is kept, with that written into its own docstring, because the failure was real at 38% and its
+cost is zero when nothing is wrong. And with the `_finalise` rule attached: if it still has not
+fired by a future milestone, **delete it**. Untested-in-practice code is a liability dressed as a
+safety net.
+
+Claiming it as the fix would have been the easy write-up. The measurement says otherwise.

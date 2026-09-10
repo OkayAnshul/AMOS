@@ -371,6 +371,10 @@ its own episodic recall; subject normalisation across capitalisation and punctua
 **Demo:** stated a preference in one server process, **killed it**, started a new process, and the
 fact was recalled — the only test that means anything for "across sessions".
 
+**Reliability (measured 2026-09-10, `make memory-trials`):** store rate **100%** (8/8), false-claim
+rate **0%**. Before the allowlist fix these were 0% and 38% — `remember_fact` was in no agent's
+allowlist, making storage structurally impossible whenever routing was enabled.
+
 **Technical explanation (unaided):** Facts live in a relational table rather than a vector index
 because exact recall is a key lookup (similarity returns the *most similar* fact, which in a store
 with several names is sometimes the wrong person's), because contradictions need ordering (a vector
