@@ -41,7 +41,25 @@ from amos.database.engine import session_scope
 #: Phrasings of the same intent. Deliberately varied, because the observed
 #: failure was phrasing-sensitive: "Remember for later sessions: …" failed where
 #: "Remember this for future sessions: …" succeeded.
+#: The first version of this list scored **100% on the baseline** — it could not
+#: reproduce the failure the fix was built for. That is the measurement working:
+#: the set did not cover the failing case.
+#:
+#: The observed failure was a **compound** goal — two facts in one sentence —
+#: run through the full stack (planning and multi-agent on). Every phrasing here
+#: was a single fact with those off. Compound cases were added below, and the
+#: single-fact ones kept, because a regression in the easy case still matters.
 TRIAL_GOALS: list[tuple[str, str]] = [
+    (
+        "Remember for later sessions: my final year project is called {tag} "
+        "and my mentor is Dr {tag}son.",
+        "compound",
+    ),
+    (
+        "Please remember both of these: my role is {tag} engineer, and my "
+        "start date is in {tag}ember.",
+        "compound",
+    ),
     ("Remember for later sessions: my supervisor is Dr {tag}.", "supervisor"),
     ("Remember this for future sessions: my favourite editor is {tag}.", "editor"),
     ("Store this fact about me: my home city is {tag}.", "city"),

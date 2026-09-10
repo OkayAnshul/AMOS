@@ -26,6 +26,30 @@ That last row is deliberate. Guaranteeing storage would mean extracting facts an
 writing them without the model choosing to — more model-decided writes, which is
 the thing this fix exists to reduce.
 
+## Status: a guarantee that currently never fires
+
+**Measured after the real root cause was fixed, this has not been observed to
+activate.** The failure it was built for turned out to be structural, not
+behavioural: `remember_fact` was in no agent's allowlist, so with multi-agent
+enabled storing a fact was *impossible*. Fixing that took the store rate from 0%
+to 100% on its own.
+
+| Configuration | store rate | false claims |
+|---|---|---|
+| allowlist broken (the original bug) | 0% (0/8) | 38% |
+| allowlist fixed, this reconciler **off** | 100% (8/8) | 0% |
+| allowlist fixed, this reconciler on | 83% (5/6) | 0% |
+
+So this module is a **safety net for a failure mode that is currently prevented
+elsewhere**, and its cost is zero while nothing is wrong — the common paths make
+no API call.
+
+It is kept rather than deleted because the failure was real and measured at 38%,
+and because the honesty guarantee does not depend on the allowlist staying
+correct. But the `_finalise` rule from V0.7 applies: **if this has still never
+fired by a future milestone, delete it.** Untested-in-practice code is a
+liability, not a safety net.
+
 ## Shape
 
 Mirrors the V0.7 critic loop, which already solves this problem shape: detect

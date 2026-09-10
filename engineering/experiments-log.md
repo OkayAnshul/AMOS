@@ -313,3 +313,37 @@ been `RUNNING` longer than the timeout allows.
 path, versus seconds-to-minutes for the synchronous endpoint.
 **What this does not show:** one machine, one database, three processes. Recovery from a *process*
 crash, not a host or network partition. Nothing here is evidence about distributed behaviour.
+
+---
+
+## 2026-09-10 — Memory storage reliability, measured
+**Milestone:** fix after V1.0
+**Question:** how often does a stated fact actually get stored, and how often does the system claim
+it did when it did not?
+**Method:** `make memory-trials` — 8 phrasings (2 compound, 6 single), unique tag per trial,
+ground truth read from the `memories` table rather than from the tool outcome.
+
+**Results:**
+
+| Configuration | store rate | false-claim rate |
+|---|---|---|
+| Baseline: allowlist broken, full stack | **0%** (0/8) | **38%** |
+| Allowlist fixed, reconciler **off** | **100%** (8/8) | **0%** |
+| Allowlist fixed, reconciler on | 83% (5/6) | 0% |
+| *(single-fact goals, routing off — first attempt)* | *100% (12/12)* | *0%* |
+
+**Conclusion — and it is not the one the fix was designed for.** The entire improvement comes from
+the allowlist correction. **The reconciler contributed nothing measurable**, and the run with it on
+scored *lower*, which is small-sample noise (6 usable vs 8) rather than evidence against it.
+
+The final row is the important one: the **first** baseline scored 100% and could not reproduce the
+bug at all, because it used single-fact goals with multi-agent off. A measurement that cannot
+reproduce the failure is not a baseline.
+
+**Decision:** keep the reconciler, and record in its own module docstring that it has never been
+observed to fire. The failure it guards was real and measured at 38%, its cost is zero while
+nothing is wrong, and the honesty guarantee does not depend on the allowlist staying correct. But
+the `_finalise` rule applies — **if it still has not fired by a future milestone, delete it.**
+
+**Not shown:** 8 trials per configuration is a small sample, and all phrasings were written by the
+same person who wrote the fix. The 0% and 100% figures are unambiguous; the 83% is within noise.
