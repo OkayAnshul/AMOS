@@ -106,6 +106,11 @@ class RememberFactTool(Tool):
         }
 
 
+#: Below this cosine similarity a remembered fact is noise. Mirrors
+#: DEFAULT_MIN_SCORE in rag/retrieval.py; both are overridable from settings.
+DEFAULT_MIN_SCORE = 0.30
+
+
 class RecallArgs(BaseModel):
     query: str = Field(
         min_length=1,
@@ -129,9 +134,16 @@ class RecallFactsTool(Tool):
     permission: ClassVar[Permission] = Permission.READ_LOCAL
     timeout_seconds: ClassVar[float] = 30.0
 
-    def __init__(self, factory: Any, embeddings: Any) -> None:
+    def __init__(
+        self,
+        factory: Any,
+        embeddings: Any,
+        *,
+        min_score: float = DEFAULT_MIN_SCORE,
+    ) -> None:
         self._factory = factory
         self._embeddings = embeddings
+        self._min_score = min_score
 
     async def _run(self, args: RecallArgs) -> dict[str, Any]:
         from amos.database.engine import session_scope
@@ -149,7 +161,7 @@ class RecallFactsTool(Tool):
                     "facts": [{"subject": exact.subject, "content": exact.content}],
                 }
 
-            similar = await memory.recall_similar(args.query)
+            similar = await memory.recall_similar(args.query, min_score=self._min_score)
 
         if not similar:
             return {

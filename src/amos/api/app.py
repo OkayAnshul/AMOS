@@ -143,7 +143,11 @@ def create_app(
 
     app = FastAPI(
         title="AMOS",
-        description="Autonomous Multi-Agent Operating System — V0.7",
+        # Derived, never written out. A literal here read "V0.7" through the whole
+        # of a v1.0 build and was served from /openapi.json and /docs — the same
+        # drift that made /health report 0.7.0 (engineering/bugs-log.md), fixed in
+        # one place and missed in this one.
+        description=f"Autonomous Multi-Agent Operating System — v{__version__}",
         version=__version__,
         lifespan=lifespan,
     )
@@ -208,28 +212,38 @@ def create_app(
             result.run_id = str(run_id)
         return result
 
-    @app.post("/v1/goals/async", status_code=202, response_model=QueuedRun)
-    async def submit_goal_async(
-        payload: GoalRequest,
-        response: Response,
-        idempotency_key: str | None = Header(default=None, alias="idempotency-key"),
-    ) -> QueuedRun:
-        """Queue a goal for a worker and return immediately.
+    # Mounted only when enabled. The route used to be unconditional while
+    # `async_enabled` sat in the settings unread — so three documents told the
+    # reader to export AMOS_ASYNC_ENABLED=true and it changed nothing either way.
+    # A flag that does nothing is worse than no flag: it teaches a mental model
+    # of the system that is false.
+    #
+    # Queueing without a worker running leaves runs QUEUED forever, which is why
+    # this is a deployment decision and not a per-request one.
+    if settings.async_enabled:
 
-        202 Accepted, not 200: the work has been *accepted*, not *done*. Returning
-        200 here would tell a client the goal was completed when it has not
-        started.
-        """
-        service: RunService = app.state.run_service
-        run_id = await service.enqueue_only(
-            payload.goal,
-            request_id=get_request_id() or "",
-            idempotency_key=idempotency_key,
-        )
-        # Location points at where the outcome will appear, so a client does not
-        # have to construct the polling URL itself.
-        response.headers["location"] = f"/v1/runs/{run_id}"
-        return QueuedRun(run_id=str(run_id), status="QUEUED")
+        @app.post("/v1/goals/async", status_code=202, response_model=QueuedRun)
+        async def submit_goal_async(
+            payload: GoalRequest,
+            response: Response,
+            idempotency_key: str | None = Header(default=None, alias="idempotency-key"),
+        ) -> QueuedRun:
+            """Queue a goal for a worker and return immediately.
+
+            202 Accepted, not 200: the work has been *accepted*, not *done*.
+            Returning 200 here would tell a client the goal was completed when it
+            has not started.
+            """
+            service: RunService = app.state.run_service
+            run_id = await service.enqueue_only(
+                payload.goal,
+                request_id=get_request_id() or "",
+                idempotency_key=idempotency_key,
+            )
+            # Location points at where the outcome will appear, so a client does
+            # not have to construct the polling URL itself.
+            response.headers["location"] = f"/v1/runs/{run_id}"
+            return QueuedRun(run_id=str(run_id), status="QUEUED")
 
     @app.get("/v1/runs/{run_id}", response_model=RunTrace)
     async def get_run_trace(run_id: str) -> RunTrace:

@@ -21,6 +21,7 @@ from amos.agents.schemas import AgentResponse, AgentResult, Confidence, TaskReco
 from amos.llm.base import LLMCallRecord, LLMProvider, LLMRequest
 from amos.observability import get_request_id, log_event, new_request_id
 from amos.orchestration.executor import (
+    DEFAULT_TASK_TIMEOUT_SECONDS,
     ExecutionReport,
     Executor,
     RunOutcome,
@@ -51,6 +52,7 @@ class Orchestrator:
         *,
         timeout: float = 60.0,
         max_attempts: int = 3,
+        task_timeout_seconds: float = DEFAULT_TASK_TIMEOUT_SECONDS,
         temperature: float = 0.2,
         planner: Planner | None = None,
         executor: Executor | None = None,
@@ -60,7 +62,9 @@ class Orchestrator:
         self._timeout = timeout
         self._temperature = temperature
         self._planner = planner or Planner(provider, timeout=timeout)
-        self._executor = executor or Executor(runner, max_attempts=max_attempts)
+        self._executor = executor or Executor(
+            runner, max_attempts=max_attempts, task_timeout_seconds=task_timeout_seconds
+        )
 
     @property
     def tool_names(self) -> list[str]:

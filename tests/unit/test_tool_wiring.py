@@ -94,13 +94,36 @@ def test_the_version_is_defined_in_exactly_one_place() -> None:
     time only some were updated. It now lives in `amos.__version__`, with the
     build deriving from it — and the health endpoint reading it, not repeating it.
     """
+    import ast
+    import re
     from pathlib import Path
 
     from amos import __version__
 
     app_source = Path("src/amos/api/app.py").read_text()
-    assert f'"{__version__}"' not in app_source, "version literal reappeared in app.py"
     assert "__version__" in app_source
+
+    # Checking only for the *current* version was too narrow, and a stale one
+    # slipped straight through it: the FastAPI description read
+    # "… — V0.7" for the whole of a v1.0 build, served from /openapi.json and
+    # /docs. So the assertion is now on the shape, not the value — no string
+    # literal anywhere in app.py may look like a version.
+    #
+    # String constants only, via the AST: comments legitimately say things like
+    # "from V0.5 the retrieval tool needs the engine", and those are not served
+    # to anyone.
+    version_shaped = re.compile(r"\bv?\d+\.\d+", re.IGNORECASE)
+    offenders = [
+        f"line {node.lineno}: {node.value!r}"
+        for node in ast.walk(ast.parse(app_source))
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and version_shaped.search(node.value)
+    ]
+    assert not offenders, (
+        "version-shaped string literals in app.py — derive them from "
+        "amos.__version__ instead:\n  " + "\n  ".join(offenders)
+    )
 
     pyproject = Path("pyproject.toml").read_text()
     assert 'dynamic = ["version"]' in pyproject

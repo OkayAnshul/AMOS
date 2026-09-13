@@ -340,3 +340,72 @@ and cosine distance on un-normalised vectors is silently wrong — wrong ranking
 ### Reconsider if
 Measured recall@k at 1536 is materially worse than at 3072 on the golden set — then move to
 `halfvec(3072)` and re-measure.
+
+---
+
+## ADR-009 — A task-level timeout, and the ordering of the bounds
+
+**Date** 2026-09-13 · **Status** Accepted
+
+### Context
+`TaskState.TIMED_OUT` was declared at V0.4 with legal transitions in and out of it, drawn in
+`state.py`'s own ASCII diagram, and **no code could ever produce it**. The executor reached
+only `SUCCEEDED` and `FAILED`. The exhaustive state-machine tests all passed, because they
+test the transition *table* — the table was correct and nothing exercised that row.
+
+### Problem
+Every bound in AMOS below this point is **per call**: 30s on an LLM request, 2–30s on a tool.
+A task is a *loop* over those calls (`agent_max_iterations`, default 5), so bounded parts do
+not add up to a bounded whole. A task could legitimately run for as long as the loop kept
+finding work to do, and nothing would stop it.
+
+### Options
+1. **Delete `TIMED_OUT`** and declare per-call bounds sufficient.
+2. **A task-level timeout** in the executor, entering `TIMED_OUT`.
+3. **Rely on the worker's visibility timeout** to reclaim the whole run.
+
+### Decision
+**Option 2.** `asyncio.wait_for` around the runner call, default **300s**, configurable as
+`AMOS_TASK_TIMEOUT_SECONDS`.
+
+### Why
+Option 1 gives up a containment boundary: a task that hangs *between* calls — or simply loops
+to its iteration cap against slow tools — takes the whole run with it, and the run has no
+other bound in the synchronous path.
+
+Option 3 is not a substitute. The visibility timeout only exists for **queued** runs, so it
+does nothing for `POST /v1/goals`; and it escalates a contained, retryable single-task failure
+into re-executing the entire run. Containment belongs at the smallest unit that can be retried
+on its own, which is the task.
+
+The value matters less than **the ordering**, which is the real content of this decision:
+
+```
+per-call bounds  <  task timeout  <  worker visibility timeout
+30s LLM, ≤30s tool      300s                    600s
+```
+
+Below the per-call worst case (5 iterations × (30s + 30s) = 300s), and the timeout fires on
+work that was going to succeed. Above the visibility timeout, and a *legitimately running*
+task has its run reclaimed by another worker underneath it — two workers executing the same
+run, which is the failure the timeout exists to avoid. Changing any one of the three without
+the others re-checked breaks the chain.
+
+### Tradeoffs
+- A genuinely slow task is killed and retried, which costs tokens against a 20/day quota.
+- **300s is reasoned, not measured.** It is derived from the configured worst case, and no
+  task duration distribution has been recorded to confirm real tasks sit well beneath it.
+- The bound is wall time, so a task waiting on a rate limit spends its budget waiting.
+
+### Consequences
+- `TIMED_OUT` becomes reachable, and the state machine stops documenting something impossible.
+- The retry path is **shared with `FAILED`** — a timed-out task returns to `READY` like any
+  other failure, so it cannot behave differently on its next attempt.
+- Dependents of a permanently timed-out task are skipped by the existing `_skip_unreachable`
+  fixpoint; no new propagation logic.
+
+### Reconsider if
+Measured task durations approach 300s — then the bound is shaping behaviour rather than
+catching pathology, and it should be raised *together with* the visibility timeout. Also
+reconsider if per-task claiming ever arrives, which would make option 3 viable for the first
+time.

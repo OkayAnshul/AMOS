@@ -126,3 +126,31 @@ def test_openapi_schema_is_generated(valid_json: str) -> None:
         response = client.get("/openapi.json")
     assert response.status_code == 200
     assert "/v1/goals" in response.json()["paths"]
+
+
+def test_async_route_is_absent_unless_enabled(valid_json: str) -> None:
+    """`AMOS_ASYNC_ENABLED` used to be read by nothing at all.
+
+    It was declared in the settings, described as "return 202 and queue the run
+    instead of executing it inside the request", and named in three documents
+    that tell the reader to export it — while `/v1/goals/async` was mounted
+    unconditionally. Setting it did nothing; not setting it did nothing.
+
+    The default stays `false`, which is what those documents already assume:
+    queueing with no worker running leaves runs QUEUED forever, so async is an
+    opt-in deployment decision.
+    """
+    settings = isolated_settings()
+    assert settings.async_enabled is False
+
+    agent = ToolUsingAgent(FakeProvider([valid_json]), ToolRegistry([CalculatorTool()]))  # type: ignore[arg-type]
+    paths = {route.path for route in create_app(settings, agent=agent).routes}  # type: ignore[attr-defined]
+    assert "/v1/goals" in paths
+    assert "/v1/goals/async" not in paths
+
+
+def test_async_route_is_mounted_when_enabled(valid_json: str) -> None:
+    settings = isolated_settings(async_enabled=True)
+    agent = ToolUsingAgent(FakeProvider([valid_json]), ToolRegistry([CalculatorTool()]))  # type: ignore[arg-type]
+    paths = {route.path for route in create_app(settings, agent=agent).routes}  # type: ignore[attr-defined]
+    assert "/v1/goals/async" in paths

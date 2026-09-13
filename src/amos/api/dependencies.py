@@ -68,7 +68,9 @@ def build_registry(settings: Settings, session_factory: object | None = None) ->
             extra.extend(
                 [
                     RememberFactTool(session_factory, embeddings),
-                    RecallFactsTool(session_factory, embeddings),
+                    RecallFactsTool(
+                        session_factory, embeddings, min_score=settings.memory_min_score
+                    ),
                     RecallPastRunsTool(session_factory, embeddings),
                 ]
             )
@@ -126,6 +128,7 @@ def build_agent(
         runner,
         timeout=settings.llm_timeout_seconds,
         max_attempts=settings.task_max_attempts,
+        task_timeout_seconds=settings.task_timeout_seconds,
         temperature=settings.llm_temperature,
     )
 

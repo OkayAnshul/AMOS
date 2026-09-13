@@ -32,6 +32,7 @@ from amos.orchestration.state import (
     assert_transition,
     is_terminal,
 )
+from amos.telemetry.metrics import instruments, safe_labels
 from amos.tools.base import ToolOutcome
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,12 @@ class ExecutionReport:
         return [o for t in self.tasks for o in t.tool_outcomes]
 
 
+#: Wall time for one task attempt. Above the worst case of the bounds beneath it
+#: (agent iterations x (LLM timeout + tool timeout)), below the worker's
+#: visibility timeout — see ADR-009.
+DEFAULT_TASK_TIMEOUT_SECONDS = 300.0
+
+
 class Executor:
     """Runs a validated plan to completion."""
 
@@ -100,10 +107,12 @@ class Executor:
         runner: TaskRunner,
         *,
         max_attempts: int = 3,
+        task_timeout_seconds: float = DEFAULT_TASK_TIMEOUT_SECONDS,
         sleep: object | None = None,
     ) -> None:
         self._runner = runner
         self._max_attempts = max_attempts
+        self._task_timeout = task_timeout_seconds
         # Injectable so retry tests do not actually wait for backoff.
         self._sleep = sleep or asyncio.sleep
 
@@ -172,7 +181,27 @@ class Executor:
         task.attempt_count += 1
 
         try:
-            result = await self._runner.run(self._build_goal(task, tasks))
+            # The outermost bound. Everything underneath has its own timeout —
+            # each LLM call, each tool call — but a task is a *loop* over those,
+            # so bounded parts do not add up to a bounded whole. Without this,
+            # TaskState.TIMED_OUT was declared with legal transitions in and out
+            # and was unreachable: nothing could ever produce it.
+            result = await asyncio.wait_for(
+                self._runner.run(self._build_goal(task, tasks)),
+                timeout=self._task_timeout,
+            )
+        except TimeoutError:
+            task.error = f"Task exceeded {self._task_timeout:g}s"
+            task.transition(TaskState.TIMED_OUT)
+            log_event(
+                logger,
+                "task.timed_out",
+                task=task.plan_ref,
+                attempt=task.attempt_count,
+                timeout_seconds=self._task_timeout,
+            )
+            await self._handle_failure(task)
+            return
         except AmosError as exc:
             task.error = f"{type(exc).__name__}: {exc.message}"
             task.transition(TaskState.FAILED)
@@ -208,6 +237,10 @@ class Executor:
                 attempt=task.attempt_count,
                 delay_seconds=round(delay, 3),
             )
+            # The instrument existed from V0.9 and nothing ever incremented it,
+            # so the retry rate read as a permanent zero — indistinguishable from
+            # "no task has ever been retried".
+            instruments().retries.add(1, safe_labels(status=task.state.value))
             await self._sleep(delay)  # type: ignore[operator]
             task.transition(TaskState.READY)
         else:
@@ -268,6 +301,7 @@ def plan_task_count(plan: Plan) -> int:
 
 
 __all__ = [
+    "DEFAULT_TASK_TIMEOUT_SECONDS",
     "ExecutionReport",
     "Executor",
     "PlannedTask",
