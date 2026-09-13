@@ -89,8 +89,12 @@ regression against it. Only deterministic rates gate; the judged score is contex
 `v1.2` tag.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
-in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` now does
+in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
 bump→check→commit→tag in order so it cannot recur.
+
+Tag shape changed with `make release`: `v0.1`–`v1.2` are two-part milestone tags, `v1.3.0` onward
+are three-part, because the target derives the tag from `__version__` and that is necessarily
+`major.minor.patch`. Not retagged — that would be the third tag rewrite in a day, for cosmetics.
 
 ## Known Bugs
 None open. Twenty fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson

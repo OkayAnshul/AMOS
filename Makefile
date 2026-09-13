@@ -54,11 +54,14 @@ routing:  ## Agent routing accuracy
 
 # --- release. Bump, verify, commit, tag — in that order, every time. ---
 
-release:  ## Tag a release: make release VERSION=1.2.0
-	@test -n "$(VERSION)" || (echo "usage: make release VERSION=1.2.0"; exit 1)
+release:  ## Tag a release: make release VERSION=1.3.0
+	@test -n "$(VERSION)" || (echo "usage: make release VERSION=1.3.0"; exit 1)
 	@sed -i 's/^__version__ = ".*"$$/__version__ = "$(VERSION)"/' src/amos/__init__.py
 	@$(MAKE) --no-print-directory check
 	@git add src/amos/__init__.py
-	@git commit -m "chore: version $(VERSION)"
+	@# --allow-empty-message is wrong here; what we want is to tolerate the
+	@# version ALREADY being $(VERSION), which happens whenever the bump was
+	@# committed separately. Nothing to commit is a valid state, not an error.
+	@git diff --cached --quiet || git commit -m "chore: version $(VERSION)"
 	@git tag -a "v$(VERSION)" -m "v$(VERSION)"
 	@echo "tagged v$(VERSION) — push with: git push origin main --tags"
