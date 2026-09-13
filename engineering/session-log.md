@@ -910,3 +910,80 @@ a dead-letter queue, and trace context propagated into workers. ADR first.
 
 ## Recommended Commit
 Already committed in five parts on `fix/coherence`.
+
+---
+
+# Session 11
+
+**Date:** 2026-09-13
+**Module:** V1.1 — Reliability
+**Objective:** Make at-least-once delivery honest instead of safe-by-luck: resume a reclaimed run,
+collect the runs the queue gives up on, and make a queued run one trace.
+
+## What We Changed
+- `src/amos/orchestration/executor.py` — `TaskCheckpoint` protocol; `execute(plan, completed=...)`;
+  checkpointing at every terminal transition; `_resumed_result`.
+- `src/amos/orchestration/orchestrator.py` — `PlanStore` protocol; `_plan_for` returns the stored
+  plan when there is one, and the planner is not called.
+- `src/amos/database/progress.py` (new) — both protocols against PostgreSQL.
+- `src/amos/database/repository.py` — `_add_task_rows` → `_save_task_rows`, now an upsert.
+- `src/amos/worker/queue.py` — `DEAD_LETTER`, `list_dead_letter`, traceparent through the claim,
+  `json.dumps` for the give-up reason.
+- `src/amos/worker/runner.py` — sets and clears the run id; wraps execution in `continued_trace`.
+- `src/amos/telemetry/tracing.py` — `current_trace_context`, `continued_trace`.
+- `src/amos/api/app.py` — `GET /v1/runs/dead-letter`, declared before `/v1/runs/{run_id}`.
+- `migrations/versions/453890cfd6a9_*` — `runs.trace_parent`.
+- Docs: ADR-010, `docs/interview/reliability.md` (new), roadmap V1.1, and `05`, `06`, `12`, `14`,
+  `17`, `22` updated to say what is now closed.
+
+## Architecture Decisions
+Recorded in `decisions-log.md`. The one that shaped everything: **the stored task rows are the
+plan**, because the planner is an LLM and a second call returns a different DAG.
+
+## Problems Encountered
+1. Resumption looked impossible at first, for a reason not visible from the API.
+2. The first end-to-end test failed, claiming t1 had been re-run when it had not.
+3. Two V0.8 tests failed after `give_up` started setting `DEAD_LETTER`.
+4. Five telemetry unit tests began failing in the full suite while passing individually.
+5. The worker never put the run id in context.
+
+## How We Solved Them
+1. **Nothing was persisted until the run finished** — tasks, steps, LLM calls and tool calls all
+   landed in one batch in `record_success`. A killed run left a `runs` row and nothing else. The
+   milestone is mostly about fixing that, not about the resume logic itself.
+2. A test bug, not a code bug: a dependent's goal *contains* its upstream's description as
+   context, so `"gather the sources" in goal` matched the t2 goal. `startswith` is the precise
+   assertion.
+3. Correct failures — the behaviour changed deliberately. Updated both, with a comment saying why.
+   **I committed before noticing them**, having run only the files I touched; amended.
+4. An integration test called `set_tracer_provider`, which OpenTelemetry honours once per process.
+   It ran first and silently blinded every span-capturing test after it. That test now asserts the
+   column round-trips and installs no provider.
+5. Found while wiring trace propagation, not by a failing test. The synchronous path called
+   `set_current_run_id` and the worker path did not — so the plan store and checkpoint would have
+   been inert in the worker, the only place a reclaim happens.
+
+## Tests Performed
+523 → **551**. `ruff`, `ruff format` and `mypy --strict` clean. Migration applied and reversed and
+re-applied. Each new guard verified by reintroducing the bug it exists for: removing
+`set_current_run_id` fails the context test; swapping the route order fails the ordering test.
+
+## Things I Learned
+- **A capability can be built, tested, documented and wired to nowhere.** Second time in this
+  project — `remember_fact` was the first. Unit tests cannot see it, because they construct the
+  component and never exercise the entry point.
+- **Run the whole suite, not the files you touched.** Two of this session's five problems were
+  invisible to a targeted run, and one of them I committed.
+- A reliability feature is best described by the window it *narrows*. Resumption takes duplicate
+  work from a whole run to a single task; saying "now it's safe" would be false.
+- Reading a function while changing something nearby found a real bug (`give_up`'s f-string JSON)
+  that no test was ever going to reach, because it needs a quote in an exception message.
+
+## Next Exact Step
+**V1.2 — Evaluation credibility.** ADR first. Adversarial cases (prompt injection in the corpus
+and in tool output, deliberately misleading entries), a stored baseline so `make eval` compares
+against history instead of printing a number and discarding it, and enlarged golden sets — with
+the limitation stated plainly, since cases I author are still not independently authored.
+
+## Recommended Commit
+Committed in four parts on `feat/v1.1-reliability`.

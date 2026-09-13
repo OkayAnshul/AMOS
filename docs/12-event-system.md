@@ -1,6 +1,6 @@
 # 12 — Asynchronous Execution
 
-**Written at V0.8.**
+**Written at V0.8, extended at V1.1.**
 
 > **This document describes a PostgreSQL job queue, not a message broker.** There is no Kafka, no
 > NATS, no Redis and no Celery in AMOS, none is planned, and none should be claimed. The file is
@@ -73,6 +73,12 @@ A run left `RUNNING` longer than `AMOS_WORKER_VISIBILITY_TIMEOUT` (default 600s)
 abandoned and returned to `QUEUED`. Nothing has to detect that a worker died — only that a run has
 been held too long.
 
+**Since V1.1 the reclaim resumes** rather than restarting: the plan is persisted when it is made
+and each task checkpointed as it finishes, so the second worker skips what the first completed and
+does not call the planner again (ADR-010). The trace continues too — `runs.trace_parent` carries
+the submitting request's W3C context, so a queued run is one trace end to end rather than two
+unlinked ones.
+
 **Demonstrated:** worker A claimed a run and was killed with `SIGKILL` (no cleanup, no chance to
 update anything). The run sat in `RUNNING` with `claimed_by` naming a dead process. Worker B
 started, swept, reclaimed it, and completed it. `attempt_count` went to 2, so the retry is visible
@@ -94,10 +100,16 @@ position today:
 |---|---|
 | Every tool is read-only | ✅ so re-execution wastes tokens, corrupts nothing |
 | `remember_fact` writes | ⚠️ a duplicate run could store the same fact twice — supersession makes that harmless **by luck, not by design** |
-| Task-level idempotency keys | ❌ not implemented |
+| A reclaimed run resumes rather than re-executing | ✅ **V1.1** (ADR-010) |
+| Task-level idempotency keys | ❌ still not implemented |
 
-That middle row is a real gap, recorded in `17-failure-recovery.md`. It becomes a genuine bug the
-moment a tool has side effects, which is why the registry refuses `WRITE` permission.
+**V1.1 narrowed this window; it did not close it.** A reclaimed run now skips the tasks that
+already succeeded, so the duplicate work is one task rather than a whole run. A worker that dies
+*between* finishing a task and checkpointing it will still redo that task — and delivery is still
+at-least-once, because that is a property of the world and not of this code.
+
+The `remember_fact` row is unchanged and is still a real gap. It becomes a genuine bug the moment
+a tool has side effects, which is why the registry refuses `WRITE` permission.
 
 ## Poison messages
 
@@ -135,7 +147,9 @@ Workers are stateless and identical; run as many as the quota tolerates.
 
 - **No `LISTEN`/`NOTIFY`** — polling only
 - **No priority or fairness** — strictly oldest-first, and no starvation protection between clients
-- **No dead-letter queue.** Given-up runs are marked FAILED; nothing collects them for review
+- ~~No dead-letter queue~~ — **added at V1.1.** A given-up run is now `DEAD_LETTER`, distinct from
+  `FAILED`, and readable at `GET /v1/runs/dead-letter`. The distinction is the point: a `FAILED`
+  run executed and produced a verdict; a dead-lettered one never got one
 - **No worker autoscaling, no heartbeats.** Liveness is inferred from `claimed_at` alone, which is
   why the timeout must be generous
 - **No graceful shutdown.** A `SIGTERM` mid-run relies on the visibility timeout, exactly like a
