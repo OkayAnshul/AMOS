@@ -12,6 +12,6 @@ reporting 0.3.0.
 One definition, and the build derives from it rather than the other way about.
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 __all__ = ["__version__"]
