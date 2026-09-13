@@ -987,3 +987,71 @@ the limitation stated plainly, since cases I author are still not independently 
 
 ## Recommended Commit
 Committed in four parts on `feat/v1.1-reliability`.
+
+---
+
+# Session 12
+
+**Date:** 2026-09-13
+**Module:** V1.2 — Evaluation credibility
+**Objective:** Attack the suite's own stated weakness — self-authored cases, nothing adversarial,
+and a score printed then discarded.
+
+## What We Changed
+- `tests/unit/rag/test_adversarial_retrieval.py` (new) — a poisoned corpus passage with the model
+  fully complying, asserting the registry, the permission refusal, the per-agent allowlist and the
+  loop cap all hold.
+- `src/amos/evaluation/baseline.py` (new) + `engineering/eval-baseline.json`.
+- Golden sets enlarged: goals 6→9, retrieval 12→16, routing 10→15.
+- ADR-011; `docs/16-evaluation.md` extended; `13-security.md`, `19-roadmap.md`, `22`.
+- `make eval` compares, `make eval-baseline` writes.
+- Bumped `__version__` to 1.1.0 — see below.
+
+## Architecture Decisions
+**ADR-011 — adversarial cases are tests, not eval cases.** The split follows the existing security
+principle: if the claim is "the boundary holds even assuming the model is compromised", a fake
+provider that *complies with the attack* is stronger evidence than a real model that might resist,
+and it runs in CI for free. Only judgement — refusing when the corpus is misleading — costs quota.
+
+Also: only deterministic metrics gate; a baseline is per-model and per-corpus and reports "not
+comparable" rather than a false regression; nothing is written unless asked, because a gate that
+updates itself on failure is not a gate.
+
+## Problems Encountered
+1. The full suite failed on `test_the_version_matches_the_latest_git_tag`.
+2. A claim I had written into `docs/10-rag-architecture.md` three commits earlier was wrong.
+
+## How We Solved Them
+1. **I had tagged `v1.1` without bumping `__version__`.** The regression test written for the
+   *previous* instance of this bug (2026-09-09) caught it on the very next release. Bumped, and
+   recorded in `bugs-log.md` with the lesson: the earlier structural fix made the version live in
+   one place, which removed drift *between files* and did nothing about drift between the version
+   and the **tag**.
+2. I had written "measured when `docs/` held 26 markdown files". Querying the database showed the
+   indexed corpus is the 24 numbered docs **plus four interview docs**, and — worse — several of
+   those documents have been substantially rewritten since, including two in the audit three
+   commits earlier. The count was stale *and* the content was.
+
+## Tests Performed
+551 → **567**. `make eval-baseline` run once, deliberately: **9/9, refusal 2/2, groundedness 1.00
+(1 judge failure excluded), 40852 tokens.** All three new adversarial cases passed, including the
+two expected to be hardest.
+
+## Things I Learned
+- **A test written for one instance of a bug caught the next one, in a different form.** The
+  structural fix (one definition, build derives from it) was scoped to the mechanism it replaced.
+  The test covered the rest, which is the argument for writing one even when the fix feels total.
+- Cost scales worse than case count: 6 cases were 21252 tokens, 9 are **40852**. That is most of a
+  day's budget on `flash`, and the real reason a golden set cannot simply keep growing — the
+  constraint is economic, not methodological.
+- **Checking a number I had asserted three commits ago found it wrong.** Written from a plausible
+  inference rather than a query, during an audit whose entire subject was claims that had drifted.
+- A groundedness mean of 1.00 over *eight of nine* cases is a different fact from 1.00 over nine.
+  The harness already reported the excluded failure; writing the number down without it would have
+  quietly upgraded the claim.
+
+## Next Exact Step
+**V1.3 — Agent-to-agent delegation.** ADR-012 is written; implementation follows.
+
+## Recommended Commit
+Committed in three parts on `feat/v1.2-evaluation`.

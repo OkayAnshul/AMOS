@@ -653,3 +653,53 @@ and checkpointing it still redoes it — and does not close it, because the gap 
 and recording it is the Two Generals' problem. Task-level idempotency keys are still not
 implemented. A resumed run re-runs the stored plan faithfully, **including a bad one**: there is
 no re-planning. Still one machine, one database; **not a distributed system**.
+
+---
+
+## V1.2 — Evaluation credibility
+
+**What was implemented:** Adversarial coverage against a compromised-model assumption, a
+committed-baseline regression gate, and larger, harder golden sets.
+
+**Evidence (files):**
+- `tests/unit/rag/test_adversarial_retrieval.py` — a poisoned corpus passage, with the model
+  obeying it in every test
+- `src/amos/evaluation/baseline.py` — deterministic-only gate, per-model and per-corpus
+- `engineering/eval-baseline.json` — the committed scorecard
+- `src/amos/evaluation/cases.py`, `src/amos/rag/evaluation.py`, `src/amos/agents/router.py` —
+  goals 6→9, retrieval 12→16, routing 10→15
+
+**Measured (`make eval`, 2026-09-13, `gemini-3.5-flash-lite`, 300 chunks):**
+```
+cases 9/9 (100%)   completion 100%   tool selection 100%   answer content 100%
+refusal 2/2        groundedness 1.00 (1 judge failure excluded)   40852 tokens
+```
+Both refusal cases passed, including the plausible-premise one about Kafka topics — the corpus
+discusses brokers at length in order to reject them, so the vocabulary of the wrong answer is
+everywhere in it.
+
+**Technical explanation (unaided):** Adversarial cases are *tests*, not evaluation cases, and the
+split follows the existing security principle rather than inventing one: security is enforced in
+code that never reads model output, so if the claim is "the boundary holds even assuming the model
+is compromised", a fake provider that **complies with the attack** is stronger evidence than a real
+model that might happen to resist. Those run in CI on every push at zero quota cost. Only
+assertions needing a model's judgement — refusing when the corpus is misleading — are worth a
+quota-limited case. The gate stores deterministic rates only: the judged score comes from a model
+in the same family as the one judged, and a threshold on it invites tuning the threshold. A
+baseline is per-model and per-corpus, and a mismatch reports "not comparable" rather than a false
+regression.
+
+**Likely interview questions:** `docs/16-evaluation.md`, V1.2 section.
+
+**Honest resume wording:**
+> Added adversarial evaluation to an LLM agent system under a compromised-model assumption, and a
+> committed-baseline regression gate that separates deterministic checks from model-judged ones
+> and refuses to compare across different models or corpora.
+
+**What this does NOT demonstrate:** **The sets are still self-authored.** V1.2 made them larger
+and harder and did nothing about independence — a bigger set written by the same person shares the
+same blind spots, including about which cases are hard. There is still **no human calibration of
+the judge**, so groundedness 1.00 has no known relationship to a human's verdict, and it is a mean
+over eight of nine cases because one judge call failed. Only the latest scorecard is stored, not
+per-case history. And the corpus is a V0.5 snapshot several of whose documents have since been
+rewritten.

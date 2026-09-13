@@ -288,7 +288,7 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-make check      # lint + types + 551 tests
+make check      # lint + types + 567 tests
 make test       # tests only; database ones skip if none is running
 ```
 
@@ -303,7 +303,7 @@ something enforced.
 | End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
 | Agent routing | `make routing` | 10/10 |
-| Tests | `make test` | 551 passing, 2 live tests skipped |
+| Tests | `make test` | 567 passing, 2 live tests skipped |
 
 Every one of those sets is small and was written by the person who built the system. They are a
 regression gate, not a characterisation of quality, and

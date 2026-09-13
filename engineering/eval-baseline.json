@@ -1,0 +1,15 @@
+{
+  "measured_at": "2026-09-13",
+  "model": "gemini-3.5-flash-lite",
+  "corpus_chunks": 300,
+  "cases": 9,
+  "pass_rate": 1.0,
+  "rates": {
+    "completed": 1.0,
+    "output_valid": 1.0,
+    "tools_correct": 1.0,
+    "answer_correct": 1.0
+  },
+  "mean_groundedness": 1.0,
+  "total_tokens": 40852
+}

@@ -3,10 +3,10 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-09-13 (Session 11 — V1.1 reliability)
+**Last updated:** 2026-09-13 (Session 12 — V1.2 evaluation credibility)
 
 ## Current Version
-**V1.1 — Reliability.** The V0.1–V1.0 roadmap is complete; V1.1 is the first milestone past it.
+**V1.2 — Evaluation credibility.** The V0.1–V1.0 roadmap is complete; V1.1 and V1.2 are past it.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -16,7 +16,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 ## Completed Modules
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
-V0.9 observability · V1.0 evaluation · **V1.1 reliability**
+V0.9 observability · V1.0 evaluation · V1.1 reliability · **V1.2 evaluation credibility**
 
 ## What Works
 ```
@@ -32,19 +32,24 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 - Facts persist across process restarts; past runs findable by goal similarity
 - `GET /v1/runs/{id}` reconstructs any past run from stored rows
 - OpenTelemetry spans; goal text excluded by default, metric labels allowlisted
-- **551 tests** (553 collected, 2 live opt-in); `mypy --strict` and `ruff` clean; **CI runs
+- **567 tests** (569 collected, 2 live opt-in); `mypy --strict` and `ruff` clean; **CI runs
   with and without a database**, migrations both directions, and with no API key
 
 ### Measured
 | What | Command | Result |
 |---|---|---|
-| End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (judged) |
-| Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
-| Routing | `make routing` | 10/10 |
+| End-to-end goals | `make eval` | **9/9** deterministic, refusal 2/2; groundedness 1.00 (judged, 1 failure excluded). 40852 tokens |
+| Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 — **measured on 12 questions; the set is now 16 and unre-run** |
+| Routing | `make routing` | 10/10 — **measured on 10 cases; the set is now 15 and unre-run** |
 | Memory storage | `make memory-trials` | store 100% (8/8), false claims 0% |
 
-**All three sets are small and self-authored.** A regression gate, not a characterisation of
-quality. `docs/16-evaluation.md` carries that caveat next to every number.
+**All three sets are small and self-authored.** V1.2 made them larger (goals 6→9, retrieval
+12→16, routing 10→15) and harder, and did **nothing** about independence — which is the limitation
+that matters. A regression gate, not a characterisation of quality; `docs/16-evaluation.md`
+carries that caveat next to every number.
+
+`engineering/eval-baseline.json` stores the last scorecard, and `make eval` now fails on a
+regression against it. Only deterministic rates gate; the judged score is context.
 
 ## What Does Not Work / Is Not Claimed
 - **Not a distributed system** — multiple processes, one machine, one database
@@ -57,7 +62,9 @@ quality. `docs/16-evaluation.md` carries that caveat next to every number.
 - No forgetting/TTL; memories accumulate forever
 - No agent-to-agent delegation; the orchestrator assigns work. `AgentTask` is defined and unused
 - No heartbeats, no graceful shutdown
-- No adversarial evaluation; no human calibration of the judge
+- **No human calibration of the judge** — groundedness 1.00 has no known relationship to a
+  human verdict. Adversarial coverage now exists, as tests (ADR-011), but the golden sets are
+  **still self-authored**, which V1.2 did not fix
 - **2 of 5 memory kinds built** — semantic and episodic. No working, conversation or
   knowledge-graph tier (`docs/09-memory-architecture.md` says why for each)
 - No authentication, authorization or multi-user isolation. **Not safe to expose publicly**
@@ -76,8 +83,8 @@ quality. `docs/16-evaluation.md` carries that caveat next to every number.
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`feat/v1.1-reliability`. Merge to `main` when reviewed. Last known good commit on `main`:
-`5ce0922` (the coherence audit, merged).
+`feat/v1.2-evaluation`. Merge to `main` when reviewed. Last known good commit on `main`: the
+`v1.1` tag.
 
 ## Known Bugs
 None open. Twenty fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson
@@ -97,8 +104,8 @@ were false.
   roll back.
 - A resumed task reports `confidence: MEDIUM` because the stored row keeps the answer and not the
   confidence. Honest, but it means a resumed run's confidence is not the original's.
-- No regression tracking over time; each eval run prints a number and nothing stores it.
-  **V1.2.**
+- Only the *latest* scorecard is stored, not per-case history — enough to catch a regression,
+  not enough to see a trend.
 - `MemoryReconciler` has **never been observed to fire** since the allowlist fix. Delete it if that
   is still true at the next milestone — the rule that removed `_finalise`.
 - No `tests/contract/` or `tests/evaluation/` directory. The evaluation harness lives in `src/`
@@ -131,18 +138,16 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**V1.2 — Evaluation credibility.** ADR first, then: adversarial cases (prompt injection in the
-corpus *and* in tool output, deliberately misleading entries, a case whose correct answer is
-refusal), a stored baseline so `make eval` compares against history rather than printing a number
-and discarding it, and enlarged golden sets.
+**V1.3 — Agent-to-agent delegation.** ADR-012 is written. Give `AgentTask` a caller so a
+researcher that needs arithmetic can hand it to the analyst instead of computing in its head or
+failing — with depth, budget and self-delegation bounded **structurally**, by the tool being
+absent from the registry rather than refused.
 
-**State the limitation rather than papering over it:** cases I author are still not
-*independently* authored. Enlarging the set improves coverage and does not fix the independence
-problem, and `docs/16-evaluation.md` must keep saying so.
+Then V1.4 auth and multi-user isolation, last because it touches every table and every query and
+is cheapest done once against a schema that has stopped moving.
 
-Then V1.3 agent-to-agent delegation · V1.4 auth and multi-user isolation. Auth last because it
-touches every table and every query, and is cheapest done once against a schema that has stopped
-moving.
+**Worth re-running when convenient:** `make retrieval` and `make routing` still report numbers
+measured on the older, smaller sets.
 
 ### Still outstanding: the advance gate
 

@@ -28,15 +28,15 @@ Alongside the component measurements that already existed:
 
 | What | Command | Result |
 |---|---|---|
-| End-to-end goals | `make eval` | 6/6 deterministic, groundedness 1.00 |
-| Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
-| Routing | `make routing` | 10/10 |
-| Tests | `make test` | 521 passing (523 collected; 2 live, opt-in) |
+| End-to-end goals | `make eval` | **9/9 deterministic**, refusal 2/2, groundedness 1.00 (measured 2026-09-13) |
+| Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 — *measured at V0.5 on 12 questions; the set is now 16 and has not been re-run* |
+| Routing | `make routing` | 10/10 — *measured at V0.7 on 10 cases; the set is now 15 and has not been re-run* |
+| Tests | `make test` | 567 passing (569 collected; 2 live, opt-in) |
 
-> **The table above is the V1.0 measurement.** V1.2 enlarged all three sets — goals 6 → 9,
-> retrieval 12 → 16, routing 10 → 15 — so those figures describe a smaller suite than the one
-> that now runs. Re-measure with `make eval-baseline` and update them together; a number and the
-> set it was measured on are one fact, not two.
+> **Only the first row has been re-measured against the enlarged set.** V1.2 grew all three —
+> goals 6 → 9, retrieval 12 → 16, routing 10 → 15 — and `make eval` has been re-run; `make
+> retrieval` and `make routing` have not, so those two figures describe the *older, smaller* sets
+> and are marked as such. A number and the set it was measured on are one fact, not two.
 
 **What these numbers do not show:** the sets are **all written by the person who built the
 system**. That is enough to catch a regression and nowhere near enough to characterise quality.
@@ -228,6 +228,31 @@ Three decisions worth defending:
 A tolerance of 0.001 exists and is not zero. With nine cases, one flipping moves a rate by 11
 points, so at this sample size a strict gate would fire on noise indistinguishable from a real
 change. That is a judgement call, so it lives in a named constant rather than inside a comparison.
+
+## The first measurement against the enlarged set
+
+`make eval-baseline`, 2026-09-13, `gemini-3.5-flash-lite`, 300 indexed chunks:
+
+```
+cases            9/9 passed (100%)
+  completion     100%      output valid   100%
+  tool selection 100%      answer content 100%
+  refusal        2/2
+groundedness     1.00      (1 judge failure, excluded from the mean)
+cost             40852 tokens
+```
+
+**All three new adversarial cases passed**, including the two that were expected to be hardest:
+the confidently-stated false premise about exactly-once delivery, and the plausible refusal about
+Kafka topics. `refusal 2/2` is the number worth looking at — the system declined both, rather
+than repeating the premise back or inventing a topic count.
+
+Two honest qualifications. The cost went from 21252 tokens at six cases to **40852 at nine**,
+which is most of a day's budget on `gemini-3.5-flash` and the reason the suite cannot simply keep
+growing. And one judge call failed and was excluded; a groundedness mean over eight of nine cases
+is what 1.00 actually describes here.
+
+This run is now `engineering/eval-baseline.json`, and the next `make eval` compares against it.
 
 ## Still not fixed
 
