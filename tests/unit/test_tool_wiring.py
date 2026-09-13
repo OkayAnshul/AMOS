@@ -130,13 +130,22 @@ def test_the_version_is_defined_in_exactly_one_place() -> None:
     assert f'version = "{__version__}"' not in pyproject
 
 
-def test_the_version_matches_the_latest_git_tag() -> None:
+def test_the_version_is_never_behind_the_latest_git_tag() -> None:
     """`__version__` was left at 0.7.0 through V0.8, V0.9 and V1.0.
 
     Nothing caught it: the earlier test only asserted the version was defined in
     one place, not that the value was *right*. `/health` cheerfully reported
     0.7.0 from a v1.0 build, which is the kind of wrong that survives because it
     is never fatal.
+
+    **Not equality — "not behind".** This asserted equality until 2026-09-13, and
+    that made the correct release order impossible: bump, verify, commit, tag
+    leaves a window where the version is legitimately ahead of the newest tag,
+    so the test failed on the one process that would have prevented the bug it
+    exists for. It fired three times in one session before that became obvious.
+
+    A version *ahead* of the last tag is an unreleased version, which is the
+    normal state of a repository between releases. A version *behind* is the bug.
     """
     import subprocess
 
@@ -152,8 +161,16 @@ def test_the_version_matches_the_latest_git_tag() -> None:
         return tuple(int(part) for part in tag.lstrip("v").split("."))
 
     latest = max(tags, key=key)
-    assert __version__.startswith(latest.lstrip("v")), (
-        f"__version__ is {__version__} but the latest tag is {latest}"
+    current = tuple(int(part) for part in __version__.split("."))
+    tagged = key(latest)
+    # Pad so 1.3 and 1.3.0 compare equal rather than by length.
+    width = max(len(current), len(tagged))
+    current += (0,) * (width - len(current))
+    tagged += (0,) * (width - len(tagged))
+
+    assert current >= tagged, (
+        f"__version__ is {__version__}, behind the latest tag {latest}. "
+        "Bump it — `make release VERSION=x.y.z` does this in the right order."
     )
 
 

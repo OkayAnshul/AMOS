@@ -545,3 +545,24 @@ wrong, not that the test is good.** Three catches should have prompted a mechani
 first. A guard that fires repeatedly is a guard doing someone else's job.
 **Test added:** none — the existing one is sufficient, and is now backed by a target that makes
 the mistake hard to make.
+
+---
+
+## 2026-09-13 — The version test forbade the process that would have prevented its own bug
+**Milestone:** V1.3
+**Symptom:** `make release VERSION=1.3.0` refused to tag. `make check` failed on
+`__version__ is 1.3.0 but the latest tag is v1.2`.
+**Expected:** bumping the version before tagging is the correct order, and should pass.
+**Root cause:** the test asserted **equality** between `__version__` and the newest tag. Bump →
+verify → commit → tag necessarily leaves a window where the version is *ahead* of the newest tag,
+so the test failed on the one sequence that makes the bug impossible. The ad-hoc order I kept
+getting wrong was the only order the test allowed.
+**Fix:** assert the version is **not behind** the newest tag. A version ahead is an unreleased
+version — the normal state of a repository between releases. A version behind is the bug.
+**How it was found:** by the `make release` target added an hour earlier, on its first use.
+**Lesson:** **a guard can be right about the failure and wrong about the shape of correctness.**
+This one caught three real bugs and, in doing so, quietly enforced a process that caused them.
+Worth asking of any guard that keeps firing: is it describing the defect, or a narrower situation
+that merely excludes it?
+**Test added:** the same test, with the comparison corrected — and verified to still fail on a
+version behind the tag (0.7.0 against v1.2), which is the case it was written for.
