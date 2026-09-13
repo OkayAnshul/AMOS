@@ -145,12 +145,22 @@ A three-task plan costs 1 planning call + 3×2 execution calls + 1 synthesis = *
 - `AMOS_PLANNING_ENABLED=false` falls back to the single-shot V0.2 agent for goals that do not
   need decomposition.
 
+## Since resolved
+
+Written at V0.4, this section listed what was missing. Two entries have since been closed, and
+one of them closed by being **wrong**:
+
+- **Concurrency across runs** arrived at V0.8 — but not as predicted here. This section said
+  V0.8 would use `tasks.claimed_at` and the partial `idx_tasks_claimable` index, "both already in
+  the schema". V0.8 claims at **run** level, not task level, so both were **deleted** rather than
+  used. Adding them at V0.4 to save a later migration was sound reasoning about the wrong
+  granularity; carrying schema that documents an abandoned plan is worse than the migration it
+  would have saved. See `docs/12-event-system.md` and correction #16 in `docs/25-build-journal.md`.
+- **A task-level timeout** arrived at ADR-009. `TaskState.TIMED_OUT` had been declared since
+  V0.4 with legal transitions in and out of it and was unreachable until then.
+
 ## Not yet
 
 - **No re-planning.** A failed task is retried as written; the planner is not asked for a
-  different approach. V0.4's planner runs once.
-- **No concurrency across runs.** Tasks within a run run concurrently, but there is no worker
-  and no queue — that is V0.8, where `claimed_at` and the partial `idx_tasks_claimable` index
-  (both already in the schema) come into use.
-- **No task-level timeout** distinct from the provider timeout.
-- **No cost budget per run**, only a retry budget.
+  different approach. The planner runs once.
+- **No cost budget per run**, only a retry budget and a wall-clock budget per task.

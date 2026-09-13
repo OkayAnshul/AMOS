@@ -35,8 +35,8 @@ demo does not go on a resume.**
 | Word | Requires | Currently |
 |---|---|---|
 | "multi-agent" | ≥2 genuinely specialised agents collaborating | ✅ **earned at V0.7** — disjoint tool allowlists, enforced structurally |
-| "RAG" | a real pipeline with measured retrieval quality | ❌ not built |
-| "autonomous" | the system decides, not a human | ❌ nothing runs |
+| "RAG" | a real pipeline with measured retrieval quality | ✅ **earned at V0.5** — recall@5 100%, recall@1 91.7%, MRR 0.958 on a 12-question golden set |
+| "autonomous" | the system decides, not a human | ✅ **earned at V0.2** — the model selects tools and the loop executes them without a human in it |
 | "distributed system" | actually distributed — AMOS is a modular monolith | ❌ never, per ADR-004 |
 | "production" | deployed, monitored, used by someone | ❌ not deployed |
 | "Kubernetes" / "Kafka" / "microservices" | actually used | ❌ deliberately not used |
@@ -44,6 +44,12 @@ demo does not go on a resume.**
 
 Some of these will never become true, by design. That is a feature of the plan, not a gap in it
 — ADR-004 rules out "distributed system" permanently, and the roadmap contains no Kubernetes.
+
+Two rows above sat at ❌ until 2026-09-13, long after the milestones that earned them, while the
+shipped-claims table fifteen lines up marked both ✅. **The document whose job is preventing
+overclaiming was giving two opposite answers about the same word.** A table of prohibitions is
+only useful if it is maintained as carefully as the claims it guards, so each row now carries the
+milestone and the evidence that flipped it, the same as every other claim in this file.
 
 ## Per-milestone template
 

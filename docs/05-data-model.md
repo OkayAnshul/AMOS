@@ -1,8 +1,20 @@
 # 05 — Data Model
 
-PostgreSQL, arriving at V0.3. Schema shown as it will exist at V0.5; tables are created at the
-milestone that needs them, never before (ADR-006). SQL below is illustrative of intent —
-Alembic migrations are the source of truth once they exist.
+PostgreSQL. The schema as it exists at **V0.8**, built up across four migrations, each created at
+the milestone that needed it and never before (ADR-006).
+
+> **The migrations in `migrations/versions/` are the source of truth**, and
+> `src/amos/database/models.py` is checked against the live database by
+> `tests/integration/test_schema_drift.py`. The SQL below is written to match them, not to
+> precede them.
+>
+> It did precede them once, and drifted badly: this document described `tasks.claimed_at`, a
+> partial `idx_tasks_claimable` index, and task-level `SKIP LOCKED` claiming for months after
+> V0.8 **deleted all three** in favour of run-level claiming. A reader learning the schema here
+> would have learned the design AMOS rejected. That is what the warning above is for.
+
+Migration chain: `e25051359e64` (V0.4 baseline) → `5a881f4bdb98` (V0.5 pgvector) →
+`a0621f74b57c` (V0.6 memory) → `5892709841cc` (V0.8 run claiming).
 
 ## Why PostgreSQL
 
@@ -11,81 +23,135 @@ are genuinely schemaless (plan payloads, tool arguments) without a second databa
 covers similarity (ADR-001). The alternative — Postgres plus MongoDB plus Qdrant — means three
 backup stories and two consistency problems, for one user.
 
-## Core tables (V0.3)
+## Core tables
 
 ```sql
 CREATE TABLE runs (
     id                UUID PRIMARY KEY,
     goal_text         TEXT        NOT NULL,
-    status            TEXT        NOT NULL,   -- RECEIVED|PLANNING|EXECUTING|...
-    idempotency_key   TEXT,
+    status            TEXT        NOT NULL,   -- QUEUED|RUNNING|COMPLETED|FAILED|...
+    idempotency_key   TEXT,                   -- nullable, so the index is partial
+    request_id        TEXT,                   -- V0.1's request id, threaded through
     result            JSONB,
     error             JSONB,
     total_tokens      INTEGER     NOT NULL DEFAULT 0,
+    latency_ms        INTEGER     NOT NULL DEFAULT 0,
+    lesson            TEXT,                   -- episodic memory, V0.6
+    claimed_at        TIMESTAMPTZ,            -- run-level claiming, V0.8
+    claimed_by        TEXT,                   -- "hostname:pid" of the worker
+    attempt_count     INTEGER     NOT NULL DEFAULT 0,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at      TIMESTAMPTZ,
+    goal_embedding    vector(1536),           -- episodic recall by goal similarity, V0.6
     CONSTRAINT runs_idempotency_unique UNIQUE (idempotency_key)
 );
 
-CREATE TABLE tasks (
+CREATE TABLE tasks (                          -- one unit of work in a plan, V0.4
     id            UUID PRIMARY KEY,
     run_id        UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-    task_type     TEXT NOT NULL,
-    parameters    JSONB NOT NULL DEFAULT '{}',
-    agent_name    TEXT,
+    plan_ref      TEXT NOT NULL,              -- the planner's own id, e.g. "t1"
+    description   TEXT NOT NULL,
     state         TEXT NOT NULL DEFAULT 'PENDING',
+    depends_on    UUID[] NOT NULL DEFAULT '{}',
+    position      INTEGER NOT NULL DEFAULT 0, -- topological order
     attempt_count INTEGER NOT NULL DEFAULT 0,
     max_attempts  INTEGER NOT NULL DEFAULT 3,
-    depends_on    UUID[] NOT NULL DEFAULT '{}',
     result        JSONB,
+    error         JSONB,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    claimed_at    TIMESTAMPTZ                      -- visibility timeout, V0.8
+    CONSTRAINT tasks_run_planref_unique UNIQUE (run_id, plan_ref)
 );
 
-CREATE TABLE steps (                              -- one attempt at a task
+CREATE TABLE steps (                          -- one attempt at doing work
     id          UUID PRIMARY KEY,
-    task_id     UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    attempt     INTEGER NOT NULL,
+    run_id      UUID NOT NULL REFERENCES runs(id)  ON DELETE CASCADE,
+    task_id     UUID     REFERENCES tasks(id) ON DELETE CASCADE,  -- nullable, see below
+    attempt     INTEGER NOT NULL DEFAULT 0,
     status      TEXT NOT NULL,
+    agent_name  TEXT NOT NULL,
     input       JSONB,
     output      JSONB,
     error       JSONB,
     started_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at TIMESTAMPTZ,
-    UNIQUE (task_id, attempt)
+    CONSTRAINT steps_task_attempt_unique UNIQUE (task_id, attempt)
 );
 
 CREATE TABLE llm_calls (
-    id            UUID PRIMARY KEY,
-    step_id       UUID REFERENCES steps(id) ON DELETE CASCADE,
-    run_id        UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-    provider      TEXT NOT NULL,
-    model         TEXT NOT NULL,
-    prompt_tokens INTEGER,
-    output_tokens INTEGER,
-    latency_ms    INTEGER,
-    repair_count  INTEGER NOT NULL DEFAULT 0,     -- malformed-output retries
-    error         JSONB,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+    id             UUID PRIMARY KEY,
+    run_id         UUID NOT NULL REFERENCES runs(id)  ON DELETE CASCADE,
+    step_id        UUID     REFERENCES steps(id) ON DELETE CASCADE,
+    provider       TEXT NOT NULL,
+    model          TEXT NOT NULL,
+    prompt_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens  INTEGER NOT NULL DEFAULT 0,
+    latency_ms     INTEGER NOT NULL DEFAULT 0,
+    repair_attempt INTEGER NOT NULL DEFAULT 0,   -- which malformed-output retry this was
+    error          TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE tool_calls (
-    id           UUID PRIMARY KEY,
-    step_id      UUID REFERENCES steps(id) ON DELETE CASCADE,
-    run_id       UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-    tool_name    TEXT NOT NULL,
-    arguments    JSONB NOT NULL,
-    output       JSONB,
-    status       TEXT NOT NULL,                   -- OK|INVALID_ARGS|TIMEOUT|ERROR
-    latency_ms   INTEGER,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    id         UUID PRIMARY KEY,
+    run_id     UUID NOT NULL REFERENCES runs(id)  ON DELETE CASCADE,
+    step_id    UUID     REFERENCES steps(id) ON DELETE CASCADE,
+    call_id    TEXT NOT NULL,                     -- the model's own id for the call
+    tool_name  TEXT NOT NULL,
+    arguments  JSONB NOT NULL DEFAULT '{}',
+    output     JSONB,
+    status     TEXT NOT NULL,                     -- OK|INVALID_ARGS|TIMEOUT|NOT_FOUND|ERROR
+    error      TEXT,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-`llm_calls` and `tool_calls` carry `run_id` as well as `step_id`. That is a deliberate
-denormalisation: assembling a full run trace is the single most common query in the system, and
-carrying `run_id` turns a four-table join into a direct filter. `step_id` is nullable because a
+**Three modelling decisions worth defending:**
+
+`llm_calls` and `tool_calls` carry `run_id` **as well as** `step_id`. That is a deliberate
+denormalisation: assembling a full run trace is the most common query in the system, and
+carrying `run_id` turns a multi-table join into a direct filter. `step_id` is nullable because a
 planning call belongs to a Run before any Task exists.
+
+`steps.task_id` is **nullable and `run_id` is not** — the reverse of what the shape suggests. A
+V0.3 run has a step with no task, because tasks did not exist yet; from V0.4 every step belongs
+to one, and a task retried three times has three steps. That is what makes "was this retried?"
+answerable from stored data rather than from logs.
+
+`tasks.depends_on` is a Postgres `UUID[]`, not a join table. The textbook normalisation is a
+`task_dependencies` table, but every read of this graph loads the whole run's tasks at once
+anyway — the join buys nothing and costs a table.
+
+## Memory table (V0.6)
+
+```sql
+CREATE TABLE memories (
+    id            UUID PRIMARY KEY,
+    subject       TEXT   NOT NULL,             -- normalised key, for exact lookup
+    content       TEXT   NOT NULL,
+    confidence    DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    source_run_id UUID REFERENCES runs(id)     ON DELETE SET NULL,
+    superseded_by UUID REFERENCES memories(id) ON DELETE SET NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    embedding     vector(1536)
+);
+```
+
+**Why a relational table and not just vectors**, since "remember things" in an AI system usually
+means embed-everything:
+
+1. **Exact recall is a key lookup.** "What is the user's name?" must return *the* name, not the
+   most similar-looking fact. Similarity search will occasionally return someone else's.
+2. **Contradictions need ordering.** `superseded_by` is a chain, not a delete — the previous
+   value stays auditable and "current" is the deterministic query `superseded_by IS NULL`.
+3. **Provenance is a join.** "Where did this come from?" is a foreign key to a run.
+
+`embedding` still exists, for questions that have no key. It is the secondary path, never a
+substitute for the exact one.
+
+**There is no `episodes` table.** An episode *is* a run, so episodic memory is `runs.lesson` and
+`runs.goal_embedding` rather than a second table duplicating goal, status, tokens and timings to
+add two columns. Full reasoning in `docs/09-memory-architecture.md`.
 
 ## Knowledge tables (V0.5)
 
@@ -97,9 +163,10 @@ CREATE TABLE documents (
     source       TEXT NOT NULL,
     title        TEXT,
     content_hash TEXT NOT NULL,     -- re-ingest detection
+    chunk_count  INTEGER NOT NULL DEFAULT 0,
     metadata     JSONB NOT NULL DEFAULT '{}',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (content_hash)
+    CONSTRAINT documents_content_hash_unique UNIQUE (content_hash)
 );
 
 CREATE TABLE chunks (
@@ -107,10 +174,12 @@ CREATE TABLE chunks (
     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
     content     TEXT NOT NULL,
+    heading     TEXT,                -- the section it came from, for citations
     token_count INTEGER,
-    embedding   vector(1536),        -- see ADR-008
     metadata    JSONB NOT NULL DEFAULT '{}',
-    UNIQUE (document_id, chunk_index)
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    embedding   vector(1536),        -- see ADR-008
+    CONSTRAINT chunks_document_index_unique UNIQUE (document_id, chunk_index)
 );
 ```
 
@@ -120,62 +189,88 @@ Embeddings are MRL-truncated to 1536 and **re-normalised** — truncation breaks
 and cosine distance over un-normalised vectors returns wrong rankings without raising an error.
 Full reasoning and the `halfvec` fallback in ADR-008.
 
+Every `vector` column is added by raw SQL in its migration, because SQLAlchemy core has no
+`vector` type. They are therefore **absent from `models.py`** and explicitly allowlisted in
+`test_schema_drift.py`, so the drift check stays meaningful rather than quietly ignoring them.
+
 ## Indexes, and why each exists
 
 ```sql
 -- trace assembly: the hot path for GET /v1/runs/{id}
+CREATE INDEX idx_steps_run        ON steps(run_id);
 CREATE INDEX idx_steps_task       ON steps(task_id);
 CREATE INDEX idx_llm_calls_run    ON llm_calls(run_id);
 CREATE INDEX idx_tool_calls_run   ON tool_calls(run_id);
 
--- executor: find claimable work (V0.4/V0.8)
+-- executor: the tasks of one run, by state
 CREATE INDEX idx_tasks_run_state  ON tasks(run_id, state);
-CREATE INDEX idx_tasks_claimable  ON tasks(state, created_at) WHERE state = 'READY';
+
+-- worker: the claim path (V0.8)
+CREATE INDEX idx_runs_claimable   ON runs(status, created_at) WHERE status = 'QUEUED';
+CREATE INDEX idx_runs_created     ON runs(created_at);
 
 -- idempotency lookup on submit
 CREATE INDEX idx_runs_idempotency ON runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
 
--- vector search
-CREATE INDEX idx_chunks_embedding ON chunks
-    USING hnsw (embedding vector_cosine_ops);
+-- memory: current facts only
+CREATE INDEX idx_memories_current     ON memories(subject) WHERE superseded_by IS NULL;
+CREATE INDEX idx_memories_source_run  ON memories(source_run_id);
+
+-- retrieval
+CREATE INDEX idx_documents_source ON documents(source);
+CREATE INDEX idx_chunks_document  ON chunks(document_id);
+CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops);
 ```
 
-Two partial indexes rather than full ones: `READY` tasks are a small fraction of all tasks, and
-most runs have no idempotency key. Indexing only the rows actually queried keeps both indexes
-small enough to stay cached.
+**Three partial indexes** rather than full ones. `QUEUED` runs are a small and shrinking fraction
+of every run ever executed; most runs have no idempotency key; and superseded memories
+accumulate without the hot path ever reading them. Indexing only the rows actually queried keeps
+each index small enough to stay cached.
 
-**HNSW is built at V0.5 only after the corpus is loaded** — building it on an empty table and
-then inserting is markedly slower than the reverse.
+**HNSW is built after the corpus is loaded** — building it on an empty table and then inserting
+is markedly slower than the reverse. The query must use the matching `<=>` operator, or Postgres
+silently falls back to a sequential scan: a correctness-shaped performance bug that raises no error.
 
-## Concurrency (V0.8)
+## Concurrency (V0.8) — claiming is per *run*
 
 ```sql
-UPDATE tasks SET state = 'RUNNING', claimed_at = now(), attempt_count = attempt_count + 1
-WHERE id = (
-    SELECT id FROM tasks
-    WHERE state = 'READY'
-    ORDER BY created_at
-    FOR UPDATE SKIP LOCKED
-    LIMIT 1
-)
-RETURNING *;
+UPDATE runs
+   SET status = 'RUNNING', claimed_at = now(), claimed_by = :worker,
+       attempt_count = attempt_count + 1
+ WHERE id = (
+       SELECT id FROM runs
+        WHERE status = 'QUEUED' AND attempt_count < :max_attempts
+        ORDER BY created_at
+          FOR UPDATE SKIP LOCKED
+        LIMIT 1
+ )
+RETURNING id, goal_text, attempt_count;
 ```
 
 `SKIP LOCKED` lets concurrent workers claim disjoint rows without blocking each other, and the
-claim happens in the same transaction as the state change — so a worker that dies mid-task has
-its row released by Postgres rather than by recovery code AMOS has to write (ADR-003).
-`claimed_at` supports a visibility timeout: a task `RUNNING` beyond its limit is reclaimable.
+claim happens **in the same transaction as the state change** — so a worker that dies mid-run has
+its row released by Postgres rather than by recovery code AMOS would have to write and test
+(ADR-003). `claimed_at` supports the visibility timeout: a run `RUNNING` beyond its limit is
+reclaimable.
+
+**Run, not task.** V0.4 added `tasks.claimed_at` and a partial claimable index on the reasoning
+that adding a column later to a populated table is a migration. The reasoning was sound and the
+granularity was wrong: a run is what a client submits and polls, and a run's internal task
+concurrency is already handled by `asyncio.gather` inside the executor. Distributing individual
+tasks would mean distributing the executor. V0.8 **deleted both** rather than carry schema
+documenting an abandoned plan.
 
 Reference: <https://www.postgresql.org/docs/current/sql-select.html>
 
 ## Deliberate omissions
 
 - **No `users` table until authentication exists.** Single user, no auth, no table. Adding one
-  now would mean a foreign key everywhere pointing at one permanent row.
+  now would mean a foreign key everywhere pointing at one permanent row. *Scheduled for V1.4,
+  which is where `user_id` arrives on `runs`, `memories` and `documents` together.*
 - **No soft deletes.** Nothing is deleted yet. `deleted_at` on every table is a cost paid
   against a hypothetical.
 - **No `agents` or `tools` tables.** Agents and tools are code, registered at startup. They
   become rows only if they need to be configurable at runtime, which is not a requirement.
-- **`memories` and `episodes` tables are deferred to V0.6**, when `docs/09-memory-architecture.md`
-  decides what belongs in relational storage versus vectors. Guessing now would be ADR-007's
-  mistake in schema form.
+- **No `task_dependencies` join table** — see `depends_on` above.
+- **No dead-letter table.** A run that exhausts its attempts is marked `FAILED` and nothing
+  collects it for review. Recorded as a gap in `docs/12-event-system.md`; scheduled for V1.1.

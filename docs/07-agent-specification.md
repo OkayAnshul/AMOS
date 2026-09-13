@@ -32,12 +32,21 @@ code, not of the prompt.
 
 | Agent | Tools | Cannot |
 |---|---|---|
-| **Researcher** | `search_knowledge`, `http_get`, `read_file`, `recall_facts`, `recall_past_runs` | compute anything |
+| **Researcher** | `search_knowledge`, `http_get`, `read_file`, `recall_facts`, `recall_past_runs`, `remember_fact` | compute anything |
 | **Analyst** | `calculator` | search, fetch or recall |
 | **Critic** | *(none)* | do anything but judge |
 
 The two routable allowlists are **disjoint**. That is deliberate: overlapping capability makes
 routing arbitrary, because either agent could do the work.
+
+> `remember_fact` was missing from this table until 2026-09-13 — and its absence here mirrored
+> its absence from the code, which is the worst bug in `engineering/bugs-log.md`: the tool was
+> registered globally, appeared in no `AgentSpec` allowlist, and was therefore filtered out of
+> every specialist's registry. **Storing a memory was structurally impossible** while the system
+> reported doing it. The code was fixed; this table was not, so the specification went on
+> describing the broken state. Source of truth is `src/amos/agents/registry.py`, and
+> `test_every_registered_tool_is_reachable_by_at_least_one_agent` now fails if a tool drifts out
+> of every allowlist again.
 
 ### Why the critic has no tools
 
