@@ -6,9 +6,10 @@
 
 > **No test in the default suite touches the network.**
 
-Requirement N-14. This is not a style preference. The Gemini free tier is **20 requests per
-day per model** (`docs/21-technology-baseline.md`), so a suite that called the real API could
-exhaust an entire day's budget in a single run — and would be slow, non-deterministic, and
+Requirement N-14. This is not a style preference. The Gemini free tier binds in more than one
+shape — 20 per day on `gemini-3.5-flash`, 15 per *minute* on the `-lite` default; the table in
+[`21-technology-baseline.md`](21-technology-baseline.md) is canonical — so a suite that called
+the real API could exhaust an entire day's budget in a single run — and would be slow, non-deterministic, and
 unrunnable in CI.
 
 `FakeProvider` scripts the model's responses instead, including the malformed ones and the

@@ -31,7 +31,9 @@ the placeholder-documentation problem (ADR-007).
 *Reconsider if:* never; a directory costs nothing to create when it is actually needed.
 
 **Tests never touch the network.**
-*Context:* free-tier Gemini is ~15 RPM and non-deterministic.
+*Context:* free-tier Gemini is rate-limited and non-deterministic. (Written here as "~15 RPM";
+the measured picture turned out to be four different shapes depending on model and call type —
+`docs/21-technology-baseline.md` is canonical.)
 *Decision:* `FakeProvider` in all unit and integration tests; one live smoke test, skipped
 without an API key.
 *Why:* network tests would be slow, flaky, rate-limited and would fail in CI. Locked as N-14.

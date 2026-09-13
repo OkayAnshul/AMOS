@@ -18,7 +18,7 @@ Mitigations actually in place, stated honestly:
   - supersession is deterministic, so a bad fact overwrites rather than
     accumulating alongside the truth
   - superseded rows are kept, so a bad write is recoverable and inspectable
-  - `memory_history` makes tampering visible
+  - `SemanticMemory.history()` makes tampering visible
 
 What is NOT in place: no approval step, no provenance check on the *content*. A
 malicious page fetched by `http_get` could still talk the model into remembering

@@ -573,9 +573,9 @@ plus one LLM-judged metric, reported separately, with CI running the full test s
 cases 6/6 (100%)   completion 100%   tool selection 100%   refusal 1/1
 groundedness 1.00  (LLM-judged — weaker evidence)
 ```
-Alongside: retrieval recall@5 100% / MRR 0.958, routing 10/10, 480 tests.
+Alongside: retrieval recall@5 100% / MRR 0.958, routing 10/10, 520 tests.
 
-**Tests (480 total; 39 evaluation):** each scorer fails independently; a crashed run is scored not
+**Tests (520 total; 39 evaluation):** each scorer fails independently; a crashed run is scored not
 skipped; **a rate limit is unmeasurable rather than failed**; an unjudged case is excluded from the
 mean rather than counted as zero; live refusal phrasings pinned as regressions; confident
 inventions still caught after broadening the detector.
@@ -595,7 +595,7 @@ part of the score a measurement of the free tier.
 > Built an evaluation harness for an LLM agent system with deterministic scorers for completion,
 > tool selection, citation and refusal behaviour plus an LLM-judged groundedness metric reported
 > separately with its limitations stated; distinguished infrastructure failures from quality
-> failures in scoring; added CI running 480 tests with and without a database and verifying
+> failures in scoring; added CI running 520 tests with and without a database and verifying
 > migrations in both directions.
 
 **What this does NOT demonstrate:** **six goals, twelve retrieval questions and ten routing cases,

@@ -82,7 +82,7 @@ resume evidence → state what changed, what to learn, and the exact next step �
 | FastAPI | ≥0.119.1 | earlier versions break on 3.14 |
 | Pydantic | ≥2.12 | 3.14 support landed here |
 | LLM SDK | `google-genai` ≥2.21.0 | `google-generativeai` is deprecated |
-| Model | `gemini-3.5-flash` | free tier |
+| Model | `gemini-3.5-flash-lite` | the code default; `gemini-3.5-flash` for demos |
 | Embeddings | `gemini-embedding-001` @ 1536 dims | 3072 default exceeds pgvector's HNSW limit |
 | Vectors | pgvector in Postgres | not Qdrant — see ADR-001 |
 

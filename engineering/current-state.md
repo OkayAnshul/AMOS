@@ -63,8 +63,8 @@ quality. `docs/16-evaluation.md` carries that caveat next to every number.
 `main` (V1.0 merged from `feat/v1.0-evaluation`)
 
 ## Known Bugs
-None open. Twenty-four fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson
-each taught. The corrections table in `docs/25-build-journal.md` lists twenty things believed that
+None open. Twenty fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson
+each taught. The corrections table in `docs/25-build-journal.md` lists twenty-two things believed that
 were false.
 
 ## Technical Debt
@@ -83,7 +83,7 @@ were false.
 | Container | podman 5.8.2 + podman-compose (rootless) |
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
 | Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` |
-| Corpus | 28 documents, 300 chunks |
+| Corpus | 28 documents, 300 chunks **indexed**; a fresh `make ingest` would now index 48 / ~906 |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
 
@@ -105,7 +105,7 @@ project's two equal objectives, and it is the only one still outstanding:
 > A milestone is not complete until Anshul can answer that module's questions unaided.
 
 Recommended order:
-1. **`docs/25-build-journal.md`** — the narrative, twelve chapters, how it was built and what was
+1. **`docs/25-build-journal.md`** — the narrative, thirteen chapters, how it was built and what was
    wrong. Read this first; it is the only document written to be read start to finish.
 1b. **`docs/build-along/`** — if the answer is "build it myself". Twelve documents: what file to
    write, when, why now, and the trap waiting in each milestone. Contracts, not code — the git tags

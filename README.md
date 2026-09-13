@@ -189,7 +189,7 @@ skipped transitively while unrelated branches still complete, and the run report
 Index AMOS's own documentation and ask it about itself:
 
 ```bash
-.venv/bin/python -m amos.rag.cli ingest docs        # 28 docs -> 300 chunks
+.venv/bin/python -m amos.rag.cli ingest docs        # ~48 docs -> ~906 chunks today
 .venv/bin/python -m amos.rag.cli evaluate 5
 
 curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
@@ -210,7 +210,7 @@ Q: what is AMOS's Kubernetes autoscaling policy?
     feature beyond V1.0 that is not promised."
 ```
 
-**Measured**, not claimed — 28 documents, 300 chunks, 12-question golden set:
+**Measured**, not claimed — against a 28-document, 300-chunk snapshot of `docs/`, 12-question golden set:
 
 | k | recall@k | MRR |
 |---|---|---|
@@ -286,7 +286,7 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-make check      # lint + types + 480 tests
+make check      # lint + types + 520 tests
 make test       # tests only; database ones skip if none is running
 ```
 
@@ -301,7 +301,7 @@ something enforced.
 | End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
 | Agent routing | `make routing` | 10/10 |
-| Tests | `make test` | 480 |
+| Tests | `make test` | 520 passing, 2 live tests skipped |
 
 Every one of those sets is small and was written by the person who built the system. They are a
 regression gate, not a characterisation of quality, and

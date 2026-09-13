@@ -123,9 +123,9 @@ lost afternoon does not.
 | | |
 |---|---|
 | [`../24-study-plan.md`](../24-study-plan.md) | What to **study**, tier by tier, with algorithms at `file:line` |
-| [`../25-build-journal.md`](../25-build-journal.md) | How it was **actually built** — 12 chapters, including 22 things believed that were false |
+| [`../25-build-journal.md`](../25-build-journal.md) | How it was **actually built** — 13 chapters, including 22 things believed that were false |
 | [`../03-architecture-decisions.md`](../03-architecture-decisions.md) | The 8 ADRs, each with an explicit *Reconsider if* |
-| [`../../engineering/bugs-log.md`](../../engineering/bugs-log.md) | 24 bugs with the lesson each taught. Where the traps come from |
+| [`../../engineering/bugs-log.md`](../../engineering/bugs-log.md) | 20 bugs with the lesson each taught. Where the traps come from |
 | [`../interview/`](../interview/) | 10 documents of questions. **This is the gate** — the point of all of it |
 
 If you read only one before starting, read the **build journal**. It is the only document written

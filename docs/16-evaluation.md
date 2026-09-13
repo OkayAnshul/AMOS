@@ -31,7 +31,7 @@ Alongside the component measurements that already existed:
 | End-to-end goals | `make eval` | 6/6 deterministic, groundedness 1.00 |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
 | Routing | `make routing` | 10/10 |
-| Tests | `make test` | 480 passing |
+| Tests | `make test` | 520 passing (522 collected; 2 live, opt-in) |
 
 **What these numbers do not show:** six goals, twelve retrieval questions and ten routing cases,
 all written by the person who built the system. That is enough to catch a regression and nowhere

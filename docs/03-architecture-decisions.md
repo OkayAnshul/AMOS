@@ -268,7 +268,7 @@ a global dictionary.
 
 ---
 
-## ADR-007 — Seven documents written, seventeen stubbed
+## ADR-007 — Ten documents written, fourteen stubbed
 
 **Date** 2026-09-03 · **Status** Accepted
 
