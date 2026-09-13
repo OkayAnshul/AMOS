@@ -40,6 +40,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from opentelemetry import trace
+from opentelemetry.propagate import extract, inject
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -103,6 +104,43 @@ def safe_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
         for key, value in attributes.items()
         if value is not None and key.lower() not in _FORBIDDEN_ATTRIBUTES
     }
+
+
+def current_trace_context() -> str | None:
+    """This request's W3C `traceparent`, for carrying across a process boundary.
+
+    A queued run used to be a *separate* trace: the submitting request had one,
+    the worker that executed it minutes later started another, and nothing
+    joined them — so "what happened on this goal?" had two answers and no link
+    between them.
+
+    Returns None when tracing is disabled, in which case the carrier is empty and
+    there is nothing to store.
+    """
+    carrier: dict[str, str] = {}
+    inject(carrier)
+    return carrier.get("traceparent")
+
+
+@contextmanager
+def continued_trace(traceparent: str | None, name: str, **attributes: Any) -> Iterator[Span]:
+    """A span that continues the trace `traceparent` came from.
+
+    Used by the worker: the span it opens becomes a child of the span that
+    enqueued the run, so a queued goal is one trace end to end. Falls back to a
+    fresh root span when there is nothing to continue — a run enqueued while
+    tracing was off, or by an older version.
+    """
+    parent = extract({"traceparent": traceparent}) if traceparent else None
+    with tracer().start_as_current_span(name, context=parent) as current:
+        for key, value in safe_attributes(attributes).items():
+            current.set_attribute(key, value)
+        try:
+            yield current
+        except Exception as exc:
+            current.record_exception(exc)
+            current.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            raise
 
 
 @contextmanager

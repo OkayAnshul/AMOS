@@ -29,6 +29,7 @@ demo does not go on a resume.**
 | Asynchronous execution with crash-safe job claiming via `SKIP LOCKED` | V0.8 | `src/amos/worker/**` | 20 queue + worker tests | SIGKILL recovery demo | ✅ **shipped** |
 | Distributed tracing with OpenTelemetry | V0.9 | `src/amos/telemetry/**` | 23 telemetry tests | live collector capture | ✅ **shipped** |
 | Evaluation harness gating regressions in CI | V1.0 | `src/amos/evaluation/**`, `.github/workflows/ci.yml` | 39 evaluation tests | `make eval` → 6/6 | ✅ **shipped** |
+| Resumable execution across worker crashes, with a dead-letter path and cross-process tracing | V1.1 | `src/amos/database/progress.py`, `src/amos/orchestration/executor.py`, `src/amos/worker/queue.py` | 20 progress + queue tests | kill a worker mid-run; only the unfinished task re-runs | ✅ **shipped** |
 
 ## Words that must never be used unless earned
 
@@ -603,3 +604,52 @@ all self-authored** — a regression gate, not a characterisation of quality. No
 over time. No adversarial cases: no prompt injection, no deliberately misleading corpus entries.
 **No human evaluation calibrating the judge**, which is what would tell you what a groundedness
 score of 1.00 is worth. CI does not run the evaluation suite, because it costs real quota.
+
+---
+
+## V1.1 — Reliability
+
+**What was implemented:** Task outcomes persisted as they happen, so a reclaimed run resumes
+instead of re-executing; a dead-letter path for runs the queue gives up on; and W3C trace context
+carried across the worker boundary.
+
+**Evidence (files):**
+- `src/amos/orchestration/executor.py` — `TaskCheckpoint` protocol, `completed` resumption, and
+  the guarantee that a failing checkpoint cannot fail a run
+- `src/amos/orchestration/orchestrator.py` — `PlanStore`; when it returns a plan the planner is
+  not called
+- `src/amos/database/progress.py` — both protocols implemented against PostgreSQL
+- `src/amos/worker/queue.py` — `DEAD_LETTER`, `list_dead_letter`, traceparent through claim
+- `src/amos/telemetry/tracing.py` — `current_trace_context`, `continued_trace`
+- `migrations/versions/453890cfd6a9_*` — `runs.trace_parent`, reversible both directions
+
+**Measured:** 551 tests (523 → 551 across V1.1), `mypy --strict` and `ruff` clean. The headline
+test kills a run with one task done and one failed, reclaims it, and asserts three things: the
+done task is not re-run, the failed one receives the stored answer as context, and the planner is
+never asked a second time.
+
+**Technical explanation (unaided):** Resumption was impossible before this milestone for a reason
+not visible from the API: nothing was persisted until a run finished, so a killed run left a
+`runs` row and no record of which tasks had succeeded. Fixing that exposes a second problem — a
+resumed run that calls the planner again gets a *different* DAG, because the planner is an LLM, so
+the stored refs would refer to nothing. AMOS therefore persists the plan when it is made and
+treats the stored rows as the plan on any later attempt. The executor still has no database
+access; it depends on a `TaskCheckpoint` protocol exactly as it already depended on `TaskRunner`,
+so with no database configured both are `None` and behaviour is identical to V0.4. Checkpoint
+failures are swallowed: losing resumability for one task is a smaller harm than failing a run
+whose work is already correct.
+
+**Likely interview questions:** `docs/interview/reliability.md`.
+
+**Honest resume wording:**
+> Made crash recovery resumable in an asynchronous task system: persisted the execution plan and
+> checkpointed task outcomes so a reclaimed run skips completed work rather than re-executing;
+> added a dead-letter path distinguishing give-ups from ordinary failures; and propagated W3C
+> trace context across the process boundary so a queued job is a single distributed trace.
+
+**What this does NOT demonstrate:** **Delivery is still at-least-once.** Resumption narrows the
+duplicate-work window from a whole run to a single task — a worker dying between finishing a task
+and checkpointing it still redoes it — and does not close it, because the gap between doing work
+and recording it is the Two Generals' problem. Task-level idempotency keys are still not
+implemented. A resumed run re-runs the stored plan faithfully, **including a bad one**: there is
+no re-planning. Still one machine, one database; **not a distributed system**.

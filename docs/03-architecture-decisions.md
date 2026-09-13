@@ -409,3 +409,90 @@ Measured task durations approach 300s — then the bound is shaping behaviour ra
 catching pathology, and it should be raised *together with* the visibility timeout. Also
 reconsider if per-task claiming ever arrives, which would make option 3 viable for the first
 time.
+
+---
+
+## ADR-010 — Tasks are persisted as they happen, and a reclaimed run resumes
+
+**Date** 2026-09-13 · **Status** Accepted (V1.1)
+
+### Context
+V0.8 made a crashed worker's run recoverable: the visibility timeout returns it to `QUEUED` and
+another worker claims it. What "recovered" meant was **re-executed from the beginning**.
+
+That was tolerable only because of a property AMOS does not control for: every tool is read-only.
+`docs/12-event-system.md` already records the exception — `remember_fact` writes, and a duplicate
+store is harmless *by luck*, because supersession makes it a no-op.
+
+### Problem
+Resumption was impossible, for a reason that is not obvious from the outside: **nothing is
+persisted until the run finishes.** `RunRepository.record_success` writes the tasks, steps,
+LLM calls and tool calls in one batch at the end. A run killed mid-execution leaves a `runs` row
+and nothing else — so there is no record of which tasks had already succeeded, and nothing to
+resume *from*.
+
+The second problem only appears once the first is solved. If a resumed run calls the planner
+again, it gets **a different plan** — the planner is an LLM and is not deterministic. The stored
+task ids would not correspond to the new plan's, and "skip the tasks that already succeeded"
+would be meaningless.
+
+### Options
+1. **Re-execute from the start** (status quo). Correct only while every tool is read-only.
+2. **Checkpoint task outcomes, re-plan on resume, match by description.** Fuzzy matching of
+   model-generated text to decide what to skip.
+3. **Persist the plan when it is made, and treat the stored task rows as the plan.** On resume,
+   reconstruct the DAG from the rows, skip what succeeded, run the rest. No second planning call.
+4. **Task-level idempotency keys.** Deduplicates a repeat execution; does not avoid it.
+
+### Decision
+**Option 3.** Tasks are written when the plan is validated, updated at every terminal transition,
+and on reclaim the stored rows *are* the plan.
+
+### Why
+Option 2 decides control flow by comparing two pieces of model-generated prose. That is exactly
+the boundary the project's golden rule puts on the other side — the LLM proposes, deterministic
+code decides — and a near-match would silently skip the wrong task.
+
+Option 4 is the thing that usually gets called "the fix for at-least-once", and it is weaker than
+it sounds here: an idempotency key makes a *repeat* harmless, but the repeat still costs the full
+run's tokens against a 20/day quota. Resuming avoids the work rather than tolerating it.
+
+Option 3 also removes a planning call from every reclaim, which is not a side benefit at this
+quota — it is a fifth of a day's budget.
+
+**The plan is state.** That was ADR-002's argument for persisting before building the planner,
+and this is the same argument one layer down: a plan that exists only in memory is a decision the
+system cannot be held to.
+
+### How the seam is kept
+The executor has **no database access** and does not acquire any. It takes a `TaskCheckpoint`
+protocol — one method, called on each terminal transition — exactly as it already takes a
+`TaskRunner`. The persistence layer implements it; tests pass a fake, or nothing at all.
+
+Checkpoint writes are **outside the run's transaction** and are allowed to fail: a checkpoint
+that fails loses resumability for that task, and must never fail the run that is otherwise
+succeeding. The same reasoning as episodic recording in `api/persistence.py`.
+
+### Tradeoffs
+- **One database write per task transition** instead of one batch at the end. At ≤10 tasks per
+  plan this is not a throughput concern, and it would be at a hundred.
+- A resumed run's `attempt_count` on the *run* advances while its completed tasks' do not, so
+  "how many attempts did this take" now has two answers at two levels. Both are recorded.
+- **A stored plan cannot be improved.** If the first attempt's plan was bad, resumption faithfully
+  re-runs the bad plan. Re-planning on failure is a separate, unbuilt feature (`docs/17`), and
+  this decision makes it a deliberate choice rather than an accident.
+- Partial task state is now visible in `GET /v1/runs/{id}` **while a run is still executing**,
+  which is a feature and also means a client can observe a task in `RUNNING`.
+
+### Consequences
+- `steps` being one row per run — listed as technical debt since V0.4 — is unchanged here.
+  This ADR covers tasks, not steps.
+- The V0.8 claim mechanism is untouched: claiming is still per run.
+- Delivery is still **at-least-once**. Resumption narrows the window in which duplicate work
+  happens; it does not close it. A worker that dies *between* finishing a task and checkpointing
+  it will redo that task.
+
+### Reconsider if
+Plans grow large enough that per-transition writes matter, or re-planning on failure is built —
+at which point "the stored rows are the plan" needs an explicit escape hatch rather than being
+the only path.

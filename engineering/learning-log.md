@@ -480,3 +480,78 @@ been embedded at an unindexable dimension.
 **Rule adopted:** check current documentation before adopting or upgrading anything. Never write
 a version number, model ID or API signature from memory.
 **Status:** ✅ Defend
+
+# V1.1 — Reliability
+
+## Checkpointing and resumable work
+**Problem it solves:** "recovered" meant "re-executed from the start", which was safe only
+because every tool happens to be read-only — a property AMOS does not control for.
+**In AMOS:** `orchestration/executor.py` (`TaskCheckpoint`), `database/progress.py`. The plan is
+persisted when validated; each task is checkpointed at its terminal transition.
+**Read:** ADR-010 · <https://docs.temporal.io/evaluate/understanding-temporal> (durable execution
+— what AMOS approximates by hand)
+**Answer before moving on:**
+- Why was resumption impossible before V1.1, given that `GET /v1/runs/{id}` already returned a
+  task DAG?
+- Why can a resumed run not simply call the planner again and skip what succeeded?
+- Why is the checkpoint a Protocol rather than a database call inside the executor?
+**Status:** ⬜ Recognise
+
+## Narrowing a window versus closing it
+**Problem it solves:** knowing precisely what a reliability feature bought. Resumption is **not**
+exactly-once and is not an attempt at it.
+**In AMOS:** `docs/12-event-system.md`. Duplicate work went from a whole run to a single task —
+a worker dying between finishing a task and checkpointing it still redoes that task.
+**Read:** <https://en.wikipedia.org/wiki/Two_Generals%27_Problem> ·
+<https://bravenewgeek.com/you-cannot-have-exactly-once-delivery/>
+**Answer:**
+- Why can the gap between doing work and recording it never be closed by code on one side of it?
+- What would task-level idempotency keys add that resumption does not — and why are they *weaker*
+  on a quota-limited system?
+**Status:** ⬜ Recognise
+
+## Dead-letter queues
+**Problem it solves:** V0.8 had the poison-message *ceiling* and not the *queue* — give-ups were
+marked FAILED and nothing collected them, so they were indistinguishable from ordinary failures.
+**In AMOS:** `worker/queue.py` (`DEAD_LETTER`, `list_dead_letter`), `GET /v1/runs/dead-letter`.
+**Read:** <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html>
+**Answer:**
+- What is the difference between a run that FAILED and one that was dead-lettered, and why does
+  collapsing them lose the one that needs attention?
+- Why did this need no migration and no second table?
+**Status:** ⬜ Recognise
+
+## W3C trace context propagation
+**Problem it solves:** a queued run was two unlinked traces — one for the submitting request, one
+started fresh by the worker.
+**In AMOS:** `telemetry/tracing.py` (`current_trace_context`, `continued_trace`),
+`runs.trace_parent`.
+**Read:** <https://www.w3.org/TR/trace-context/> ·
+<https://opentelemetry.io/docs/concepts/context-propagation/>
+**Answer:**
+- Why is the context captured at *enqueue* rather than when the run row is created?
+- What should happen to a run enqueued while tracing was disabled, and why is that the honest
+  answer rather than a gap?
+**Status:** ⬜ Recognise
+
+## Session-level lessons
+
+### A capability can be built, tested, and wired to nowhere (Session 11)
+The worker never called `set_current_run_id`. Both the plan store and the task checkpoint read the
+run id from context, so V1.1's resumption would have been **inert inside the worker** — the only
+place a reclaim happens, and therefore the only place it mattered. Unit tests could not see it,
+because they construct the pieces directly and never exercise the wiring.
+
+This is the same shape as the `remember_fact` bug (Session 9): the capability worked and the
+wiring did not.
+**Rule adopted:** for any feature that reads ambient context, write one test that exercises the
+*real entry point* — not the component.
+**Status:** ⬜ Recognise
+
+### Process-global state set inside a test is a hazard to every test after it (Session 11)
+An integration test called `set_tracer_provider`, which OpenTelemetry honours **once per process**
+and ignores thereafter with a warning. It silently blinded five telemetry unit tests that ran
+after it: they captured no spans and failed asserting on spans that had genuinely been created.
+**Rule adopted:** run the whole suite before committing, not the files touched. The failures were
+in a directory the change never opened.
+**Status:** ⬜ Recognise

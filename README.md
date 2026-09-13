@@ -4,10 +4,11 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V1.0 — the roadmap is complete.** Queues goals to worker processes that survive being
-> killed mid-run, routes work to specialised agents, plans task graphs, uses tools, retrieves with
-> citations, remembers facts across sessions, reviews its own answers, emits standard traces, and
-> **measures its own quality**.
+> **Status: V1.1.** The V0.1–V1.0 roadmap is complete; V1.1 is the first milestone past it.
+> Queues goals to worker processes that survive being killed mid-run — and now **resume** rather
+> than start over — routes work to specialised agents, plans task graphs, uses tools, retrieves
+> with citations, remembers facts across sessions, reviews its own answers, emits standard traces
+> that follow a job across processes, and **measures its own quality**.
 > See [`engineering/current-state.md`](engineering/current-state.md) for exactly where things stand.
 >
 > New here? [`docs/25-build-journal.md`](docs/25-build-journal.md) explains how it was built,
@@ -52,7 +53,8 @@ adopted — Qdrant, Celery, Redis, Kafka, Kubernetes — have records saying why
 | 0.7 ✅ | Multi-agent | Specialised agents collaborate; a critic gates output |
 | 0.8 ✅ | Async execution | Long-running goals execute asynchronously with crash-safe job claiming |
 | 0.9 ✅ | Observability | Full distributed trace of any run |
-| **1.0 ✅** | **Evaluation** | **Quality is measured, not asserted** |
+| 1.0 ✅ | Evaluation | Quality is measured, not asserted |
+| **1.1 ✅** | **Reliability** | **A reclaimed run resumes instead of redoing completed work; give-ups are collected; a queued run is one trace** |
 
 Full detail, including failure modes and stopping points, in
 [`docs/19-roadmap.md`](docs/19-roadmap.md).
@@ -286,7 +288,7 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-make check      # lint + types + 521 tests
+make check      # lint + types + 551 tests
 make test       # tests only; database ones skip if none is running
 ```
 
@@ -301,7 +303,7 @@ something enforced.
 | End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
 | Agent routing | `make routing` | 10/10 |
-| Tests | `make test` | 521 passing, 2 live tests skipped |
+| Tests | `make test` | 551 passing, 2 live tests skipped |
 
 Every one of those sets is small and was written by the person who built the system. They are a
 regression gate, not a characterisation of quality, and

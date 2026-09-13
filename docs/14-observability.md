@@ -116,8 +116,12 @@ is a deployment decision, and standing up a full stack for a single-user project
 - **No log/trace correlation via trace id in log output.** Logs carry the request id and spans
   carry it too, so correlation works — but the logs do not yet emit the W3C `trace_id`
 - **No sampling.** Every span is exported. Fine at this volume, wrong at any real one
-- **No context propagation across the worker boundary.** A queued run starts a new trace rather
-  than continuing the submitting request's — the run id links them, but they are two traces
+- ~~No context propagation across the worker boundary~~ — **closed at V1.1.** The submitting
+  request's W3C `traceparent` is stored on the run at enqueue and the worker continues it, so a
+  queued run is one trace end to end. Captured at *enqueue* rather than at creation, because that
+  is where the work crosses a process boundary. A run enqueued with tracing off has `NULL` and the
+  worker falls back to a root span, which is the honest degradation: there is no parent trace to
+  invent
 - **No RED/USE dashboards** — metrics are emitted, nothing consumes them
 - **No alerting**, no SLOs
 - **FastAPI is not auto-instrumented** — HTTP-level spans would come free from

@@ -19,13 +19,14 @@ that had the OpenAPI description reading "V0.7" on a v1.0 build.
 
 ## Endpoints
 
-There are **four**, all in `src/amos/api/app.py`.
+There are **five**, all in `src/amos/api/app.py`.
 
 | Method | Path | Purpose | Success |
 |---|---|---|---|
 | `GET` | `/health` | liveness | `200` |
 | `POST` | `/v1/goals` | run a goal synchronously | `200` |
 | `POST` | `/v1/goals/async` | queue a goal for a worker | `202` |
+| `GET` | `/v1/runs/dead-letter` | runs the queue gave up on | `200` |
 | `GET` | `/v1/runs/{run_id}` | the full trace of a past run | `200` |
 
 ### `GET /health`
@@ -121,6 +122,19 @@ location: /v1/runs/0f9a...-...-...
 `202`, not `200`: the work has been *accepted*, not *done*. Returning `200` would tell a client
 the goal was completed when it has not started. Measured at ~54 ms, because no LLM call happens
 on this path.
+
+### `GET /v1/runs/dead-letter`
+
+Runs the queue gave up on, newest first. `?limit=` defaults to 50, capped at 200.
+
+**These are not ordinary failures.** A `FAILED` run executed and produced a verdict; a
+`DEAD_LETTER` run never got one — the worker died on it `AMOS_WORKER_MAX_ATTEMPTS` times and the
+queue stopped retrying so one bad run could not starve every good one. Each entry carries
+`run_id`, `goal`, `attempt_count`, `last_worker`, `reason` and `dead_lettered_at`.
+
+> **This route is declared before `/v1/runs/{run_id}` and has to be.** FastAPI matches in
+> declaration order, so with the parameterised route first, `dead-letter` binds as a `run_id` and
+> the request dies on the UUID check — a `422` on a path that exists. A test pins the ordering.
 
 ### `GET /v1/runs/{run_id}`
 

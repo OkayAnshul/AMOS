@@ -1,6 +1,6 @@
 # 05 — Data Model
 
-PostgreSQL. The schema as it exists at **V0.8**, built up across four migrations, each created at
+PostgreSQL. The schema as it exists at **V1.1**, built up across five migrations, each created at
 the milestone that needed it and never before (ADR-006).
 
 > **The migrations in `migrations/versions/` are the source of truth**, and
@@ -14,7 +14,8 @@ the milestone that needed it and never before (ADR-006).
 > would have learned the design AMOS rejected. That is what the warning above is for.
 
 Migration chain: `e25051359e64` (V0.4 baseline) → `5a881f4bdb98` (V0.5 pgvector) →
-`a0621f74b57c` (V0.6 memory) → `5892709841cc` (V0.8 run claiming).
+`a0621f74b57c` (V0.6 memory) → `5892709841cc` (V0.8 run claiming) → `453890cfd6a9`
+(V1.1 trace continuity).
 
 ## Why PostgreSQL
 
@@ -29,7 +30,7 @@ backup stories and two consistency problems, for one user.
 CREATE TABLE runs (
     id                UUID PRIMARY KEY,
     goal_text         TEXT        NOT NULL,
-    status            TEXT        NOT NULL,   -- QUEUED|RUNNING|COMPLETED|FAILED|...
+    status            TEXT        NOT NULL,   -- QUEUED|RUNNING|COMPLETED|FAILED|DEAD_LETTER|...
     idempotency_key   TEXT,                   -- nullable, so the index is partial
     request_id        TEXT,                   -- V0.1's request id, threaded through
     result            JSONB,
@@ -40,6 +41,7 @@ CREATE TABLE runs (
     claimed_at        TIMESTAMPTZ,            -- run-level claiming, V0.8
     claimed_by        TEXT,                   -- "hostname:pid" of the worker
     attempt_count     INTEGER     NOT NULL DEFAULT 0,
+    trace_parent      TEXT,                   -- W3C traceparent of the enqueuing request, V1.1
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at      TIMESTAMPTZ,
     goal_embedding    vector(1536),           -- episodic recall by goal similarity, V0.6
@@ -272,5 +274,7 @@ Reference: <https://www.postgresql.org/docs/current/sql-select.html>
 - **No `agents` or `tools` tables.** Agents and tools are code, registered at startup. They
   become rows only if they need to be configurable at runtime, which is not a requirement.
 - **No `task_dependencies` join table** — see `depends_on` above.
-- **No dead-letter table.** A run that exhausts its attempts is marked `FAILED` and nothing
-  collects it for review. Recorded as a gap in `docs/12-event-system.md`; scheduled for V1.1.
+- **No dead-letter *table*.** V1.1 added the dead-letter *queue*, but as a status value on
+  `runs` rather than a second table — the rows are identical to any other run's, and a
+  `DEAD_LETTER` run is simply one the queue stopped retrying. `GET /v1/runs/dead-letter` is the
+  read. A separate table would duplicate every column to add nothing.

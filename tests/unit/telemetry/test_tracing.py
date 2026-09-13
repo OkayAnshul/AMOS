@@ -198,3 +198,59 @@ def test_every_instrument_is_incremented_somewhere() -> None:
     assert not never_written, (
         f"these instruments are created but never recorded to: {never_written}"
     )
+
+
+# ---------- trace continuity across a process boundary (V1.1) ----------
+
+
+def test_no_trace_context_when_tracing_is_disabled() -> None:
+    """Nothing to store, and nothing pretending there is."""
+    from opentelemetry import trace as _trace
+
+    from amos.telemetry.tracing import current_trace_context
+
+    # Outside any span, with no active trace, the carrier stays empty.
+    assert _trace.get_current_span().get_span_context().is_valid is False
+    assert current_trace_context() is None
+
+
+def test_a_worker_span_continues_the_trace_that_enqueued_the_run(
+    captured: InMemorySpanExporter,
+) -> None:
+    """A queued run used to be a *separate* trace: the submitting request had
+    one, the worker that executed it minutes later started another, and nothing
+    joined them — so "what happened on this goal?" had two answers and no link.
+    """
+    from amos.telemetry.tracing import continued_trace, current_trace_context
+
+    with span("run.enqueue"):
+        carrier = current_trace_context()
+    assert carrier is not None
+
+    with continued_trace(carrier, "run.execute.worker"):
+        pass
+
+    by_name = {s.name: s for s in captured.get_finished_spans()}
+    submitting = by_name["run.enqueue"]
+    worker = by_name["run.execute.worker"]
+
+    # Same trace, and the worker's span descends from the submitting one.
+    assert worker.context.trace_id == submitting.context.trace_id
+    assert worker.parent is not None
+    assert worker.parent.span_id == submitting.context.span_id
+
+
+def test_a_run_with_no_stored_context_still_gets_a_span(
+    captured: InMemorySpanExporter,
+) -> None:
+    """Runs enqueued while tracing was off, or by an older version, have no
+    parent. That must degrade to a root span, not to no span.
+    """
+    from amos.telemetry.tracing import continued_trace
+
+    with continued_trace(None, "run.execute.worker"):
+        pass
+
+    worker = captured.get_finished_spans()[0]
+    assert worker.name == "run.execute.worker"
+    assert worker.parent is None

@@ -22,6 +22,7 @@ from amos.worker.queue import (
     claim_next_run,
     enqueue,
     give_up,
+    list_dead_letter,
     queue_depth,
     reclaim_abandoned_runs,
 )
@@ -216,7 +217,9 @@ async def test_giving_up_records_why(db_session: AsyncSession) -> None:
     )
     row = result.first()
     assert row is not None
-    assert row.status == RunStatus.FAILED
+    # DEAD_LETTER since V1.1, not FAILED. Deliberate and observable: a FAILED run
+    # executed and produced a verdict, and this one never did.
+    assert row.status == RunStatus.DEAD_LETTER
     assert "crashed three times" in str(row.error)
 
 
@@ -224,3 +227,128 @@ async def test_queue_depth_counts_only_queued_runs(db_session: AsyncSession) -> 
     before = await queue_depth(db_session)
     await queue_a_run(db_session)
     assert await queue_depth(db_session) == before + 1
+
+
+async def test_giving_up_dead_letters_rather_than_failing(db_session: AsyncSession) -> None:
+    """A FAILED run executed and produced a verdict. A dead-lettered one never
+    did — the worker died on it repeatedly and the queue stopped retrying.
+
+    Before V1.1 both landed in FAILED, so the queue's give-ups were
+    indistinguishable from ordinary failures and nothing collected them.
+    """
+    run_id = await queue_a_run(db_session, "a goal that kills workers")
+
+    await give_up(db_session, run_id, "attempts exhausted")
+
+    status = (
+        await db_session.execute(
+            text("SELECT status FROM runs WHERE id = :id"), {"id": str(run_id)}
+        )
+    ).scalar_one()
+    assert status == RunStatus.DEAD_LETTER
+
+
+async def test_a_dead_lettered_run_is_not_claimable(db_session: AsyncSession) -> None:
+    """The whole reason the ceiling exists: one bad run must not be reclaimed
+    forever and starve every good one.
+    """
+    run_id = await queue_a_run(db_session, "poison")
+    await give_up(db_session, run_id, "attempts exhausted")
+
+    assert await claim_next_run(db_session, "w1") is None
+
+
+async def test_dead_letter_listing_carries_what_a_reviewer_needs(
+    db_session: AsyncSession,
+) -> None:
+    run_id = await queue_a_run(db_session, "compare two designs")
+    await db_session.execute(
+        text("UPDATE runs SET attempt_count = 3, claimed_by = 'host:99' WHERE id = :id"),
+        {"id": str(run_id)},
+    )
+    await give_up(db_session, run_id, "attempts exhausted after 3 tries")
+
+    listed = await list_dead_letter(db_session)
+
+    entry = next(e for e in listed if e.run_id == str(run_id))
+    assert entry.goal == "compare two designs"
+    assert entry.attempt_count == 3
+    assert entry.last_worker == "host:99"
+    assert entry.reason == "attempts exhausted after 3 tries"
+
+
+async def test_a_reason_containing_quotes_does_not_corrupt_the_error_json(
+    db_session: AsyncSession,
+) -> None:
+    """`reason` carries an exception message. It was interpolated into a JSON
+    string with an f-string, so a quote or backslash in it produced malformed
+    JSON that Postgres rejected — turning a give-up into a crash, in the code
+    path that exists to handle crashes.
+    """
+    run_id = await queue_a_run(db_session, "quoting")
+    nasty = 'provider said "no" \\ then gave up'
+
+    await give_up(db_session, run_id, nasty)
+
+    listed = await list_dead_letter(db_session)
+    assert next(e for e in listed if e.run_id == str(run_id)).reason == nasty
+
+
+async def test_a_stored_trace_context_survives_enqueue_and_claim(
+    db_session: AsyncSession,
+) -> None:
+    """The column round-trips, so the worker can continue the submitting
+    request's trace instead of starting a second one.
+
+    Deliberately does **not** install a tracer provider. `set_tracer_provider`
+    works once per process and later calls are ignored with a warning, so a test
+    that grabs it here silently blinds every span-capturing test that runs
+    afterwards. Span parentage is covered in `tests/unit/telemetry/`, where the
+    provider is owned for the whole module; what is being tested here is
+    storage and retrieval, which needs no tracing at all.
+    """
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+    run_id = await queue_a_run(db_session, "traced")
+    await db_session.execute(
+        text("UPDATE runs SET trace_parent = :tp WHERE id = :id"),
+        {"tp": traceparent, "id": str(run_id)},
+    )
+
+    claimed = await claim_next_run(db_session, "worker-1")
+
+    assert claimed is not None
+    assert claimed.trace_parent == traceparent
+
+
+async def test_enqueue_records_whatever_trace_context_is_current(
+    db_session: AsyncSession,
+) -> None:
+    """With tracing off — the default in tests — that is nothing, and the column
+    is NULL rather than a fabricated value.
+    """
+    run = await RunRepository(db_session).create_run(goal="untraced", request_id="r")
+    await enqueue(db_session, run.id)
+
+    stored = (
+        await db_session.execute(
+            text("SELECT trace_parent FROM runs WHERE id = :id"), {"id": str(run.id)}
+        )
+    ).scalar_one()
+    assert stored is None
+
+
+async def test_a_run_enqueued_without_tracing_claims_fine(db_session: AsyncSession) -> None:
+    """trace_parent is nullable and the worker falls back to a root span. A run
+    enqueued with tracing off must not become unclaimable.
+    """
+    run_id = await queue_a_run(db_session, "untraced")
+    await db_session.execute(
+        text("UPDATE runs SET trace_parent = NULL WHERE id = :id"), {"id": str(run_id)}
+    )
+
+    claimed = await claim_next_run(db_session, "worker-1")
+
+    assert claimed is not None
+    assert claimed.run_id == run_id
+    assert claimed.trace_parent is None

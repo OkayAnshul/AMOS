@@ -13,9 +13,11 @@ from amos.agents.agent import GroundedAgent
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent, build_default_registry
 from amos.config import Settings
+from amos.database.progress import RunProgress
 from amos.llm.base import LLMProvider
 from amos.llm.gemini import GeminiProvider
 from amos.memory.tools import RecallFactsTool, RecallPastRunsTool, RememberFactTool
+from amos.orchestration.executor import Executor
 from amos.orchestration.orchestrator import Orchestrator
 from amos.rag.embeddings import GeminiEmbeddings
 from amos.rag.retrieval import SearchKnowledgeTool
@@ -123,6 +125,13 @@ def build_agent(
         runner = build_tool_agent(settings, provider, tools)
     if not settings.planning_enabled:
         return runner
+
+    # V1.1: with a database, the plan is persisted before execution and each
+    # task checkpointed as it finishes, so a reclaimed run resumes instead of
+    # re-executing (ADR-010). Without one, both are None and the orchestrator
+    # behaves exactly as it did at V0.4 — persistence stays optional.
+    progress = RunProgress(session_factory) if session_factory is not None else None
+
     return Orchestrator(
         provider,
         runner,
@@ -130,6 +139,15 @@ def build_agent(
         max_attempts=settings.task_max_attempts,
         task_timeout_seconds=settings.task_timeout_seconds,
         temperature=settings.llm_temperature,
+        plan_store=progress,
+        executor=Executor(
+            runner,
+            max_attempts=settings.task_max_attempts,
+            task_timeout_seconds=settings.task_timeout_seconds,
+            checkpoint=progress,
+        )
+        if progress is not None
+        else None,
     )
 
 

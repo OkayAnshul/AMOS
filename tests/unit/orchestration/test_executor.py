@@ -306,3 +306,117 @@ async def test_a_task_finishing_inside_its_budget_is_unaffected() -> None:
     executor = Executor(ScriptedRunner(), task_timeout_seconds=30.0, sleep=no_sleep)  # type: ignore[arg-type]
     report = await executor.execute(make_plan(task("t1")))
     assert by_ref(report) == {"t1": TaskState.SUCCEEDED}
+
+
+# ---------- checkpointing and resumption (V1.1, ADR-010) ----------
+
+
+class RecordingCheckpoint:
+    """Captures what the executor would have persisted."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.saved: list[tuple[str, TaskState]] = []
+        self._fail = fail
+
+    async def record(self, task: object) -> None:
+        if self._fail:
+            raise RuntimeError("database is down")
+        self.saved.append((task.plan_ref, task.state))  # type: ignore[attr-defined]
+
+
+async def test_every_terminal_transition_is_checkpointed() -> None:
+    """Nothing was persisted until the run finished, which is why a crashed run
+    left a `runs` row and no evidence of which tasks had already succeeded.
+    """
+    checkpoint = RecordingCheckpoint()
+    executor = Executor(ScriptedRunner(), checkpoint=checkpoint, sleep=no_sleep)  # type: ignore[arg-type]
+
+    await executor.execute(make_plan(task("t1"), task("t2", "t1")))
+
+    assert checkpoint.saved == [("t1", TaskState.SUCCEEDED), ("t2", TaskState.SUCCEEDED)]
+
+
+async def test_permanent_failure_and_skips_are_checkpointed_too() -> None:
+    """Resuming needs to know what will never succeed, not only what did."""
+    checkpoint = RecordingCheckpoint()
+    executor = Executor(
+        ScriptedRunner({"do t1": ProviderTimeoutError("nope")}),  # type: ignore[arg-type]
+        max_attempts=1,
+        checkpoint=checkpoint,
+        sleep=no_sleep,
+    )
+
+    await executor.execute(make_plan(task("t1"), task("t2", "t1")))
+
+    assert dict(checkpoint.saved) == {
+        "t1": TaskState.PERMANENTLY_FAILED,
+        "t2": TaskState.SKIPPED,
+    }
+
+
+async def test_a_failing_checkpoint_does_not_fail_the_run() -> None:
+    """Losing resumability for one task is a smaller harm than failing a run
+    whose work is already done and correct.
+    """
+    executor = Executor(
+        ScriptedRunner(),
+        checkpoint=RecordingCheckpoint(fail=True),
+        sleep=no_sleep,  # type: ignore[arg-type]
+    )
+
+    report = await executor.execute(make_plan(task("t1")))
+
+    assert report.outcome == RunOutcome.COMPLETED
+    assert by_ref(report) == {"t1": TaskState.SUCCEEDED}
+
+
+async def test_completed_tasks_are_not_re_executed() -> None:
+    runner = ScriptedRunner()
+    executor = Executor(runner, sleep=no_sleep)  # type: ignore[arg-type]
+
+    report = await executor.execute(
+        make_plan(task("t1"), task("t2", "t1")), completed={"t1": "already done"}
+    )
+
+    assert by_ref(report) == {"t1": TaskState.SUCCEEDED, "t2": TaskState.SUCCEEDED}
+    # t1 never reached the runner; t2 did.
+    assert [g for g in runner.goals if g.startswith("do t1")] == []
+    assert any(g.startswith("do t2") for g in runner.goals)
+
+
+async def test_a_resumed_answer_still_reaches_its_dependents() -> None:
+    """The whole point of resuming rather than re-executing: downstream tasks
+    need the upstream answer, and it comes from the stored row.
+    """
+    runner = ScriptedRunner()
+    executor = Executor(runner, sleep=no_sleep)  # type: ignore[arg-type]
+
+    await executor.execute(
+        make_plan(task("t1"), task("t2", "t1")), completed={"t1": "the stored answer"}
+    )
+
+    downstream = next(g for g in runner.goals if g.startswith("do t2"))
+    assert "the stored answer" in downstream
+
+
+async def test_a_resumed_task_contributes_no_tokens() -> None:
+    """Its tokens were spent and counted on the earlier attempt. Counting them
+    again would make a resumed run look more expensive than it was.
+    """
+    executor = Executor(ScriptedRunner(), sleep=no_sleep)  # type: ignore[arg-type]
+
+    resumed = await executor.execute(make_plan(task("t1")), completed={"t1": "done"})
+    fresh = await executor.execute(make_plan(task("t1")))
+
+    assert resumed.total_tokens == 0
+    assert fresh.total_tokens > 0
+
+
+async def test_an_unknown_resume_ref_redoes_the_work_rather_than_crashing() -> None:
+    runner = ScriptedRunner()
+    executor = Executor(runner, sleep=no_sleep)  # type: ignore[arg-type]
+
+    report = await executor.execute(make_plan(task("t1")), completed={"t99": "stale"})
+
+    assert by_ref(report) == {"t1": TaskState.SUCCEEDED}
+    assert any(g.startswith("do t1") for g in runner.goals)

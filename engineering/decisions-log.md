@@ -305,3 +305,55 @@ declared, every setting read, every instrument written to, every state reachable
 documented.
 *Why:* a test that names the bug you just fixed protects against a bug that has already been
 fixed.
+
+---
+
+## 2026-09-13 — Session 11 (V1.1, reliability)
+
+**ADR-010 — the stored task rows *are* the plan.** Full record in
+`docs/03-architecture-decisions.md`. The decision hinges on the planner being an LLM: re-planning
+on resume returns a different DAG, so the record of what succeeded would refer to nothing.
+
+**The executor gets a `TaskCheckpoint` protocol, not a database.**
+*Why:* it already depended on `TaskRunner` for the agent; this is the same shape. With no database
+configured both the checkpoint and the plan store are `None` and behaviour is identical to V0.4,
+which is what keeps "every milestone is runnable without infrastructure" true.
+*Reconsider if:* never while persistence is optional.
+
+**A failing checkpoint is swallowed.**
+*Why:* losing resumability for one task is a smaller harm than failing a run whose work is already
+done and correct. A checkpoint is an optimisation for a *future* attempt, not part of the current
+attempt's correctness. Same reasoning as episodic recording.
+*Consequence:* `record_success` must upsert rather than insert, so it stays the backstop that
+reconciles state a failed checkpoint left stale.
+
+**A resumed task carries no `llm_calls`.**
+*Why:* its tokens were spent and counted on the earlier attempt. Counting them again would inflate
+every total derived from the run, and token totals are the cost signal on a 20/day quota.
+
+**`DEAD_LETTER` is a status, not a table.**
+*Why:* a dead-lettered run's rows are identical to any other run's — a second table would
+duplicate every column to add nothing. `runs.status` is TEXT, so it needs no migration, and the
+claim query selects only `QUEUED`, so it is automatically not claimable.
+*Consequence:* **an observable behaviour change.** A caller polling for `FAILED` no longer sees
+give-ups. Two V0.8 tests asserted the old behaviour and were updated deliberately.
+*Reconsider if:* dead-lettered runs need fields live runs do not have — a triage state, an owner.
+
+**Trace context is captured at enqueue, not at run creation.**
+*Why:* enqueue is where the work crosses a process boundary, and the last moment the submitting
+request and the run share a trace.
+*Tradeoff:* a run enqueued with tracing off has `NULL` and the worker opens a root span. No
+backfill, because those runs genuinely have no parent and inventing one would be worse.
+
+### Smaller decisions
+
+**`/v1/runs/dead-letter` is declared before `/v1/runs/{run_id}`, and a test pins it.**
+*Context:* FastAPI matches routes in declaration order, so the parameterised route first makes
+`dead-letter` bind as a `run_id` and fail the UUID check — a 422 on a path that exists.
+*Why a test rather than a comment:* the ordering is load-bearing and invisible, and a comment
+asking the next person to be careful is not a control.
+
+**`give_up` builds its error JSON with `json.dumps`.**
+*Context:* it was an f-string interpolating an exception message, so a quote or backslash in the
+reason produced malformed JSON that Postgres rejected — turning a give-up into a crash, in the
+code path that exists to handle crashes. Found by reading the function, not by a failure.

@@ -333,9 +333,64 @@ good golden set · which metrics were deliberately *not* optimised.
 
 ---
 
-## Beyond V1.0
+---
 
-Only with a real driver, and only with an ADR: MCP tool transport · human-approval workflows ·
-multi-user auth and data isolation · a web UI · Temporal for durable workflows · Kubernetes.
+## V1.1 — Reliability
+
+**Objective** Make at-least-once delivery honest rather than safe-by-luck.
+**User capability** A reclaimed run resumes instead of redoing completed work; a run the queue
+gave up on is collected for review rather than lost among ordinary failures; a queued run is one
+trace end to end.
+**Architecture** Adds a `TaskCheckpoint` and a `PlanStore` — two protocols the orchestration layer
+defines and the database layer implements, so the executor still has no database access.
+**Technologies** None new. PostgreSQL and the OpenTelemetry already present.
+
+**Learn** Why exactly-once is unavailable and what narrowing the window buys · checkpointing and
+resumable work · dead-letter queues and what they are *for* · W3C trace context propagation
+across a process boundary.
+
+**Implementation** Persist the plan when it is validated and checkpoint each task at its terminal
+transition (ADR-010) · on reclaim, the stored rows **are** the plan — no second planning call,
+because the planner is an LLM and would produce a different DAG · `DEAD_LETTER` as a status
+distinct from `FAILED` · `GET /v1/runs/dead-letter` · `runs.trace_parent` captured at enqueue and
+continued by the worker.
+
+**Tests** A run with one task done and one failed is reclaimed: the done task is not re-run, the
+failed one receives the stored answer as context, and the planner is never asked twice · a
+dead-lettered run is not claimable · the dead-letter route is declared before `/v1/runs/{run_id}`
+(FastAPI matches in declaration order) · a worker span is a child of the enqueuing span · a
+failing checkpoint does not fail the run.
+
+**Demo** Submit a goal asynchronously, kill the worker after the first task, start another: the
+trace shows one continuous waterfall across both processes, and only the unfinished task runs.
+
+**Definition of Done** As before, plus ADR-010, `docs/interview/reliability.md`, and
+`12-event-system.md` / `17-failure-recovery.md` updated to say what is now closed.
+
+**Failure modes handled** Worker death mid-run · a checkpoint failing · a stored plan ref that no
+longer matches · a run enqueued before tracing existed · a poison run starving the queue.
+
+**Resume value** "Resumable task execution across worker crashes, with a dead-letter path for
+poison jobs and distributed trace context propagated across process boundaries."
+**Interview value** Why re-planning on resume would be wrong · what resumption buys that an
+idempotency key does not · why the checkpoint is a protocol rather than a database call · why
+`DEAD_LETTER` is not `FAILED`.
+**Future extension** Task-level idempotency keys; re-planning on failure.
+
+> **STOPPING POINT** — Crash recovery stops resting on "every tool happens to be read-only". The
+> window for duplicate work is one task rather than a whole run, and the residual gap is stated
+> rather than papered over.
+
+---
+
+## Beyond V1.1
+
+Chosen 2026-09-13, each still needing its ADR before any code: **V1.2** evaluation credibility
+(adversarial cases, stored baselines, enlarged golden sets) · **V1.3** agent-to-agent delegation
+· **V1.4** authentication and multi-user isolation.
+
+Unscheduled, and only with a real driver: MCP tool transport · human-approval workflows · a web
+UI · Temporal for durable workflows · Kubernetes · hybrid search and reranking · a per-run cost
+budget · re-planning on failure.
 
 None of these are promised, and none may appear on a resume until built.

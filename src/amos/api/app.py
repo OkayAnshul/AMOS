@@ -44,6 +44,7 @@ from amos.orchestration.orchestrator import Orchestrator
 from amos.rag.embeddings import GeminiEmbeddings
 from amos.telemetry.metrics import configure_metrics
 from amos.telemetry.tracing import configure_tracing
+from amos.worker.queue import DeadLetteredRun
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +245,27 @@ def create_app(
             # not have to construct the polling URL itself.
             response.headers["location"] = f"/v1/runs/{run_id}"
             return QueuedRun(run_id=str(run_id), status="QUEUED")
+
+    # DECLARED BEFORE /v1/runs/{run_id}, and it has to be. FastAPI matches routes
+    # in declaration order, so with the parameterised route first, "dead-letter"
+    # binds as a run_id and the request dies on the UUID check — a 422 on a path
+    # that exists. The ordering is load-bearing; the test below pins it.
+    @app.get("/v1/runs/dead-letter", response_model=list[DeadLetteredRun])
+    async def list_dead_lettered(limit: int = 50) -> list[DeadLetteredRun]:
+        """Runs the queue gave up on, newest first.
+
+        These are not ordinary failures. A FAILED run executed and produced a
+        verdict; these never got one — the worker died on them
+        `AMOS_WORKER_MAX_ATTEMPTS` times and the queue stopped retrying so one
+        bad run could not starve every good one.
+        """
+        service: RunService = app.state.run_service
+        if not service.persistence_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="Persistence is not configured; set AMOS_DATABASE_URL.",
+            )
+        return await service.list_dead_letter(min(max(limit, 1), 200))
 
     @app.get("/v1/runs/{run_id}", response_model=RunTrace)
     async def get_run_trace(run_id: str) -> RunTrace:
