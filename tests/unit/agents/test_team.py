@@ -59,6 +59,23 @@ async def test_the_specialist_only_receives_its_own_tools(tools: ToolRegistry) -
     await team.run("calculate")
 
     # The second call is the agent's; its declared tools must be the analyst's.
+    # Since V1.3 `delegate` is offered alongside them (ADR-012) — it is the one
+    # tool every routable agent gets, because it is how an agent reaches a
+    # capability it deliberately does not have. What must stay true is that no
+    # *other* agent's tools leak in.
+    declared = {spec.name for spec in provider.calls[1].tools}
+    assert declared == {"calculator", "delegate"}
+
+
+async def test_delegation_does_not_leak_another_agents_tools(tools: ToolRegistry) -> None:
+    """Delegation moves work, not authority.
+
+    With delegation off, the analyst's declared tools are exactly its own — which
+    is the invariant the assertion above is really protecting.
+    """
+    provider = FakeProvider([route("analyst"), valid_response_json(), review("accept")])
+    await AgentTeam(provider, tools, delegation_enabled=False).run("calculate")
+
     declared = {spec.name for spec in provider.calls[1].tools}
     assert declared == {"calculator"}
 
@@ -70,7 +87,7 @@ async def test_researcher_is_offered_research_tools_not_the_calculator(
     await AgentTeam(provider, tools).run("find something")
 
     declared = {spec.name for spec in provider.calls[1].tools}
-    assert "calculator" not in declared
+    assert "calculator" not in declared, "delegation must not hand it the analyst's tool"
     assert {"http_get", "read_file"} <= declared
 
 

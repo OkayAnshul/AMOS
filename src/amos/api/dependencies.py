@@ -120,6 +120,9 @@ def build_agent(
             temperature=settings.llm_temperature,
             max_revisions=settings.max_revisions,
             critic_enabled=settings.critic_enabled,
+            delegation_enabled=settings.delegation_enabled,
+            max_delegation_depth=settings.max_delegation_depth,
+            delegation_budget=settings.delegation_budget,
         )
     else:
         runner = build_tool_agent(settings, provider, tools)

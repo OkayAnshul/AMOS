@@ -98,6 +98,27 @@ class Settings(BaseSettings):
         default=1, ge=0, le=3, description="Bound on the critic/producer argument."
     )
 
+    delegation_enabled: bool = Field(
+        default=True,
+        description=(
+            "V1.3 agent-to-agent delegation. Each hop costs at least one LLM "
+            "call, so disable it on a tight quota."
+        ),
+    )
+    max_delegation_depth: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description=(
+            "How many hops deep delegation may go. 1 means a delegate cannot "
+            "delegate on. Enforced structurally: past the cap the tool is absent "
+            "from the agent's registry (ADR-012)."
+        ),
+    )
+    delegation_budget: int = Field(
+        default=3, ge=1, le=20, description="Total delegations allowed per run."
+    )
+
     memory_enabled: bool = Field(
         default=True,
         description="V0.6 semantic and episodic memory tools. Needs a database.",
