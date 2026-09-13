@@ -16,12 +16,20 @@ Markdown → heading-aware chunking → content hash → embed (1536d, re-normal
 
 Corpus: AMOS's own `docs/` — **28 documents, 300 chunks**.
 
-**The corpus is a snapshot, and `make ingest` no longer reproduces it.** These numbers were measured
-when `docs/` held 26 markdown files. It now holds 48 — `docs/interview/` and `docs/build-along/`
-were added afterwards, and ingestion recurses — so a fresh run would index **48 documents,
-~906 chunks**. The indexed corpus has deliberately *not* been rebuilt: every retrieval number
-below was measured against these 300 chunks, and re-ingesting would invalidate them all while
-spending roughly ten minutes of embedding quota. Re-measure and re-record together, or not at all.
+**The corpus is a snapshot, and `make ingest` no longer reproduces it.** What is indexed is the
+24 numbered documents plus the four interview documents that existed at V0.5 — `agents`,
+`foundation`, `orchestration`, `persistence`. `docs/` now holds **48** markdown files, because six
+more interview documents and twelve build-along documents were added afterwards and ingestion
+recurses, so a fresh run would index **48 documents, ~906 chunks**.
+
+Two things are stale, not one. The *count* is stale, and so is the **content**: several indexed
+documents have been substantially rewritten since (`05-data-model.md` and `06-api-specification.md`
+in the 2026-09-13 audit, and `23-glossary.md` was a nine-line stub when it was embedded).
+
+The corpus has deliberately **not** been rebuilt. Every retrieval number below was measured against
+these 300 chunks, and re-ingesting would invalidate all of them while spending roughly ten minutes
+of embedding quota. Re-measure and re-record together, or not at all — and when you do, the
+baseline in `engineering/eval-baseline.json` becomes incomparable too, which it will say.
 Golden set: **12 questions**, phrased as a user would ask, not copied from the target passages.
 
 | k | recall@k (any valid source) | strict (primary source only) | MRR |

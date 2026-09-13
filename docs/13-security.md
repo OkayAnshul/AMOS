@@ -36,9 +36,15 @@ can override any instruction.
    `read_file` call that the sandbox check rejects on its own terms.
 4. `WRITE` and `DESTRUCTIVE` tools cannot be registered at all.
 
-Tested in `test_prompt_injection_in_tool_output_does_not_change_permissions`. The test asserts
-the interesting thing: **even assuming the model is fully compromised** and emits the attacker's
+Tested in `test_prompt_injection_in_tool_output_does_not_change_permissions`, and since V1.2 in
+`tests/unit/rag/test_adversarial_retrieval.py` for the *retrieval* path — a poisoned corpus
+passage rather than a poisoned tool return. Every one of those tests asserts the interesting
+thing: **even assuming the model is fully compromised** and emitting exactly the attacker's
 desired call, the system refuses it.
+
+That is also why they are unit tests rather than evaluation cases (ADR-011). A real-model test
+that passes because the model shrugged off the injection tells you about that model on that day;
+a fake that complies tells you about the system.
 
 The residual risk is honest: a payload can still make the model produce a *wrong answer* using
 permitted tools. AMOS constrains what can be *done*, not what can be *said*.

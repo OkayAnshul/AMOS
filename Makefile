@@ -1,5 +1,5 @@
 # Common commands. `make help` lists them.
-.PHONY: help test lint types check fmt up down migrate ingest eval routing retrieval memory-trials run worker
+.PHONY: help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -37,8 +37,11 @@ worker:  ## Start a worker
 	.venv/bin/python -m amos.worker
 
 # --- measurements. These cost real API calls. Run deliberately. ---
-eval:  ## End-to-end evaluation suite
+eval:  ## End-to-end evaluation suite (compares against engineering/eval-baseline.json)
 	.venv/bin/python -m amos.evaluation.cli
+
+eval-baseline:  ## Run the suite AND overwrite the stored baseline. Deliberate act.
+	.venv/bin/python -m amos.evaluation.cli --update-baseline
 
 retrieval:  ## Retrieval recall@k and MRR
 	.venv/bin/python -m amos.rag.cli evaluate 5

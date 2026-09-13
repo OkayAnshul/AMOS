@@ -496,3 +496,81 @@ succeeding. The same reasoning as episodic recording in `api/persistence.py`.
 Plans grow large enough that per-transition writes matter, or re-planning on failure is built —
 at which point "the stored rows are the plan" needs an explicit escape hatch rather than being
 the only path.
+
+---
+
+## ADR-011 — Adversarial cases are tests; the eval suite gets a stored baseline
+
+**Date** 2026-09-13 · **Status** Accepted (V1.2)
+
+### Context
+`docs/22-resume-evidence.md` has said since V1.0 what the evaluation suite does *not*
+demonstrate: six goals, twelve retrieval questions and ten routing cases, **all self-authored**,
+with no adversarial cases and no human calibration of the judge. `make eval` prints a scorecard
+and discards it, so "did that change make things worse?" has never been answerable.
+
+### Problem
+Two problems that look like one.
+
+1. **Nothing adversarial is tested.** The corpus is AMOS's own documentation, which is friendly
+   by construction. Nothing checks what happens when retrieved text tries to instruct the model.
+2. **No score is retained.** Each run is a number on a terminal, so regressions are invisible
+   unless someone remembers the previous figure.
+
+And a constraint that shapes both: **`make eval` costs real quota** — 20 requests/day on
+`gemini-3.5-flash`. A suite big enough to characterise quality would be unrunnable, and a suite
+that cannot be run is not a gate.
+
+### Options
+1. **Add adversarial cases to the golden goal set.** Uniform, and every one costs quota forever.
+2. **Adversarial cases as deterministic tests**, with the eval suite unchanged.
+3. **Split by what is being asserted**: boundary behaviour as tests, judgement behaviour as
+   eval cases.
+4. Do nothing and keep stating the gap.
+
+### Decision
+**Option 3**, plus a committed JSON baseline that `make eval` compares against.
+
+The split follows the existing security principle rather than inventing a new one:
+
+> Security is enforced in code that never reads model output.
+
+If the assertion is **"the boundary holds even assuming the model is fully compromised"**, then
+the model's cooperation is irrelevant and a `FakeProvider` that *complies with the attack* is a
+stronger test than a real model that might happen to resist. Those are unit tests: free,
+deterministic, and they run in CI on every push.
+
+Only assertions that genuinely need a model's judgement — does it refuse when the corpus is
+misleading rather than confidently repeating it — belong in the quota-costing suite.
+
+### Why
+Option 1 puts deterministic assertions behind a rate limit, which makes CI unable to run the most
+important security checks in the project. It also scores them with an LLM judge, when the
+property being checked is decidable by code.
+
+Option 2 leaves the quota-costing suite exactly as unrepresentative as before.
+
+The baseline is a **committed JSON file**, not a table. One machine, and the point is that a
+score change shows up in a diff and in git history next to the commit that caused it. A table
+would put the history somewhere `git log` cannot see it.
+
+### Tradeoffs
+- **The split has to be judged case by case**, and the boundary is not always obvious. The test
+  is: *could code decide this?* If yes, it is a test.
+- A committed baseline is a file people will be tempted to update to make a failure go away.
+  Mitigated only by review, and by the file recording *when and with what* each number was
+  measured.
+- Baselines are **per-corpus and per-model**. Changing either invalidates them, and the file has
+  to say so or the comparison silently becomes meaningless.
+
+### Consequences
+- CI gains real adversarial coverage at zero quota cost, and it runs on every push rather than
+  when someone remembers.
+- `make eval` gains a regression gate but stays a deliberate, human-run command.
+- **This does not fix the independence problem.** Cases written by the person who built the
+  system are still not independently authored, and enlarging the set does not change that.
+  `docs/16-evaluation.md` keeps saying so.
+
+### Reconsider if
+A second person starts authoring cases — at which point the golden set can grow past what one
+quota can run, and the interesting question becomes sampling rather than coverage.

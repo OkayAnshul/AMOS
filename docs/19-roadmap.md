@@ -383,10 +383,48 @@ idempotency key does not · why the checkpoint is a protocol rather than a datab
 
 ---
 
-## Beyond V1.1
+## V1.2 — Evaluation credibility
 
-Chosen 2026-09-13, each still needing its ADR before any code: **V1.2** evaluation credibility
-(adversarial cases, stored baselines, enlarged golden sets) · **V1.3** agent-to-agent delegation
+**Objective** Attack the suite's own stated weakness: self-authored cases, nothing adversarial,
+and a score that is printed and discarded.
+**User capability** A regression in answer quality fails a command instead of going unnoticed;
+hostile content in the corpus is proven not to widen what the system can do.
+**Architecture** No new components. A committed baseline file and a new test module.
+**Technologies** None new.
+
+**Learn** What a golden set is *for* versus what it cannot tell you · why a judged metric must not
+gate · adversarial testing against a compromised-model assumption · regression gating.
+
+**Implementation** Adversarial cases as **tests, not eval cases** (ADR-011) — a poisoned corpus
+passage with a model that fully complies, asserting the registry, the permission refusal and the
+per-agent allowlist all hold · `engineering/eval-baseline.json` compared by `make eval` and
+written only by `make eval-baseline` · golden sets enlarged: goals 6→9, retrieval 12→16, routing
+10→15, with the new cases chosen to be *hard* rather than more of the same.
+
+**Tests** A regression fails the gate even when every case passes · a different model or corpus
+reports "not comparable" rather than a false regression · the judged score never gates ·
+comparison has no side effects · an injected tool name is `NOT_FOUND` with the model complying.
+
+**Demo** `make eval` prints the scorecard and the delta against the stored baseline; edit a rate
+in the baseline file and watch it fail.
+
+**Definition of Done** As before, plus ADR-011 and `docs/16-evaluation.md` extended.
+
+**Resume value** "Adversarial evaluation of an LLM agent under a compromised-model assumption,
+and a committed-baseline regression gate separating deterministic from model-judged evidence."
+**Interview value** Why adversarial cases are tests rather than eval cases · why a judged metric
+must never gate · what a bigger golden set does and does not fix · why the baseline is a file.
+**Future extension** Per-case history; human calibration of the judge; independently authored sets.
+
+> **STOPPING POINT** — Quality claims survive hostile input and carry a stored history. The
+> independence problem is untouched and still stated plainly, because enlarging a set authored by
+> one person does not fix it.
+
+---
+
+## Beyond V1.2
+
+Chosen 2026-09-13, each still needing its ADR before any code: **V1.3** agent-to-agent delegation
 · **V1.4** authentication and multi-user isolation.
 
 Unscheduled, and only with a real driver: MCP tool transport · human-approval workflows · a web
