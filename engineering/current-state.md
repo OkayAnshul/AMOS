@@ -117,7 +117,7 @@ were false.
 | Container | podman 5.8.2 + podman-compose (rootless) |
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
 | Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` |
-| Corpus | 28 documents, 300 chunks **indexed**; a fresh `make ingest` would now index 48 / ~906 |
+| Corpus | 28 documents, 300 chunks **indexed** (the 24 numbered docs + 4 interview docs as they stood at V0.5). A fresh `make ingest` would index 48 / ~906, and several indexed documents have been rewritten since |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
 

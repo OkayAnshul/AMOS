@@ -181,4 +181,41 @@ ROUTING_CASES: list[RoutingCase] = [
             "label followed the fix, not the other way round."
         ),
     ),
+    # --- added at V1.2 -----------------------------------------------------
+    #
+    # 10/10 on ten cases is a weak number: it is consistent with a router that is
+    # excellent and with one that has never met a hard case. These are the hard
+    # cases — each written so the *surface* topic points one way and the actual
+    # requirement points the other, which is where a keyword-matching router
+    # would fail and a reasoning one should not.
+    RoutingCase(
+        "Sum the retry attempt counts described in the failure-recovery document",
+        "analyst",
+        note="Reads like retrieval, but the deliverable is arithmetic.",
+    ),
+    RoutingCase(
+        "How many milestones does the roadmap list?",
+        "researcher",
+        note="Reads like arithmetic — 'how many' — but it is a lookup.",
+    ),
+    RoutingCase(
+        "Work out 15 percent of the daily quota documented in the baseline",
+        "analyst",
+        note=(
+            "Genuinely needs both, and the *final* deliverable decides. The "
+            "researcher cannot finish it; the analyst can be handed the number. "
+            "An ambiguous case on purpose — if the router splits on these, that "
+            "is worth knowing rather than hiding behind a clean 10/10."
+        ),
+    ),
+    RoutingCase(
+        "Remember that I prefer concise answers",
+        "researcher",
+        note="A write, not a lookup — but remember_fact lives in the researcher's allowlist.",
+    ),
+    RoutingCase(
+        "Add up 3, 4 and 5 and tell me whether the documentation mentions that total",
+        "analyst",
+        note="Arithmetic first, lookup second. Routes on what must happen first.",
+    ),
 ]

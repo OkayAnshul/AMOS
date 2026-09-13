@@ -197,4 +197,47 @@ AMOS_GOLDEN_SET: list[GoldenQuestion] = [
         "15-testing.md",
         "21-technology-baseline.md",
     ),
+    # --- added at V1.2 -----------------------------------------------------
+    #
+    # recall@5 of 100% on twelve questions is consistent with excellent retrieval
+    # and with twelve easy questions. These are deliberately harder in three
+    # specific ways: vocabulary that does not appear in the target passage,
+    # a topic the corpus discusses only in order to *reject* it, and a question
+    # whose obvious keyword appears in several documents that do not answer it.
+    #
+    # Every source named here is one that is actually **indexed** — the corpus is
+    # a V0.5 snapshot, so a question about docs added later would score as a
+    # retrieval failure when it is really a corpus gap.
+    GoldenQuestion.of(
+        "What keeps two workers from picking up the same piece of work?",
+        "12-event-system.md",
+        note=(
+            "Describes SKIP LOCKED without using the words 'lock', 'skip' or "
+            "'queue'. Tests whether retrieval is semantic or keyword-shaped."
+        ),
+    ),
+    GoldenQuestion.of(
+        "Does the system use a message broker?",
+        "12-event-system.md",
+        "03-architecture-decisions.md",
+        note=(
+            "The honest answer is no, and the corpus says so at length. A question "
+            "whose answer is a rejection is easy to retrieve *badly*: the "
+            "vocabulary of the rejected option is all over the document."
+        ),
+    ),
+    GoldenQuestion.of(
+        "How large are the pieces a document is split into before embedding?",
+        "10-rag-architecture.md",
+        note="'Chunk' deliberately avoided; the word appears in many documents.",
+    ),
+    GoldenQuestion.of(
+        "What stops the model's own output from being trusted as a command?",
+        "13-security.md",
+        "interview/agents.md",
+        note=(
+            "The governing principle of the security model, phrased as a user "
+            "would ask it rather than as the document states it."
+        ),
+    ),
 ]

@@ -503,3 +503,25 @@ compound goals and the full stack reproduced it instantly, and the `tools=[...]`
    frozenset.
 **Test added:** `test_every_registered_tool_is_reachable_by_at_least_one_agent`,
 `test_each_agents_registry_contains_exactly_its_allowlist`.
+
+---
+
+## 2026-09-13 — Tagged v1.1 with `__version__` still 1.0.0
+**Milestone:** V1.1 → V1.2
+**Symptom:** `test_the_version_matches_the_latest_git_tag` failed on the first full-suite run
+after tagging: `__version__ is 1.0.0 but the latest tag is v1.1`.
+**Expected:** the tag and the version agree.
+**Root cause:** I merged, ran the suite, tagged and pushed — in that order. The version bump
+belongs *before* the tag, and nothing in the sequence I followed prompted for it. The tag
+therefore points at a commit whose `/health` reports 1.0.0.
+**Fix:** bumped to `1.1.0`; the `v1.1` tag is moved onto the bump.
+**How it was found:** the regression test written for the *previous* instance of this bug
+(2026-09-09, "`/health` reported version 0.7.0 from a v1.0 build"). It fired on the very next
+release, which is the best possible evidence that it was the right test.
+**Lesson:** the earlier fix made the version live in **one place** and the build derive from it.
+That removed the *drift between files* and did nothing about drift between the **version and the
+tag** — a different failure with the same symptom. Structural fixes are scoped to the mechanism
+they replace; the test is what covers the rest.
+**Test added:** none needed — the existing one caught it. Worth noting that a `make release`
+target doing bump-commit-tag-push in order would remove the opportunity entirely, and is not
+built.
