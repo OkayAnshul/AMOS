@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from amos.agents.schemas import AgentResult
+from amos.agents.schemas import AgentResponse, AgentResult, Confidence
 from amos.errors import AmosError
 from amos.llm.base import LLMCallRecord
 from amos.observability import log_event
@@ -42,6 +42,21 @@ class TaskRunner(Protocol):
     """What the executor needs from an agent. Deliberately narrow."""
 
     async def run(self, goal: str) -> AgentResult: ...
+
+
+class TaskCheckpoint(Protocol):
+    """Where a task's outcome is durably recorded, if anywhere.
+
+    The executor has no database access and does not acquire any — it depends on
+    this the same way it depends on `TaskRunner`, and the persistence layer
+    supplies the implementation (ADR-010). Tests pass a fake, or nothing.
+
+    Called on every terminal transition. Implementations **must not raise**: a
+    checkpoint that fails costs resumability for one task, and must never fail a
+    run that is otherwise succeeding.
+    """
+
+    async def record(self, task: TaskExecution) -> None: ...
 
 
 @dataclass
@@ -108,15 +123,26 @@ class Executor:
         *,
         max_attempts: int = 3,
         task_timeout_seconds: float = DEFAULT_TASK_TIMEOUT_SECONDS,
+        checkpoint: TaskCheckpoint | None = None,
         sleep: object | None = None,
     ) -> None:
         self._runner = runner
         self._max_attempts = max_attempts
         self._task_timeout = task_timeout_seconds
+        self._checkpoint = checkpoint
         # Injectable so retry tests do not actually wait for backoff.
         self._sleep = sleep or asyncio.sleep
 
-    async def execute(self, plan: Plan) -> ExecutionReport:
+    async def execute(
+        self, plan: Plan, *, completed: dict[str, str] | None = None
+    ) -> ExecutionReport:
+        """Run a plan to completion.
+
+        `completed` maps a task's `plan_ref` to the answer a *previous* attempt
+        at this run already produced (ADR-010). Those tasks are marked SUCCEEDED
+        without being run, and their answers still reach their dependents — which
+        is the whole point of resuming rather than re-executing.
+        """
         tasks = {
             task.id: TaskExecution(
                 plan_ref=task.id,
@@ -128,10 +154,28 @@ class Executor:
             for index, task in enumerate(plan.topological_order())
         }
 
+        for plan_ref, answer in (completed or {}).items():
+            task = tasks.get(plan_ref)
+            if task is None:
+                # The stored row names a task this plan does not contain. Under
+                # ADR-010 the stored rows *are* the plan, so this should be
+                # impossible; if it happens, redoing the work is the safe answer.
+                log_event(logger, "task.resume_ref_unknown", task=plan_ref)
+                continue
+            # Straight to SUCCEEDED via the same transition table as everything
+            # else — PENDING -> READY -> RUNNING -> SUCCEEDED. Resuming does not
+            # get its own path into a state.
+            task.transition(TaskState.READY)
+            task.transition(TaskState.RUNNING)
+            task.result = _resumed_result(answer)
+            task.transition(TaskState.SUCCEEDED)
+            log_event(logger, "task.resumed", task=plan_ref)
+
         # The loop terminates because every iteration either moves at least one
         # task towards a terminal state, or finds nothing runnable and stops.
         while True:
-            self._skip_unreachable(tasks)
+            for task in self._skip_unreachable(tasks):
+                await self._save(task)
             self._promote_ready(tasks)
 
             runnable = [t for t in tasks.values() if t.state is TaskState.READY]
@@ -145,6 +189,26 @@ class Executor:
 
         return ExecutionReport(outcome=self._classify(tasks), tasks=list(tasks.values()))
 
+    async def _save(self, task: TaskExecution) -> None:
+        """Checkpoint a task, never letting the checkpoint fail the run.
+
+        Same reasoning as episodic recording in `api/persistence.py`: losing the
+        ability to resume one task is a smaller harm than failing a run whose
+        work is already done and correct.
+        """
+        if self._checkpoint is None:
+            return
+        try:
+            await self._checkpoint.record(task)
+        except Exception as exc:  # noqa: BLE001
+            log_event(
+                logger,
+                "task.checkpoint_failed",
+                task=task.plan_ref,
+                state=task.state.value,
+                error=type(exc).__name__,
+            )
+
     def _promote_ready(self, tasks: dict[str, TaskExecution]) -> None:
         """PENDING → READY once every dependency has succeeded."""
         for task in tasks.values():
@@ -153,7 +217,7 @@ class Executor:
             if all(tasks[dep].state is TaskState.SUCCEEDED for dep in task.depends_on):
                 task.transition(TaskState.READY)
 
-    def _skip_unreachable(self, tasks: dict[str, TaskExecution]) -> None:
+    def _skip_unreachable(self, tasks: dict[str, TaskExecution]) -> list[TaskExecution]:
         """Skip tasks whose dependencies can never succeed.
 
         Repeats until stable, because skipping propagates: if t2 depends on a
@@ -161,6 +225,7 @@ class Executor:
         in one pass would leave t3 waiting forever on a dependency that will
         never move.
         """
+        skipped: list[TaskExecution] = []
         changed = True
         while changed:
             changed = False
@@ -174,7 +239,9 @@ class Executor:
                     task.error = f"Skipped: dependency '{blocker}' did not succeed"
                     task.transition(TaskState.SKIPPED)
                     log_event(logger, "task.skipped", task=task.plan_ref, blocked_by=blocker)
+                    skipped.append(task)
                     changed = True
+        return skipped
 
     async def _run_task(self, task: TaskExecution, tasks: dict[str, TaskExecution]) -> None:
         task.transition(TaskState.RUNNING)
@@ -220,6 +287,7 @@ class Executor:
         task.tool_outcomes.extend(result.tool_outcomes)
         task.transition(TaskState.SUCCEEDED)
         log_event(logger, "task.succeeded", task=task.plan_ref, attempt=task.attempt_count)
+        await self._save(task)
 
     async def _handle_failure(self, task: TaskExecution) -> None:
         """Retry with backoff, or give up permanently.
@@ -251,6 +319,7 @@ class Executor:
                 task=task.plan_ref,
                 attempts=task.attempt_count,
             )
+            await self._save(task)
 
     @staticmethod
     def _build_goal(task: TaskExecution, tasks: dict[str, TaskExecution]) -> str:
@@ -294,6 +363,28 @@ class Executor:
         if succeeded == 0:
             return RunOutcome.FAILED
         return RunOutcome.PARTIALLY_COMPLETED
+
+
+def _resumed_result(answer: str) -> AgentResult:
+    """An AgentResult standing in for work a previous attempt already did.
+
+    It carries **no `llm_calls`**, deliberately. The tokens were spent on the
+    earlier attempt and counted against it; counting them again would make a
+    resumed run look more expensive than it was and inflate every token total
+    derived from it.
+
+    `confidence` is MEDIUM rather than whatever the original attempt reported:
+    the stored row keeps the answer, not the confidence, and inventing HIGH here
+    would be asserting something that was never recorded.
+    """
+    return AgentResult(
+        request_id="",
+        response=AgentResponse(
+            answer=answer,
+            reasoning="Completed on an earlier attempt at this run; resumed from the stored task.",
+            confidence=Confidence.MEDIUM,
+        ),
+    )
 
 
 def plan_task_count(plan: Plan) -> int:

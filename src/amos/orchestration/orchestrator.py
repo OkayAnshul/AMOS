@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Protocol
 
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence, TaskRecord
 from amos.llm.base import LLMCallRecord, LLMProvider, LLMRequest
@@ -28,6 +29,7 @@ from amos.orchestration.executor import (
     TaskExecution,
     TaskRunner,
 )
+from amos.orchestration.plan import Plan
 from amos.orchestration.planner import Planner
 from amos.orchestration.state import TaskState
 
@@ -40,6 +42,24 @@ Combine their results into one coherent answer to the original goal.
 - If some tasks failed, answer from what succeeded and record the gap in caveats.
 - Set confidence honestly: partial information means lower confidence.
 """
+
+
+class PlanStore(Protocol):
+    """Durable home for a run's plan and the progress made against it (ADR-010).
+
+    `load` returns the stored plan plus `{plan_ref: answer}` for tasks that have
+    already succeeded, or `None` when this run has never been planned. When it
+    returns a plan, **the planner is not called** — re-planning would produce a
+    different DAG, and "skip what already succeeded" would then mean nothing.
+
+    Like the memory tools, implementations read the current run id from the
+    context rather than being constructed per-run: the orchestrator is built once
+    at startup.
+    """
+
+    async def load(self) -> tuple[Plan, dict[str, str]] | None: ...
+
+    async def save(self, plan: Plan) -> None: ...
 
 
 class Orchestrator:
@@ -56,12 +76,14 @@ class Orchestrator:
         temperature: float = 0.2,
         planner: Planner | None = None,
         executor: Executor | None = None,
+        plan_store: PlanStore | None = None,
     ) -> None:
         self._provider = provider
         self._runner = runner
         self._timeout = timeout
         self._temperature = temperature
         self._planner = planner or Planner(provider, timeout=timeout)
+        self._plan_store = plan_store
         self._executor = executor or Executor(
             runner, max_attempts=max_attempts, task_timeout_seconds=task_timeout_seconds
         )
@@ -79,8 +101,8 @@ class Orchestrator:
         started = time.perf_counter()
         calls: list[LLMCallRecord] = []
 
-        plan = await self._planner.plan(goal, calls)
-        report = await self._executor.execute(plan)
+        plan, completed = await self._plan_for(goal, calls)
+        report = await self._executor.execute(plan, completed=completed)
         calls.extend(report.all_llm_calls)
 
         response = await self._synthesise(goal, report, calls)
@@ -106,6 +128,36 @@ class Orchestrator:
             total_tokens=sum(c.prompt_tokens + c.output_tokens for c in calls),
             latency_ms=total_ms,
         )
+
+    async def _plan_for(
+        self, goal: str, calls: list[LLMCallRecord]
+    ) -> tuple[Plan, dict[str, str]]:
+        """The stored plan if this run has one, otherwise a fresh one.
+
+        Resuming skips a planning call, which on a 20-request/day quota is a
+        fifth of the budget — but that is a side benefit. The reason is
+        correctness: the planner is an LLM, so a second call returns a different
+        DAG, and the stored record of what succeeded would no longer refer to
+        anything (ADR-010).
+        """
+        if self._plan_store is not None:
+            stored = await self._plan_store.load()
+            if stored is not None:
+                plan, completed = stored
+                log_event(
+                    logger,
+                    "orchestrator.resumed",
+                    tasks=len(plan.tasks),
+                    already_done=len(completed),
+                )
+                return plan, completed
+
+        plan = await self._planner.plan(goal, calls)
+        if self._plan_store is not None:
+            # Before execution: a crash between here and the first task must
+            # still leave a record of what was going to be attempted.
+            await self._plan_store.save(plan)
+        return plan, {}
 
     async def _synthesise(
         self, goal: str, report: ExecutionReport, calls: list[LLMCallRecord]

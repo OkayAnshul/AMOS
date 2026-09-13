@@ -91,7 +91,7 @@ class RunRepository:
         self._session.add(step)
         await self._session.flush()
 
-        self._add_task_rows(run, result)
+        await self._save_task_rows(run, result)
         self._add_trace_rows(run, step, result)
         await self._session.flush()
         return run
@@ -124,37 +124,60 @@ class RunRepository:
         if result is not None:
             run.total_tokens = result.total_tokens
             run.latency_ms = result.latency_ms
-            self._add_task_rows(run, result)
+            await self._save_task_rows(run, result)
             self._add_trace_rows(run, step, result)
         await self._session.flush()
         return run
 
-    def _add_task_rows(self, run: Run, result: AgentResult) -> None:
-        """Persist the task DAG.
+    async def _save_task_rows(self, run: Run, result: AgentResult) -> None:
+        """Persist the task DAG, updating rows that already exist.
 
         `depends_on` is stored as the planner's symbolic refs resolved to the
         UUIDs of the rows created here, so the stored graph is self-contained
         and does not depend on the plan text surviving.
+
+        **Why this updates rather than inserts.** Since V1.1 the plan is written
+        before execution and each task is checkpointed as it finishes (ADR-010),
+        so by the time a run completes its rows usually already exist — and
+        `UNIQUE (run_id, plan_ref)` would reject a second insert. Rows are
+        upserted rather than the write being skipped, so this stays the backstop
+        that reconciles final state when a checkpoint failed partway through.
         """
         if not result.tasks:
             return
 
-        ids = {record.plan_ref: uuid.uuid4() for record in result.tasks}
+        existing = {
+            row.plan_ref: row
+            for row in (
+                await self._session.execute(select(Task).where(Task.run_id == run.id))
+            )
+            .scalars()
+            .all()
+        }
+
+        ids = {
+            record.plan_ref: existing[record.plan_ref].id
+            if record.plan_ref in existing
+            else uuid.uuid4()
+            for record in result.tasks
+        }
+
         for record in result.tasks:
-            self._session.add(
-                Task(
+            row = existing.get(record.plan_ref)
+            if row is None:
+                row = Task(
                     id=ids[record.plan_ref],
                     run_id=run.id,
                     plan_ref=record.plan_ref,
                     description=record.description,
-                    state=record.state,
                     depends_on=[ids[ref] for ref in record.depends_on if ref in ids],
                     position=record.position,
-                    attempt_count=record.attempt_count,
-                    result={"answer": record.answer} if record.answer else None,
-                    error={"message": record.error} if record.error else None,
                 )
-            )
+                self._session.add(row)
+            row.state = record.state
+            row.attempt_count = record.attempt_count
+            row.result = {"answer": record.answer} if record.answer else None
+            row.error = {"message": record.error} if record.error else None
 
     def _add_trace_rows(self, run: Run, step: Step, result: AgentResult) -> None:
         """Turn the agent's in-memory records into rows.
