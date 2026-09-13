@@ -15,6 +15,13 @@ Markdown → heading-aware chunking → content hash → embed (1536d, re-normal
 ## Measured results
 
 Corpus: AMOS's own `docs/` — **28 documents, 300 chunks**.
+
+**The corpus is a snapshot, and `make ingest` no longer reproduces it.** These numbers were measured
+when `docs/` held 26 markdown files. It now holds 48 — `docs/interview/` and `docs/build-along/`
+were added afterwards, and ingestion recurses — so a fresh run would index **48 documents,
+~906 chunks**. The indexed corpus has deliberately *not* been rebuilt: every retrieval number
+below was measured against these 300 chunks, and re-ingesting would invalidate them all while
+spending roughly ten minutes of embedding quota. Re-measure and re-record together, or not at all.
 Golden set: **12 questions**, phrased as a user would ask, not copied from the target passages.
 
 | k | recall@k (any valid source) | strict (primary source only) | MRR |

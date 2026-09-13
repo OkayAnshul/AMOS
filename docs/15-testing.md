@@ -6,9 +6,10 @@
 
 > **No test in the default suite touches the network.**
 
-Requirement N-14. This is not a style preference. The Gemini free tier is **20 requests per
-day per model** (`docs/21-technology-baseline.md`), so a suite that called the real API could
-exhaust an entire day's budget in a single run — and would be slow, non-deterministic, and
+Requirement N-14. This is not a style preference. The Gemini free tier binds in more than one
+shape — 20 per day on `gemini-3.5-flash`, 15 per *minute* on the `-lite` default; the table in
+[`21-technology-baseline.md`](21-technology-baseline.md) is canonical — so a suite that called
+the real API could exhaust an entire day's budget in a single run — and would be slow, non-deterministic, and
 unrunnable in CI.
 
 `FakeProvider` scripts the model's responses instead, including the malformed ones and the
@@ -76,7 +77,16 @@ Definition of Done for exactly this reason.
 AMOS_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/live -s   # opt-in
 ```
 
+## Since resolved
+
+**CI shipped at V1.0** — `.github/workflows/ci.yml`. It runs the suite with a database and
+again without one, applies migrations forwards *and* backwards, and runs with **no API key
+present**, which enforces N-14 rather than documenting it. Evaluation tests shipped at V1.0 too,
+but deliberately do **not** run in CI: they cost real Gemini calls against a 20-per-day quota,
+so per-push runs would exhaust the day's budget on the first few commits.
+
 ## Not yet
 
-Coverage measurement, property-based testing, load testing, CI. CI arrives when there is
-something to protect against regression across machines; evaluation tests arrive at V1.0.
+Coverage measurement, property-based testing, load testing. No contract-test or API-snapshot
+suite either — `test_schema_drift.py` checks the *database* schema against the models, not the
+API schema against its consumers.

@@ -19,11 +19,12 @@ Test added:         the regression test name
 
 ---
 
-## No bugs yet
+## Phase 0 — a near-miss, before there was any code
 
-Phase 0 produced no code. The first entry will arrive during V0.1.
+*(This section read "No bugs yet" until 2026-09-13, sitting above twenty recorded bugs. It was
+true when written and became a small lie the moment the first entry landed beneath it.)*
 
-**Near-miss worth recording** — 2026-09-03: `gemini-embedding-001` outputs 3072 dimensions by
+**Near-miss** — 2026-09-03: `gemini-embedding-001` outputs 3072 dimensions by
 default, and pgvector's HNSW index supports at most 2000. Caught during Phase 0 by verifying
 against the pgvector README rather than assuming.
 

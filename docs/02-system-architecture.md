@@ -9,7 +9,11 @@ design. (ADR-004.)
 
 ## Target architecture
 
-The destination, reached at V1.0 — not the starting point.
+The destination — not the starting point.
+
+**Reached at V1.0 with one exception: there is no `auth`.** The API layer below shows it, and
+nothing implements it. That is scheduled for V1.4 and is the reason `docs/13-security.md` says
+AMOS is not safe to expose publicly. Everything else in this diagram exists.
 
 ```
                     Client
@@ -67,8 +71,8 @@ generality. That is the difference between designing for evolution and over-engi
 
 ## Layer responsibilities
 
-**API** — HTTP, request validation, auth, request id. No business logic. Translates domain
-errors into status codes.
+**API** — HTTP, request validation, request id, and *eventually* auth (V1.4 — not built). No
+business logic. Translates domain errors into status codes.
 
 **Orchestrator** — the deterministic core. Owns task state transitions, dependency resolution,
 retries, backoff, timeouts and idempotency. Contains **no LLM calls**. This is the boundary

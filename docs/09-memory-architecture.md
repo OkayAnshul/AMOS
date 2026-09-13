@@ -61,7 +61,7 @@ A new fact for an existing subject supersedes the old one. **Newest wins — a r
 judgement, and specifically not something the model decides.**
 
 Superseded rows are **kept**, which buys three things: a changed fact stays auditable, a bad write
-stays recoverable, and `memory_history()` can show every value a subject has held.
+stays recoverable, and `SemanticMemory.history()` can show every value a subject has held.
 
 ### The ordering bug worth knowing about
 

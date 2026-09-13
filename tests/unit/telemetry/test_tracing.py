@@ -159,3 +159,42 @@ def test_spans_are_safe_to_create_when_tracing_is_disabled() -> None:
     sites need no branching."""
     with span("test.noop", **{"amos.thing": 1}):
         pass
+
+
+def test_every_instrument_is_incremented_somewhere() -> None:
+    """An instrument nobody writes to reports zero, which reads as good news.
+
+    `amos.task.retries` was created at V0.9 and never incremented. A dashboard
+    built on it would have shown a flat zero retry rate — not "no data", which is
+    visibly wrong, but a plausible number that happens to be false.
+
+    The instrument names are read off `_Instruments.__init__` so adding one
+    without wiring it fails here rather than silently.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    metrics_path = root / "src" / "amos" / "telemetry" / "metrics.py"
+
+    tree = ast.parse(metrics_path.read_text())
+    klass = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "_Instruments"
+    )
+    names = [
+        node.targets[0].attr
+        for node in ast.walk(klass)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Attribute)
+        and isinstance(node.targets[0].value, ast.Name)
+        and node.targets[0].value.id == "self"
+    ]
+    assert names, "no instruments found — the parser is wrong, not the module"
+
+    callers = [path.read_text() for path in (root / "src").rglob("*.py") if path != metrics_path]
+    never_written = [
+        name for name in names if not any(f"instruments().{name}." in text for text in callers)
+    ]
+    assert not never_written, (
+        f"these instruments are created but never recorded to: {never_written}"
+    )

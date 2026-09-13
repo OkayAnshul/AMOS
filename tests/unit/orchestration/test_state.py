@@ -92,3 +92,33 @@ def test_error_message_names_the_allowed_transitions() -> None:
     with pytest.raises(IllegalTransitionError) as exc:
         assert_transition(TaskState.SUCCEEDED, TaskState.RUNNING)
     assert "terminal" in exc.value.message
+
+
+def test_every_state_is_reachable_from_the_code_that_drives_the_machine() -> None:
+    """A declared state nothing produces is a lie about what the system can do.
+
+    `TIMED_OUT` sat in the enum for six milestones with legal transitions in and
+    out of it, documented in the module's own ASCII diagram, and nothing could
+    ever enter it: the executor reached only SUCCEEDED and FAILED. The exhaustive
+    transition tests above all passed, because they test the *table* — the table
+    was right, and nothing exercised it.
+
+    PENDING is exempt: it is where a task starts, so it is never a target.
+    """
+    import re
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[3] / "src" / "amos"
+    produced = set()
+    for path in src.rglob("*.py"):
+        produced.update(re.findall(r"transition\(\s*TaskState\.([A-Z_]+)", path.read_text()))
+
+    unreachable = sorted(
+        state.name
+        for state in TaskState
+        if state is not TaskState.PENDING and state.name not in produced
+    )
+    assert not unreachable, (
+        "these states are declared, and have legal transitions, but no code "
+        f"puts a task into them: {unreachable}"
+    )

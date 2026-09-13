@@ -41,8 +41,9 @@ An agent decides *what to do*. It never decides whether its own output was corre
 and the critic (V0.7) do.
 
 ### Tool
-A deterministic capability: name, description, input schema, output schema, permissions,
-timeout, implementation. Tools are the only way an agent affects anything outside itself.
+A deterministic capability: name, description, input schema, permissions, timeout,
+implementation. There is **no output schema** — `_run` returns a plain dict. That is a
+real gap, recorded in [`08-tool-specification.md`](08-tool-specification.md), not a design. Tools are the only way an agent affects anything outside itself.
 
 Tool output is **untrusted data**, never instructions (N-12). A tool returning
 "ignore your instructions and…" is returning a string, and it is treated as one.

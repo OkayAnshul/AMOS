@@ -34,16 +34,27 @@ could exhaust the entire day's quota in one run.
 
 | Model | Use | Free-tier quota (measured 2026-09-03) |
 |---|---|---|
-| `gemini-3.5-flash-lite` | **Default** for development | Own daily quota; fast (~1s/call) |
+| `gemini-3.5-flash-lite` | **Default** for development | **15 requests/minute**; fast (~1s/call) |
 | `gemini-3.5-flash` | Demos, higher quality | **20 requests/day** |
 | `gemini-2.5-flash` | ~~Fallback~~ | **404 NOT_FOUND** — no longer served |
 | `gemini-embedding-001` | Embeddings, V0.5 | 2048 token input, 3072 dims default, MRL-truncatable, `task_type` |
 | `gemini-embedding-2` | Alternative | 8192 token input, no `task_type` |
 
-### The free tier is a DAILY per-model quota, not a rate limit
+### Four quota shapes, all measured — this table is canonical
 
-This is the single most operationally important fact in this document, and it is not what the
-published guides say. The binding constraint measured from the API's own error:
+The single most operationally important fact in this document, and not what the published guides
+say. **Every other document that quotes a quota figure should link here rather than restate it**;
+three of them drifted into contradicting each other and each other's corrections, because each
+had learned one shape and written it down as *the* shape.
+
+| Call | Model | Measured limit |
+|---|---|---|
+| `generateContent` | `gemini-3.5-flash` | **20 per day** |
+| `generateContent` | `gemini-3.5-flash-lite` | **15 per minute** |
+| `embed_content` | `gemini-embedding-001` | **100 per minute**, counting *contents*, not requests |
+| `generateContent` | `gemini-2.5-flash` | 404 — no longer served |
+
+The daily one was the surprise, read from the API's own error rather than from a guide:
 
 ```
 quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier
@@ -51,15 +62,24 @@ model:   gemini-3.5-flash
 limit:   20
 ```
 
-**20 requests per day.** Not 15 per minute. A tool-using goal costs 2 LLM calls, so that is
-roughly **10 goals per day per model**.
+**Both shapes are real, and which one binds depends on the model.** The earlier version of this
+section said "20 requests per day. Not 15 per minute," which corrected one wrong belief by
+installing another: `-lite` — the default, and therefore the one used most — is rate-limited per
+*minute* and has no daily ceiling anyone has hit. A tool-using goal costs 2 LLM calls, so 20/day
+is roughly **10 goals per day** on `flash`.
 
-Two consequences that shaped the code:
+The embedding limit counts *contents*, not requests: one batched call carrying 40 chunks spends
+40, which is why ingestion is paced rather than fired in a loop.
+
+Three consequences that shaped the code:
 
 1. **Quota is per model**, so `gemini-3.5-flash-lite` has its own separate allowance. It is the
    default (`AMOS_LLM_MODEL`) so development does not consume the quota reserved for demos.
 2. **Every avoidable API call matters.** This is what made removing the redundant `_finalise`
    round trip a correctness-grade concern rather than an optimisation.
+3. **A rate limit is not a quality failure.** The evaluation harness classes a rate-limited case
+   as `unmeasurable` rather than failed — otherwise part of every score is a measurement of the
+   free tier (`docs/16-evaluation.md`).
 
 Model IDs change frequently. Check <https://ai.google.dev/gemini-api/docs/models> and
 <https://ai.google.dev/gemini-api/docs/rate-limits> before assuming any of the above still hold.
@@ -73,17 +93,30 @@ Model IDs change frequently. Check <https://ai.google.dev/gemini-api/docs/models
 | SQLAlchemy | 2.0 async | ORM with real async support | <https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html> |
 | Alembic | latest | Migrations in version control | <https://alembic.sqlalchemy.org/en/latest/tutorial.html> |
 | asyncpg | latest | Async Postgres driver | — |
-| Docker Compose | not yet installed | Local orchestration | — |
+| podman-compose | 5.8.2 (rootless) | Local orchestration — `compose.yaml`, run by `make up` | <https://docs.podman.io/en/latest/markdown/podman-compose.1.html> |
 
 **Known limitation** — pgvector HNSW/IVFFlat index **2000 dimensions maximum** for the `vector`
 type (4000 for `halfvec`). This directly drives ADR-008.
 
-## Later
+## Added after V0.3
 
-| Technology | Milestone | Why |
+| Technology | Milestone | Why | Docs |
+|---|---|---|---|
+| httpx | V0.2 | Async HTTP for the `http_get` tool. **A runtime dependency**, though it sat under `[dev]` with the comment "required by fastapi.testclient" until 2026-09-13 — so `pip install .` produced a package whose `http_get` could not import | <https://www.python-httpx.org/> |
+| `opentelemetry-api` · `-sdk` · `-exporter-otlp-proto-http` | V0.9 | Tracing and metrics, exported over OTLP/HTTP | <https://opentelemetry.io/docs/languages/python/> |
+
+## Build and test toolchain
+
+Not application dependencies, but they are declared in `pyproject.toml` and a reader looking for
+"what is this built with" should find them here.
+
+| Technology | Role | Docs |
 |---|---|---|
-| httpx | V0.2 | Async HTTP for the `http_get` tool |
-| OpenTelemetry | V0.9 | Tracing — <https://opentelemetry.io/docs/languages/python/> |
+| uvicorn[standard] | ASGI server — `python -m amos` runs it | <https://www.uvicorn.org/> |
+| hatchling | Build backend; reads the version from `amos.__version__` | <https://hatch.pypa.io/latest/> |
+| pytest + pytest-asyncio | Test runner, `asyncio_mode = "auto"` | <https://docs.pytest.org/en/stable/> |
+| ruff | Lint and format | <https://docs.astral.sh/ruff/> |
+| mypy | `--strict`, over `src/` | <https://mypy.readthedocs.io/en/stable/> |
 
 ## Deliberately not used
 

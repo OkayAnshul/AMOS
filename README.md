@@ -24,16 +24,20 @@ AMOS is built as **independently valuable vertical slices**, not as modules that
 the last one lands. Every milestone leaves the repository runnable, tested, demoable and
 documented. Stop at any version and there is still a real project here.
 
-That principle has visible consequences:
+That principle had visible consequences, and they are worth reading in the past tense — this
+list described V0.1, and every item on it has since come true on schedule:
 
-- `src/` contains only what V0.1 built. Directories for unbuilt modules would be a lie about
-  progress, so each appears at the milestone that fills it.
-- Most of `docs/` is one-line stubs naming the milestone that will write them. A
-  chunking-strategy document written before anything has been embedded would be inventing
-  decisions, not recording them.
-- No Docker and no database. They arrive at V0.3, when durable runs are the milestone — each
+- **`src/` only ever contained what was built.** Directories for unbuilt modules would have been
+  a lie about progress, so each appeared at the milestone that filled it. There are now eleven.
+- **Most of `docs/` began as one-line stubs** naming the milestone that would write them. A
+  chunking-strategy document written before anything had been embedded would have been inventing
+  decisions, not recording them (ADR-007). One stub remains, and it says why.
+- **Docker and the database arrived at V0.3**, when durable runs were the milestone — each
   justified by an ADR in
   [`docs/03-architecture-decisions.md`](docs/03-architecture-decisions.md).
+
+Every dependency in the stack below arrived the same way, and the ones deliberately *not*
+adopted — Qdrant, Celery, Redis, Kafka, Kubernetes — have records saying why.
 
 ## Roadmap at a glance
 
@@ -185,7 +189,7 @@ skipped transitively while unrelated branches still complete, and the run report
 Index AMOS's own documentation and ask it about itself:
 
 ```bash
-.venv/bin/python -m amos.rag.cli ingest docs        # 28 docs -> 300 chunks
+.venv/bin/python -m amos.rag.cli ingest docs        # ~48 docs -> ~906 chunks today
 .venv/bin/python -m amos.rag.cli evaluate 5
 
 curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
@@ -206,7 +210,7 @@ Q: what is AMOS's Kubernetes autoscaling policy?
     feature beyond V1.0 that is not promised."
 ```
 
-**Measured**, not claimed — 28 documents, 300 chunks, 12-question golden set:
+**Measured**, not claimed — against a 28-document, 300-chunk snapshot of `docs/`, 12-question golden set:
 
 | k | recall@k | MRR |
 |---|---|---|
@@ -282,7 +286,7 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-make check      # lint + types + 480 tests
+make check      # lint + types + 521 tests
 make test       # tests only; database ones skip if none is running
 ```
 
@@ -297,7 +301,7 @@ something enforced.
 | End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
 | Agent routing | `make routing` | 10/10 |
-| Tests | `make test` | 480 |
+| Tests | `make test` | 521 passing, 2 live tests skipped |
 
 Every one of those sets is small and was written by the person who built the system. They are a
 regression gate, not a characterisation of quality, and

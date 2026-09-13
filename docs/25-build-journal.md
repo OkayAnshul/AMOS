@@ -839,7 +839,7 @@ deterministic checks gate CI.
 ```
 cases          6/6 (100%)      retrieval  recall@5 100%, MRR 0.958
 tool selection 100%            routing    10/10
-refusal        1/1             tests      480
+refusal        1/1             tests      521
 groundedness   1.00  (judged — weaker evidence)
 ```
 

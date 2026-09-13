@@ -111,11 +111,20 @@ class Settings(BaseSettings):
         ),
     )
 
-    retrieval_top_k: int = Field(default=5, ge=1, le=20)
     retrieval_min_score: float = Field(default=0.30, ge=0.0, le=1.0)
 
     task_max_attempts: int = Field(
         default=3, ge=1, le=10, description="Attempts per task before permanent failure."
+    )
+    task_timeout_seconds: float = Field(
+        default=300.0,
+        ge=1.0,
+        description=(
+            "Wall time for one task attempt before it is TIMED_OUT. Must sit above "
+            "the worst case of the per-call bounds beneath it (agent iterations x "
+            "(LLM timeout + tool timeout)) and below AMOS_WORKER_VISIBILITY_TIMEOUT, "
+            "or a legitimately running task has its run reclaimed underneath it."
+        ),
     )
     planning_enabled: bool = Field(
         default=True,

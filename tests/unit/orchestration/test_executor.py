@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence
 from amos.errors import ProviderTimeoutError
 from amos.llm.base import LLMCallRecord
@@ -223,3 +225,84 @@ async def test_tokens_are_aggregated_across_every_task_and_attempt() -> None:
     report = await Executor(runner, sleep=no_sleep).execute(make_plan(task("t1"), task("t2")))
     assert report.total_tokens == 4
     assert len(report.all_llm_calls) == 2
+
+
+# ---------- task timeout ----------
+
+
+class HangingRunner:
+    """Never returns. The point is that something outside it has to stop it."""
+
+    def __init__(self) -> None:
+        self.started = 0
+
+    async def run(self, goal: str) -> AgentResult:
+        self.started += 1
+        await asyncio.sleep(3600)
+        raise AssertionError("unreachable")
+
+
+async def test_a_hanging_task_times_out_rather_than_hanging_the_run() -> None:
+    """`TaskState.TIMED_OUT` was declared with legal transitions in and out of it
+    and nothing could ever produce it — the executor only reached SUCCEEDED or
+    FAILED.
+
+    Every bound underneath a task is per-call: one LLM request, one tool call.
+    A task is a *loop* over those, so bounded parts do not make a bounded whole,
+    and a task could run for as long as the loop kept finding work.
+    """
+    runner = HangingRunner()
+    executor = Executor(
+        runner,
+        max_attempts=1,
+        task_timeout_seconds=0.01,
+        sleep=no_sleep,  # type: ignore[arg-type]
+    )
+
+    report = await executor.execute(make_plan(task("t1")))
+
+    assert report.outcome == RunOutcome.FAILED
+    assert by_ref(report) == {"t1": TaskState.PERMANENTLY_FAILED}
+    assert "0.01s" in (report.tasks[0].error or "")
+
+
+async def test_a_timed_out_task_is_retried_like_any_other_failure() -> None:
+    """TIMED_OUT is transient, not terminal: the transition table allows
+    TIMED_OUT -> READY, and the retry path is shared with FAILED so a timed-out
+    task cannot behave differently from a failed one on its next attempt.
+    """
+    runner = HangingRunner()
+    executor = Executor(
+        runner,
+        max_attempts=3,
+        task_timeout_seconds=0.01,
+        sleep=no_sleep,  # type: ignore[arg-type]
+    )
+
+    report = await executor.execute(make_plan(task("t1")))
+
+    assert runner.started == 3
+    assert by_ref(report) == {"t1": TaskState.PERMANENTLY_FAILED}
+
+
+async def test_dependents_of_a_timed_out_task_are_skipped() -> None:
+    runner = HangingRunner()
+    executor = Executor(
+        runner,
+        max_attempts=1,
+        task_timeout_seconds=0.01,
+        sleep=no_sleep,  # type: ignore[arg-type]
+    )
+
+    report = await executor.execute(make_plan(task("t1"), task("t2", "t1")))
+
+    assert by_ref(report) == {
+        "t1": TaskState.PERMANENTLY_FAILED,
+        "t2": TaskState.SKIPPED,
+    }
+
+
+async def test_a_task_finishing_inside_its_budget_is_unaffected() -> None:
+    executor = Executor(ScriptedRunner(), task_timeout_seconds=30.0, sleep=no_sleep)  # type: ignore[arg-type]
+    report = await executor.execute(make_plan(task("t1")))
+    assert by_ref(report) == {"t1": TaskState.SUCCEEDED}

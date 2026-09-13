@@ -1,6 +1,6 @@
 # 08 — Tool Specification
 
-**Written at V0.2.** Describes the tool system as built.
+**Written at V0.2**, extended as tools were added. Describes the tool system as built.
 
 ## What a tool is
 
@@ -98,6 +98,45 @@ Reads UTF-8 text within a sandbox root. Path is **resolved first, then checked**
 ### `http_get` (NETWORK_READ)
 HTTPS only, host allowlist, DNS resolution checked against private/loopback/link-local ranges,
 redirects **not followed**. Details in `docs/13-security.md`.
+
+### `search_knowledge` (READ_LOCAL) — V0.5
+Retrieval over the ingested corpus. **A tool rather than a pipeline stage**, so the agent
+*chooses* to retrieve for goals that need it instead of every goal paying for an embedding call.
+Returns passages with citations, and returns an explicit "nothing relevant" instruction on an
+empty result — because an empty list makes the model answer from its own memory and present it
+as grounded. `rag/retrieval.py`
+
+### `recall_facts` (READ_LOCAL) — V0.6
+Recalls what the user stated in earlier sessions. Exact subject-key lookup **first**, similarity
+only as the fallback: if the caller knows the key, a ranking is the wrong answer, because it can
+return a similar fact about someone else. `memory/tools.py`
+
+### `recall_past_runs` (READ_LOCAL) — V0.6
+Finds previous runs with similar goals and how they turned out. Episodic, not semantic — the
+question it answers is "has this been tried?", not "what is true?". `memory/tools.py`
+
+### `remember_fact` (READ_LOCAL) — V0.6
+Stores a durable fact. **The one tool that writes**, and its permission is a deliberate dodge:
+`WRITE` cannot be registered at all until the approval workflow exists, so this is declared
+`READ_LOCAL` with the inconsistency stated in the module docstring rather than hidden. The write
+is a supersession chain, so a repeated store is harmless — but *by luck, not by design*, and
+that is recorded as a gap in `docs/12-event-system.md`.
+
+This tool was also the subject of the worst bug in `engineering/bugs-log.md`: registered
+globally, present in **no** agent's allowlist, and therefore filtered out of every specialist's
+registry. Storing a memory was structurally impossible while the system reported doing it.
+
+## What a tool does *not* have
+
+Named explicitly, because an unlisted gap reads as a claim:
+
+- **No output schema.** `_run()` returns a plain `dict[str, Any]`, unvalidated. Input is
+  schema-checked because the *model* produces it; output is trusted because *we* produce it —
+  which is a reason, not a justification. A wrong-shaped return is caught by whatever reads it,
+  later and less clearly.
+- **No retry policy.** Retries live at the task layer, not the tool layer.
+- **No audit metadata** — no owner, version, or declared cost. The audit trail is the
+  `tool_calls` table and a span, both written by the caller.
 
 ## Adding a tool
 

@@ -79,21 +79,393 @@ environments un-swappable.
 
 ---
 
-# Concepts introduced later
+> **Backfilled 2026-09-13.** Everything below V0.1 was a single table of concept *names* until
+> this date — nine milestones built, with their concepts listed and never given a problem
+> statement, a pointer into the code, a question, or a status. That is the gap
+> `current-state.md` is describing when it says the advance gate has never been met, and it is
+> why `docs/20-learning-roadmap.md`'s mechanism (pre-read → build → explain-back → gate) only
+> ever ran for V0.1. Links are the verified ones already gathered in `docs/24-study-plan.md`;
+> nothing here is new research, only the per-concept form this file is supposed to hold.
 
-Named now so the direction is visible; read at their milestone.
+---
 
-| Concept | Milestone | Why it will matter |
-|---|---|---|
-| Prompt injection & allowlists | V0.2 | Tool output is untrusted input (N-12) |
-| **Idempotency** | V0.3 | A retry that duplicates work is a bug, not a retry |
-| State machines | V0.4 | Illegal transitions must raise, not warn |
-| Exponential backoff + jitter | V0.4 | Retries without jitter synchronise and stampede |
-| MRL truncation + re-normalisation | V0.5 | Skipping re-normalisation breaks cosine ranking *silently* |
-| HNSW parameters | V0.5 | Recall/latency tradeoff, chosen with numbers |
-| `SKIP LOCKED` | V0.8 | Crash-safe claiming without a broker |
-| At-least-once delivery | V0.8 | Exactly-once is unavailable; know what to do instead |
-| Span cardinality | V0.9 | High-cardinality attributes destroy tracing backends |
+# V0.2 — Tools
+
+## Function and tool calling
+**Problem it solves:** free text cannot be dispatched on. Tool calling makes the model emit a
+*structured request* — a name and arguments — that code can validate and execute.
+**In AMOS:** `agents/tool_agent.py`, `tools/base.py`. The schema sent to the model is generated
+from the Pydantic input model, so what the model is told and what the code validates cannot drift.
+**Read:** <https://ai.google.dev/gemini-api/docs/function-calling> ·
+<https://arxiv.org/abs/2210.03629> (ReAct — the loop's ancestor)
+**Answer before moving on:**
+- Why validate arguments the model produced, when the schema was *given* to the model?
+- What happens when the model names a tool that does not exist?
+**Status:** ⬜ Recognise
+
+## Bounded agent loops
+**Problem it solves:** "keep calling tools until done" has no guarantee of ever being done. The
+iteration cap *is* the termination proof.
+**In AMOS:** `agents/tool_agent.py:90`, `max_iterations=5`, raising `ToolLoopExhaustedError`.
+**Read:** <https://arxiv.org/abs/2210.03629>
+**Answer:**
+- What exactly stops a tool-calling loop from running forever?
+- Why is exhausting the cap a `502` and not a `500`?
+**Status:** ⬜ Recognise
+
+## Prompt injection, and allowlists as the defence
+**Problem it solves:** a goal, a fetched page or a file can contain text the model treats as
+instructions. Requirement N-12: tool output is *data*, never instructions.
+**In AMOS:** `docs/13-security.md`. The governing rule is that **security is enforced in code
+that never reads model output** — the registry, the sandbox, the host allowlist.
+**Read:** <https://simonwillison.net/series/prompt-injection/> · <https://genai.owasp.org/llm-top-10/>
+· <https://simonwillison.net/2023/Apr/25/dual-llm-pattern/>
+**Answer:**
+- Why is "the system prompt says to treat tool output as data" *not* a control?
+- `test_prompt_injection_in_tool_output_does_not_change_permissions` assumes the model is fully
+  compromised. Why is that the right thing to assume in the test?
+**Status:** ⬜ Recognise
+
+## Allowlist versus blocklist
+**Problem it solves:** a blocklist must anticipate every dangerous case and fails **open** when
+it misses one. An allowlist fails **closed**.
+**In AMOS:** tool names per agent (`agents/registry.py:53`), HTTP hosts
+(`tools/builtin/http_get.py:109`), span attributes and metric labels (`telemetry/`).
+**Read:** <https://owasp.org/www-community/attacks/Server_Side_Request_Forgery>
+**Answer:**
+- Why does `endswith("github.com")` accept `evil-github.com`, and what does AMOS do instead?
+- Why is the *resolved IP* checked as well as the hostname?
+**Status:** ⬜ Recognise
+
+---
+
+# V0.3 — Persistence and trace
+
+## Idempotency
+**Problem it solves:** a retry that duplicates work is a bug, not a retry. A client that times
+out and resubmits must not start a second run.
+**In AMOS:** `idempotency-key` header → `api/persistence.py`, partial unique index on
+`runs.idempotency_key`. **Not** yet at task level — the open gap, scheduled V1.1.
+**Read:** <https://brandur.org/idempotency-keys> · <https://docs.stripe.com/api/idempotent_requests>
+**Answer:**
+- What happens if a request *succeeds* but the response is lost?
+- Why is AMOS idempotent at submission and not at task level, and what breaks because of that?
+**Status:** ⬜ Recognise
+
+## Async ORM sessions, transactions and N+1
+**Problem it solves:** holding a pooled connection across a multi-second LLM call exhausts the
+pool; loading a list then querying per row multiplies round trips.
+**In AMOS:** `database/engine.py`, `database/repository.py`. Execution happens **outside** any
+transaction, deliberately; eager loading avoids N+1 on trace assembly.
+**Read:** <https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html> ·
+<https://docs.sqlalchemy.org/en/20/orm/session_basics.html> ·
+<https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html> ·
+<https://docs.sqlalchemy.org/en/20/core/pooling.html>
+**Answer:**
+- Why would holding a transaction across the LLM call deadlock the pool at six concurrent goals?
+- Flush versus commit?
+**Status:** ⬜ Recognise
+
+## Migrations, in both directions
+**Problem it solves:** schema is code and belongs in version control. A migration that only goes
+forward is a one-way door.
+**In AMOS:** `migrations/versions/`, four of them; CI applies up → down → up.
+**Read:** <https://alembic.sqlalchemy.org/en/latest/tutorial.html> ·
+<https://alembic.sqlalchemy.org/en/latest/autogenerate.html>
+**Answer:**
+- V0.4 shipped an irreversible migration. What made it irreversible, and what prevents it now?
+- What can autogenerate *not* see?
+**Status:** ⬜ Recognise
+
+---
+
+# V0.4 — Planner and executor
+
+## DAGs, cycle detection and topological order
+**Problem it solves:** a plan is a dependency graph. A cycle means nothing can ever start, and
+the model can produce one.
+**In AMOS:** `orchestration/plan.py:102` (DFS cycle detection), `:79` (topological order) —
+both run **before a row is written**.
+**Read:** <https://en.wikipedia.org/wiki/Topological_sorting> ·
+<https://docs.python.org/3/library/graphlib.html>
+**Answer:**
+- Why validate the plan before persisting it rather than failing during execution?
+- Compare AMOS's detection with `graphlib.TopologicalSorter` — what does the stdlib give you?
+**Status:** ⬜ Recognise
+
+## State machines with an enforced transition table
+**Problem it solves:** illegal transitions must **raise**, not warn. This is "LLMs handle
+uncertainty, software handles guarantees" made executable.
+**In AMOS:** `orchestration/state.py` is the **only** module that changes a task's state.
+**Read:** the module itself, then `docs/11-orchestration.md`.
+**Answer:**
+- Why can the LLM not move a task between states?
+- Why does a retry return to `READY` rather than to a retry-specific state?
+- `TIMED_OUT` existed for six milestones and was unreachable. What class of test would have
+  caught that, and why did the exhaustive transition tests not?
+**Status:** ⬜ Recognise
+
+## Exponential backoff with full jitter
+**Problem it solves:** retrying at fixed intervals synchronises clients into stampedes;
+retrying forever is a cost hole.
+**In AMOS:** `orchestration/retry.py:28`.
+**Read:** <https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/>
+**Answer:**
+- What does jitter prevent that backoff alone does not?
+- What is *full* jitter, as opposed to equal or decorrelated?
+**Status:** ⬜ Recognise
+
+## Partial success as a real outcome
+**Problem it solves:** three of four tasks succeeding produced value. Forcing that into binary
+success/failure either discards good work or overstates what happened.
+**In AMOS:** `RunOutcome.PARTIALLY_COMPLETED`, `orchestration/executor.py`.
+**Answer:**
+- What happens to the dependents of a failed task, and why is the propagation a *fixed-point*
+  loop rather than one pass?
+**Status:** ⬜ Recognise
+
+---
+
+# V0.5 — Retrieval
+
+## Chunking
+**Problem it solves:** a document is too big to embed usefully. Too small loses context, too
+large dilutes relevance.
+**In AMOS:** `rag/chunking.py:49` — heading-aware, then size-bounded windows with overlap.
+**Read:** <https://www.pinecone.io/learn/chunking-strategies/> ·
+<https://github.com/FullStackRetrieval-com/RetrievalTutorials>
+**Answer:**
+- Why is the heading prepended to each of its chunks?
+- What does overlap buy, and what does it cost?
+**Status:** ⬜ Recognise
+
+## Embeddings, cosine distance, and MRL truncation
+**Problem it solves:** pgvector's HNSW index tops out at 2000 dimensions and the model emits
+3072 — so the default embedding is *unindexable*.
+**In AMOS:** `rag/embeddings.py` — truncate to 1536, then **re-normalise**. ADR-008.
+**Read:** <https://ai.google.dev/gemini-api/docs/embeddings> · <https://arxiv.org/abs/2205.13147>
+· <https://github.com/pgvector/pgvector>
+**Answer:**
+- What exactly breaks if you truncate and skip re-normalisation — and why is it so hard to
+  notice?
+- Why does the query use a different `task_type` from the document?
+**Status:** ⬜ Recognise
+
+## HNSW and approximate nearest neighbour
+**Problem it solves:** exact nearest-neighbour search over every vector is a full scan.
+**In AMOS:** `migrations/versions/5a881f4bdb98_*`, built **after** the corpus is loaded.
+**Read:** <https://www.pinecone.io/learn/series/faiss/hnsw/> · <https://arxiv.org/abs/1603.09320>
+· <https://supabase.com/blog/increase-performance-pgvector-hnsw>
+**Answer:**
+- What does "approximate" cost you, concretely?
+- Why does the query have to use the `<=>` operator, and what happens silently if it does not?
+**Status:** ⬜ Recognise
+
+## Measuring retrieval: recall@k, strict recall, MRR
+**Problem it solves:** "we have a vector database" is not a quality claim.
+**In AMOS:** `rag/evaluation.py:95`; numbers in `docs/10-rag-architecture.md`.
+**Read:** <https://en.wikipedia.org/wiki/Mean_reciprocal_rank> · <https://arxiv.org/abs/2401.05856>
+(seven failure points — read before claiming RAG works)
+**Answer:**
+- Why report strict *and* lenient recall permanently, rather than picking one?
+- recall@1 was measured at 50% and the explanation was not "retrieval is bad". What was it?
+**Status:** ⬜ Recognise
+
+## Grounding and refusal
+**Problem it solves:** given nothing relevant, a model answers from its own memory and presents
+it as grounded. The failure is invisible because the output looks identical.
+**In AMOS:** `rag/retrieval.py` returns an explicit refusal instruction, never an empty list.
+**Read:** <https://arxiv.org/abs/2005.11401> (the original RAG paper)
+**Answer:**
+- Why is refusing scored as a *success* in the evaluation suite?
+**Status:** ⬜ Recognise
+
+---
+
+# V0.6 — Memory
+
+## The memory taxonomy, and what belongs where
+**Problem it solves:** "memory" in an AI system usually means "embed everything", which is wrong
+for facts: exact recall is a key lookup, contradictions need ordering, provenance is a join.
+**In AMOS:** `docs/09-memory-architecture.md`. Semantic = `memories` table; episodic = two
+columns on `runs`; **working, conversation and knowledge-graph memory are not built**.
+**Read:** <https://arxiv.org/abs/2310.08560> (MemGPT) · <https://arxiv.org/abs/2304.03442>
+(generative agents) · <https://arxiv.org/abs/2309.02427> (CoALA — a taxonomy to argue *against*)
+**Answer:**
+- Why is there no `episodes` table?
+- Which of the five memory kinds does AMOS actually have, and why were the others not built?
+**Status:** ⬜ Recognise
+
+## Contradiction resolution by supersession
+**Problem it solves:** when a fact changes, the old one must stop being current — and vector
+search has no notion of "superseded".
+**In AMOS:** `memory/semantic.py:126`. Newest wins; superseded rows are **kept**, so "current"
+is `superseded_by IS NULL` and the history stays auditable.
+**Answer:**
+- Why is this a *rule* rather than something the model decides?
+- Why keep the old rows at all?
+**Status:** ⬜ Recognise
+
+## Claiming versus doing
+**Problem it solves:** the model can say "I've remembered that" without the tool having been
+called. Measured at a 38% false-claim rate before the fix.
+**In AMOS:** `memory/reconcile.py:153`; measured by `make memory-trials`.
+**Answer:**
+- The root cause was not a prompt problem. What was it, and why did three prompt fixes fail to
+  reach it? (`engineering/bugs-log.md`, 2026-09-10)
+**Status:** ⬜ Recognise
+
+---
+
+# V0.7 — Multi-agent
+
+## Specialisation as a structural property
+**Problem it solves:** three prompts are not three agents. A prompt saying "you have no
+calculator" is a request; a registry that does not contain one is a guarantee.
+**In AMOS:** `agents/registry.py:53` builds a filtered registry per agent; disallowed tools
+return `NOT_FOUND` because they do not exist.
+**Read:** <https://www.anthropic.com/engineering/multi-agent-research-system> (a real one, with
+the costs stated) · <https://arxiv.org/abs/2308.08155>
+**Answer:**
+- Why must the two routable allowlists be *disjoint*?
+- Why does the instruction have to match the allowlist?
+**Status:** ⬜ Recognise
+
+## Critic and reflection
+**Problem it solves:** an unreviewed answer has no quality gate.
+**In AMOS:** `agents/critic.py` — **no tools**, bounded revise loop, and a broken critic
+*accepts*.
+**Read:** <https://arxiv.org/abs/2303.17651> (Self-Refine) · <https://arxiv.org/abs/2303.11366>
+(Reflexion)
+**Answer:**
+- Why does giving the critic tools make its verdict unfalsifiable?
+- What stops a critic/producer pair looping forever?
+- Why does a broken critic accept rather than reject?
+**Status:** ⬜ Recognise
+
+## Structured inter-agent messages
+**Problem it solves:** free-form chatter between agents cannot be validated, routed or traced.
+**In AMOS:** `agents/messages.py` — **defined and not yet used**; the orchestrator assigns all
+work. Scheduled for V1.3.
+**Read:** <https://a2a-protocol.org/latest/>
+**Answer:**
+- What does a structured message buy over prose, concretely?
+- What has to be bounded before agents may delegate to each other?
+**Status:** ⬜ Recognise
+
+---
+
+# V0.8 — Asynchronous execution
+
+## `SKIP LOCKED`
+**Problem it solves:** without it, N workers running the same claim query block on each other's
+locked rows and serialise into one.
+**In AMOS:** `worker/queue.py:82`. The claim and the state change are **one statement in one
+transaction**, so a dead worker's row is released by Postgres rather than by recovery code.
+**Read:** <https://www.postgresql.org/docs/current/sql-select.html> ·
+<https://www.2ndquadrant.com/en/blog/what-is-select-skip-locked-for-in-postgresql-9-5/> ·
+<https://brandur.org/job-drain>
+**Answer:**
+- What exactly does `FOR UPDATE` lock, and what does `SKIP LOCKED` change?
+- Why is `ORDER BY created_at` a preference rather than a guarantee under contention?
+**Status:** ⬜ Recognise
+
+## At-least-once delivery, and why exactly-once is unavailable
+**Problem it solves:** knowing what you can and cannot promise. A worker can finish and die
+before recording that it finished.
+**In AMOS:** stated explicitly in `docs/12-event-system.md`; the mitigation is idempotent work.
+**Read:** <https://bravenewgeek.com/you-cannot-have-exactly-once-delivery/> ·
+<https://en.wikipedia.org/wiki/Two_Generals%27_Problem> ·
+<https://microservices.io/patterns/communication-style/idempotent-consumer.html>
+**Answer:**
+- Why is exactly-once impossible, and what do you do instead?
+- `remember_fact` could store a fact twice and it is harmless. Why is "harmless by luck" still
+  recorded as a gap?
+**Status:** ⬜ Recognise
+
+## Visibility timeouts
+**Problem it solves:** nothing has to *detect* that a worker died — only that a run has been
+held too long.
+**In AMOS:** `worker/queue.py:132`, default 600s. ADR-009 puts the task timeout beneath it.
+**Read:** <https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html>
+**Answer:**
+- What happens to a worker that is merely *slow*?
+- Why must the task timeout sit below the visibility timeout?
+**Status:** ⬜ Recognise
+
+## Poison messages
+**Problem it solves:** a run that crashes every worker would be reclaimed forever, starving the
+queue.
+**In AMOS:** `attempt_count < max_attempts` in the claim query; `give_up()` at
+`worker/queue.py:183`. **No dead-letter queue** — scheduled V1.1.
+**Answer:**
+- Without the attempt ceiling, what does one bad run do to every good one?
+**Status:** ⬜ Recognise
+
+---
+
+# V0.9 — Observability
+
+## Traces, spans and the correlating id
+**Problem it solves:** answering "what happened on this request?" across processes.
+**In AMOS:** `telemetry/tracing.py`. V0.1's request id became the correlating id, which is why
+this was the smallest milestone in the project. **Trace context does not propagate into
+workers** — a queued run is a separate trace, scheduled V1.1.
+**Read:** <https://opentelemetry.io/docs/concepts/signals/traces/> ·
+<https://opentelemetry.io/docs/languages/python/> ·
+<https://opentelemetry.io/docs/specs/semconv/gen-ai/>
+**Answer:**
+- Trace versus log versus metric — when is each the right tool?
+- Why did threading a request id at V0.1, for debugging, make V0.9 cheap?
+**Status:** ⬜ Recognise
+
+## Cardinality
+**Problem it solves:** an unbounded label creates one time series per value and destroys a
+metrics backend.
+**In AMOS:** `telemetry/metrics.py:29` — a closed allowlist, not a blocklist.
+**Read:** <https://sre.google/sre-book/monitoring-distributed-systems/> (golden signals) ·
+<https://opentelemetry.io/docs/concepts/sampling/>
+**Answer:**
+- Which attributes would blow up cardinality here, and why is an allowlist the right shape?
+- Goal text is excluded from spans by default. Why is opt-*in* the only safe direction?
+**Status:** ⬜ Recognise
+
+---
+
+# V1.0 — Evaluation
+
+## Golden sets and regression gating
+**Problem it solves:** "it seems better" is not a measurement.
+**In AMOS:** `evaluation/cases.py`, `rag/evaluation.py`, `agents/router.py`. All three sets are
+**small and self-authored**, and every document quoting their numbers says so.
+**Read:** <https://hamel.dev/blog/posts/evals/> · <https://eugeneyan.com/writing/evals/>
+**Answer:**
+- What makes a good golden set, and what is wrong with one written by the person who built the
+  system?
+- Which metrics were deliberately *not* optimised, and why?
+**Status:** ⬜ Recognise
+
+## LLM-as-judge, and its limits
+**Problem it solves:** string overlap cannot tell a correct paraphrase from a fabrication.
+**In AMOS:** `evaluation/judge.py:74` — one metric only (groundedness), reported separately and
+**never averaged** into deterministic scores.
+**Read:** <https://arxiv.org/abs/2306.05685> · <https://arxiv.org/abs/2303.16634> ·
+<https://docs.ragas.io/en/stable/>
+**Answer:**
+- Why is a judge sharing a model family with the system it judges a problem?
+- Why is it never averaged in with the deterministic metrics?
+- What would a groundedness score of 1.00 actually be worth without human calibration?
+**Status:** ⬜ Recognise
+
+## Unmeasurable is not failed
+**Problem it solves:** scoring an infrastructure limit as a quality defect makes part of every
+score a measurement of the free tier.
+**In AMOS:** `evaluation/metrics.py` — rate-limited cases are `unmeasurable`, excluded from
+rates and from the CI gate.
+**Answer:**
+- A refusal case once scored 0/1, apparently the worst possible failure. What was actually wrong?
+- What is the general lesson about a crude metric and a real failure?
+**Status:** ⬜ Recognise
 
 ---
 

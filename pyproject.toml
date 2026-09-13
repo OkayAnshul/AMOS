@@ -11,6 +11,7 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
+    "httpx>=0.28",             # the http_get tool imports it at runtime; fastapi.testclient also needs it
     "alembic>=1.14",
     "opentelemetry-api>=1.29",
     "opentelemetry-sdk>=1.29",
@@ -21,7 +22,6 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
-    "httpx>=0.28",             # required by fastapi.testclient
     "ruff>=0.9",
     "mypy>=1.14",
 ]
@@ -47,7 +47,6 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "live: hits the real Gemini API; skipped unless AMOS_RUN_LIVE_TESTS=1",
-    "db: needs a running PostgreSQL; skipped automatically when unreachable",
 ]
 
 [tool.ruff]

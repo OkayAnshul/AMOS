@@ -31,7 +31,9 @@ the placeholder-documentation problem (ADR-007).
 *Reconsider if:* never; a directory costs nothing to create when it is actually needed.
 
 **Tests never touch the network.**
-*Context:* free-tier Gemini is ~15 RPM and non-deterministic.
+*Context:* free-tier Gemini is rate-limited and non-deterministic. (Written here as "~15 RPM";
+the measured picture turned out to be four different shapes depending on model and call type —
+`docs/21-technology-baseline.md` is canonical.)
 *Decision:* `FakeProvider` in all unit and integration tests; one live smoke test, skipped
 without an API key.
 *Why:* network tests would be slow, flaky, rate-limited and would fail in CI. Locked as N-14.
@@ -144,3 +146,162 @@ it had run on one machine. Recorded in `bugs-log.md`.
 **`AMOS_PLANNING_ENABLED` falls back to the V0.2 single-shot agent.**
 *Why:* not every goal needs decomposition, and planning costs 3-8× the calls. On a 20/day quota
 that is the difference between six goals and two.
+
+---
+
+> **Gap closed 2026-09-13.** This file stopped here for six milestones. The decisions of
+> V0.5–V1.0 were written down — under "Architecture Decisions" in `session-log.md` — but never
+> rolled into the chronological index that is supposed to be their home. The entries below are
+> that backfill, dated to the session that made each. The lesson is the one the index exists to
+> teach: a decision recorded only in a narrative is a decision nobody will find.
+
+## 2026-09-05 — Session 6 (V0.5, retrieval)
+
+**Re-normalise every truncated embedding at the provider boundary, with a test.**
+*Why:* MRL truncation breaks L2 normalisation, and cosine distance over un-normalised vectors
+returns wrong rankings **without raising**. A documented intention would not have caught it; a
+test at the boundary does. ADR-008.
+*Reconsider if:* never while truncation is used.
+
+**Retrieval is a Tool, not a pipeline stage.**
+*Why:* the agent *chooses* to retrieve, so goals needing no corpus do not pay for an embedding
+call — and retrieval inherits argument validation, timeouts and trace visibility for free.
+*Reconsider if:* retrieval becomes mandatory for correctness rather than useful for grounding.
+
+**Empty retrieval returns a refusal instruction, never an empty list.**
+*Why:* given an empty list the model answers from its own memory and presents it as grounded.
+The failure is invisible precisely because the output looks the same.
+
+**Heading-aware chunking, with the heading prepended to each of its chunks.**
+*Why:* a chunk that has lost its section title has lost what the question will be asked about.
+
+**Ingestion commits per document, not per run.**
+*Why:* one transaction around 300 chunks reads as "atomic ingestion" and is really "lose
+everything on any error" — which is exactly what a 429 partway through did.
+*Consequence:* recorded in `bugs-log.md`; transaction boundaries follow units of *useful work*.
+
+**Ground truth is multi-source; strict and lenient recall are both reported, permanently.**
+*Why:* reporting one number invites picking the flattering one later.
+
+## 2026-09-09 — Session 7 (V0.6, memory)
+
+**Facts are relational-first, with vectors as a secondary index.**
+*Why:* exact recall is a key lookup, contradictions need ordering, and provenance is a join.
+Similarity search does none of the three and will occasionally return a similar fact about
+someone else with high confidence.
+*Reconsider if:* facts stop having stable subject keys.
+
+**Contradiction resolution is newest-wins, in code. Superseded rows are kept.**
+*Why:* a rule, not a judgement — so the outcome is reproducible and the history stays auditable.
+
+**Episodic memory adds no table.**
+*Why:* an episode *is* a run. A separate `episodes` table would duplicate goal, status, tokens
+and timings to add two columns. It is `runs.lesson` + `runs.goal_embedding`.
+
+**The lesson is derived, not generated.**
+*Why:* an LLM call per run to restate facts already recorded would cost ~5% of the daily quota
+to add nothing.
+
+**Conversation memory deliberately not built.**
+*Why:* there is no multi-turn API to remember *for*. Every `/v1/goals` call is independent.
+*Reconsider if:* a conversational endpoint is added. Two of the five memory kinds in
+`docs/09-memory-architecture.md` remain unbuilt, and this is one of them.
+
+## 2026-09-09 — Session 7 (V0.7, multi-agent)
+
+**Specialisation is a tool allowlist enforced by construction, not a prompt.**
+*Why:* a prompt saying "you have no calculator" is a request; a registry that does not contain
+`calculator` is a guarantee. `AgentSpec.registry_from()` builds a filtered registry, so a
+disallowed tool returns `NOT_FOUND` because it does not exist.
+*Reconsider if:* never — this is the golden rule applied to agents.
+
+**Allowlists are disjoint.**
+*Why:* overlapping capability makes routing arbitrary, because either agent could do the work,
+and a routing accuracy number then measures nothing.
+
+**The critic has no tools.**
+*Why:* a critic that can fetch new sources can always find something justifying what it already
+concluded. Judging only what it was given is what makes the judgement mean anything.
+
+**A broken critic accepts.**
+*Why:* it is a quality gate, not a correctness requirement. Failing closed here would convert a
+critic outage into a total outage.
+
+**The revise loop is bounded in code, and unresolved objections are attached to the answer with
+confidence downgraded — never hidden.**
+
+## 2026-09-09 — Session 7 (V0.8, async)
+
+**Claim at run level, not task level.**
+*Why:* a run is what a client submits and polls, and a run's internal task concurrency is
+already handled by `asyncio.gather` inside one worker. Distributing tasks would mean
+distributing the executor.
+*Consequence:* **corrected V0.4's speculative `tasks.claimed_at` column and its partial index,
+which were removed rather than carried.** The reasoning that added them ("adding a column later
+to a populated table is a migration") was sound; the granularity was wrong. Carrying schema that
+documents an abandoned plan is worse than the migration it saves.
+*Reconsider if:* one run's tasks ever need to span workers.
+
+**Polling, not `LISTEN`/`NOTIFY`.**
+*Why:* a second mechanism — dedicated connection, reconnect handling, notifications lost when
+nobody is listening — to save latency nobody is measuring.
+*Reconsider if:* poll latency becomes user-visible.
+
+**At-least-once, stated explicitly.**
+*Why:* exactly-once is not available. The mitigation is idempotent work, and `remember_fact` is
+recorded as a real gap rather than a solved problem — it is harmless today *by luck*, because
+supersession makes a duplicate store a no-op.
+*Reconsider if:* never the guarantee; the gap is scheduled for V1.1.
+
+**The worker swallows every exception, bounded by an attempt ceiling.**
+*Why:* a worker that dies on one bad run turns a poison message into a total outage.
+
+## 2026-09-09 — Session 7 (V0.9 observability, V1.0 evaluation)
+
+**Goal text is not a span attribute by default.**
+*Why:* spans are shipped, stored and searchable. The safe direction has to be the default,
+because an opt-*out* ships user content from every deployment that forgot to set it.
+
+**Metric labels come from a closed allowlist.**
+*Why:* an unbounded label is one time series per value, which destroys a metrics backend. An
+allowlist fails closed on the label nobody anticipated; a blocklist fails open.
+
+**Deterministic and judged metrics are reported separately and never averaged.**
+*Why:* the judge shares a model family, training data and blind spots with the system it judges.
+Averaging it into deterministic scores launders weak evidence into strong-looking numbers.
+*Consequence:* only the deterministic metrics gate CI.
+
+**A rate limit is `unmeasurable`, not a failure.**
+*Why:* otherwise part of every quality score is a measurement of the free tier.
+
+**CI runs the suite with and without a database, migrations in both directions, and with no API
+key.**
+*Why:* three claims the project makes about itself — optional persistence, reversible
+migrations, no test touches the network (N-14) — become enforced rather than documented.
+
+## 2026-09-13 — Coherence audit
+
+**ADR-009 — a task-level timeout, and the ordering of the bounds.** Full record in
+`docs/03-architecture-decisions.md`. In short: every bound beneath a task is per *call*, a task
+is a *loop* over those, so bounded parts did not make a bounded whole and `TaskState.TIMED_OUT`
+was unreachable for six milestones. The decision is the ordering — per-call bounds < task
+timeout < worker visibility timeout — more than the number.
+
+### Smaller decisions
+
+**`AMOS_ASYNC_ENABLED` is honoured in code, and its default stays `false`.**
+*Context:* the setting was read by nothing while three documents instructed readers to set it.
+*Why not flip the default to `true` to preserve behaviour:* because those three documents
+already assume opt-in, and queueing with no worker running leaves runs QUEUED forever. Making
+the documented mental model true was worth more than preserving an undocumented one.
+
+**A test per defect *class*, not per defect.**
+*Context:* three of the six coherence defects already had a narrow test nearby that passed. The
+version test checked only for the *current* version appearing as a literal, so a stale "V0.7"
+sailed through; the state-machine tests were exhaustive over the transition *table*, which was
+correct, while nothing produced one of its states.
+*Decision:* every fix ships a test that would catch the next instance of its kind — every import
+declared, every setting read, every instrument written to, every state reachable, every setting
+documented.
+*Why:* a test that names the bug you just fixed protects against a bug that has already been
+fixed.

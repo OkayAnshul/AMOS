@@ -25,7 +25,7 @@ for one vertical.
 
 - Not a chatbot wrapper. A single-shot LLM call is the baseline AMOS must beat.
 - Not an autonomy demo. Irreversible actions stay behind validation, permissions and human
-  approval (see `docs/13-security.md` when written at V0.2).
+  approval (see [`13-security.md`](13-security.md), written at V0.2).
 - Not a technology showcase. Every dependency needs an ADR. A simple system that works beats a
   complicated one that does not.
 
