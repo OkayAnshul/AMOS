@@ -11,9 +11,12 @@ design. (ADR-004.)
 
 The destination — not the starting point.
 
-**Reached at V1.0 with one exception: there is no `auth`.** The API layer below shows it, and
-nothing implements it. That is scheduled for V1.4 and is the reason `docs/13-security.md` says
-AMOS is not safe to expose publicly. Everything else in this diagram exists.
+**Reached.** The last gap was `auth` in the API layer, which the diagram showed and nothing
+implemented; V1.4 built it (ADR-013). Every box below now exists.
+
+That is not the same as being safe to expose — `docs/13-security.md` still says it is not, and
+lists what is missing beyond authentication: TLS, inbound rate limiting, key rotation, and any
+notion of authorization within an account.
 
 ```
                     Client
@@ -71,8 +74,9 @@ generality. That is the difference between designing for evolution and over-engi
 
 ## Layer responsibilities
 
-**API** — HTTP, request validation, request id, and *eventually* auth (V1.4 — not built). No
-business logic. Translates domain errors into status codes.
+**API** — HTTP, request validation, request id, and authentication (V1.4). No business logic.
+Translates domain errors into status codes, and rejects an unauthenticated request **before** the
+agent runs — authentication that happens after the work has already spent the tokens.
 
 **Orchestrator** — the deterministic core. Owns task state transitions, dependency resolution,
 retries, backoff, timeouts and idempotency. Contains **no LLM calls**. This is the boundary

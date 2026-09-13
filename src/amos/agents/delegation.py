@@ -216,7 +216,4 @@ def _prompt_from(task: AgentTask) -> str:
     if not task.context:
         return task.instruction
     context = "\n".join(f"- {item}" for item in task.context)
-    return (
-        f"{task.instruction}\n\n"
-        f"Context established by the {task.source_agent} agent:\n{context}"
-    )
+    return f"{task.instruction}\n\nContext established by the {task.source_agent} agent:\n{context}"

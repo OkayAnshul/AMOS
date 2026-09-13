@@ -31,6 +31,7 @@ demo does not go on a resume.**
 | Evaluation harness gating regressions in CI | V1.0 | `src/amos/evaluation/**`, `.github/workflows/ci.yml` | 39 evaluation tests | `make eval` → 6/6 | ✅ **shipped** |
 | Resumable execution across worker crashes, with a dead-letter path and cross-process tracing | V1.1 | `src/amos/database/progress.py`, `src/amos/orchestration/executor.py`, `src/amos/worker/queue.py` | 20 progress + queue tests | kill a worker mid-run; only the unfinished task re-runs | ✅ **shipped** |
 | Bounded agent-to-agent delegation over a validated contract, with no privilege inheritance | V1.3 | `src/amos/agents/delegation.py`, `src/amos/agents/team.py` | 21 delegation tests | researcher delegates arithmetic to the analyst, never acquiring a calculator | ✅ **shipped** |
+| Multi-tenant data isolation enforced at the persistence layer, with hashed API-key authentication | V1.4 | `src/amos/auth.py`, `src/amos/database/repository.py`, `migrations/versions/835121ee2bd2_*` | 23 isolation tests + 2 structural guards | two users cannot see each other's runs or facts | ✅ **shipped** |
 
 ## Words that must never be used unless earned
 
@@ -41,6 +42,8 @@ demo does not go on a resume.**
 | "autonomous" | the system decides, not a human | ✅ **earned at V0.2** — the model selects tools and the loop executes them without a human in it |
 | "distributed system" | actually distributed — AMOS is a modular monolith | ❌ never, per ADR-004 |
 | "production" | deployed, monitored, used by someone | ❌ not deployed |
+| "multi-tenant" | one user's data unreachable by another, enforced and tested | ✅ **earned at V1.4** — isolation at the persistence layer, with guards asserting the bypass cannot be written |
+| "secure" | a reviewed threat model with the residual risks closed | ❌ **never yet.** Authentication is a precondition for exposure, not a sufficient one: no TLS, no rate limiting, no key rotation, no authorization |
 | "Kubernetes" / "Kafka" / "microservices" | actually used | ❌ deliberately not used |
 | "scalable" | a measurement under load | ❌ no load test exists |
 
@@ -749,3 +752,50 @@ stops meaning anything.
 asks clarifying questions, or refuses on its own judgement — a delegate answers. There is no
 shared state: everything must be in the instruction and context. The orchestrator still assigns
 all top-level work, so this is delegation *within* a task, not autonomous agent coordination.
+
+---
+
+## V1.4 — Authentication and Multi-User Isolation
+
+**What was implemented:** Hashed API-key authentication, and isolation of runs and memories to
+their owner — enforced where queries are built rather than in handlers.
+
+**Evidence (files):**
+- `src/amos/auth.py` — SHA-256 hashed keys, `Actor`, `actor_for_run`, `LOCAL_ACTOR`
+- `src/amos/database/repository.py` — constructed with its owner; every run query scoped
+- `src/amos/memory/semantic.py` — all six statements over `memories` scoped
+- `src/amos/api/app.py` — the auth dependency; 401 before any model call
+- `src/amos/worker/runner.py` — the worker acts as the run's owner
+- `migrations/versions/835121ee2bd2_*` — reversible, with the NOT NULL backfill
+
+**Measured:** 616 tests. 23 of them are the isolation suite, plus **two structural guards** — no
+`select(Run)` without the owner filter, no raw SQL over `memories` without one — each verified by
+reintroducing the bypass and watching the guard fail.
+
+**Technical explanation (unaided):** The hard part is that **isolation fails silently**: a missing
+`WHERE user_id = ...` does not raise, does not log, and returns *more* data rather than less, so
+the failure looks exactly like a working feature. That is why enforcement is at construction —
+`RunRepository(session, actor)` — rather than a `user_id` argument per method, which is one
+forgotten argument away from a leak in a version that still compiles and still returns rows. Keys
+are stored as SHA-256 hashes so a leaked database does not also grant access; JWT was rejected
+because stateless verification buys nothing in a single process with a single database and costs
+key management. The worker acts as the claimed run's owner rather than unscoped, since otherwise
+the one component touching every user's data would be the one with no isolation. And the corpus is
+deliberately shared — `documents.user_id` NULL means system corpus — because re-embedding AMOS's
+own documentation per user would isolate data already public in this repository.
+
+**Likely interview questions:** `docs/interview/security.md`.
+
+**Honest resume wording:**
+> Added multi-tenant data isolation to an existing single-user system: hashed API-key
+> authentication, per-owner scoping enforced at repository construction rather than per query, and
+> static guards preventing an unscoped query from being written; delivered as one reversible
+> migration backfilling existing rows.
+
+**What this does NOT demonstrate:** **This is authentication, not authorization.** Any
+authenticated user can call any endpoint; there are no scopes, roles or read-only keys — the gap
+most likely to be mistaken for solved. No key rotation: a leaked key is full access until the user
+is deleted. No audit of authentication attempts. No TLS, no inbound rate limiting. Isolation is
+enforced in **application code**, not by the database — row-level security would be stronger.
+**Without a database the API is unauthenticated**, by design and with a startup warning. And
+**AMOS is still not safe to expose publicly**, which `docs/13-security.md` continues to say.

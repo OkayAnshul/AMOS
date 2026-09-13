@@ -119,13 +119,48 @@ Unbounded anything is a denial-of-service vector, including a self-inflicted one
 
 | Control | Status | Why |
 |---|---|---|
-| Authentication | ❌ | Single local user. Would mean a `users` table with one permanent row. **Scheduled V1.4.** |
-| Authorization / RBAC | ❌ | No users to distinguish. **Scheduled V1.4.** |
+| Authentication | ✅ **V1.4** | Hashed API keys, `Authorization: Bearer`. Rejected before any model call. |
+| Authorization / RBAC | ❌ | **Still not built.** Auth is per *user*, not per *scope*: an authenticated user can do everything the API offers. There are no read-only keys and no roles. |
 | Rate limiting (inbound) | ❌ | No untrusted callers yet |
 | Audit log | ✅ **durable since V0.3** | Every LLM and tool call is a row (`llm_calls`, `tool_calls`), reachable from `GET /v1/runs/{id}`. This row read "not durable until V0.3" for seven milestones after V0.3 shipped. |
 | Human approval workflow | ❌ | Required before any `WRITE` tool. Registry refuses them until it exists. |
-| Data isolation | ❌ | Single user. **Scheduled V1.4** — `user_id` on `runs`, `memories` and `documents`, scoped in the repository layer. |
+| Data isolation | ✅ **V1.4** | `user_id` on `runs` and `memories`, scoped where queries are built. `documents` is deliberately shared — see below. |
 
-Reconsider all of these the moment AMOS is exposed to a second user or reachable from a network
-it does not control. **AMOS is not currently safe to expose publicly**, and nothing in it should
-be described as production-secure.
+**AMOS is still not safe to expose publicly**, and nothing in it should be described as
+production-secure. Authentication is a *precondition* for exposure, not a sufficient one — there
+is no TLS, no inbound rate limiting, no audit of authentication attempts, and no key rotation.
+
+## Authentication and isolation (V1.4)
+
+Full reasoning in ADR-013. The four things worth knowing:
+
+**Keys are stored as SHA-256 hashes**, and lookup is by hash — the plaintext exists only inside
+the request presenting it. A database that leaks should not also hand over access.
+
+**Isolation is enforced where queries are built, not in handlers.** `RunRepository` and
+`SemanticMemory` are constructed with their owner, so there is no method callable without one.
+That shape was chosen over passing `user_id` per call, which is one forgotten argument away from
+a leak — and the forgotten version still compiles and still returns rows.
+
+This matters because **isolation fails silently**: a missing `WHERE user_id = ...` does not raise,
+does not log, and returns *more* data rather than less. It looks exactly like a working feature.
+Two tests assert the bypass cannot be written — no `select(Run)` without the filter, no raw SQL
+over `memories` without one — and both were verified by reintroducing it.
+
+**The corpus is shared on purpose.** `documents.user_id` is nullable, and NULL means the system
+corpus: readable by everyone. AMOS's own documentation *is* the corpus, and a private copy per
+user would mean re-embedding it per user to isolate data that is already public in this
+repository. It is the one place isolation is deliberately not total.
+
+**The worker acts as the run's owner**, read from the claimed row — never unscoped. Otherwise the
+one component that touches every user's runs would be the one component with no isolation.
+
+### Residual risks, stated
+
+| Risk | Status |
+|---|---|
+| A leaked key is full access for that user | **No rotation endpoint.** Delete and recreate the user. |
+| No authorization within an account | Every authenticated user can call every endpoint |
+| No audit of authentication attempts | A brute-force attempt leaves no distinguishable trace |
+| No inbound rate limiting | Unchanged from V0.2 |
+| **No database means no authentication** | The API runs unauthenticated as a single local user, and logs a warning at startup. No users exist to check against, and requiring a key would break "runs without infrastructure" |

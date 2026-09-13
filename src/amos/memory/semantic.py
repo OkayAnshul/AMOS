@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from amos.auth import Actor
 from amos.observability import log_event
 from amos.rag.embeddings import EmbeddingProvider
 from amos.rag.store import _to_pgvector
@@ -71,9 +72,13 @@ class Fact:
 class SemanticMemory:
     """Stores and recalls durable facts."""
 
-    def __init__(self, session: AsyncSession, embeddings: EmbeddingProvider) -> None:
+    def __init__(self, session: AsyncSession, embeddings: EmbeddingProvider, actor: Actor) -> None:
         self._session = session
         self._embeddings = embeddings
+        # V1.4: a memory is a fact about a *person*, so every statement here
+        # is scoped. Constructed with the owner for the same reason
+        # RunRepository is — there is no store without one (ADR-013).
+        self._actor = actor
 
     async def remember(
         self,
@@ -103,14 +108,15 @@ class SemanticMemory:
             sql_text(
                 """
                 INSERT INTO memories
-                    (id, subject, content, confidence, source_run_id, embedding)
+                    (id, user_id, subject, content, confidence, source_run_id, embedding)
                 VALUES
-                    (:id, :subject, :content, :confidence, :run_id,
+                    (:id, :user_id, :subject, :content, :confidence, :run_id,
                      CAST(:embedding AS vector))
                 """
             ),
             {
                 "id": str(new_id),
+                "user_id": str(self._actor.id),
                 "subject": key,
                 "content": content,
                 "confidence": confidence,
@@ -125,10 +131,10 @@ class SemanticMemory:
             sql_text(
                 "UPDATE memories SET superseded_by = :new_id "
                 "WHERE subject = :subject AND superseded_by IS NULL "
-                "AND id <> :new_id "
+                "AND id <> :new_id AND user_id = :user_id "
                 "RETURNING id"
             ),
-            {"new_id": str(new_id), "subject": key},
+            {"new_id": str(new_id), "subject": key, "user_id": str(self._actor.id)},
         )
         superseded = [row.id for row in result]
         log_event(
@@ -144,9 +150,9 @@ class SemanticMemory:
         result = await self._session.execute(
             sql_text(
                 "SELECT id, subject, content, confidence FROM memories "
-                "WHERE subject = :subject AND superseded_by IS NULL"
+                "WHERE subject = :subject AND superseded_by IS NULL AND user_id = :user_id"
             ),
-            {"subject": normalise_subject(subject)},
+            {"subject": normalise_subject(subject), "user_id": str(self._actor.id)},
         )
         row = result.first()
         if row is None:
@@ -168,12 +174,16 @@ class SemanticMemory:
                 SELECT id, subject, content, confidence,
                        1 - (embedding <=> CAST(:embedding AS vector)) AS score
                 FROM memories
-                WHERE superseded_by IS NULL AND embedding IS NOT NULL
+                WHERE superseded_by IS NULL AND embedding IS NOT NULL AND user_id = :user_id
                 ORDER BY embedding <=> CAST(:embedding AS vector)
                 LIMIT :limit
                 """
             ),
-            {"embedding": _to_pgvector(embedding), "limit": limit},
+            {
+                "embedding": _to_pgvector(embedding),
+                "limit": limit,
+                "user_id": str(self._actor.id),
+            },
         )
         return [
             Fact(
@@ -195,9 +205,10 @@ class SemanticMemory:
         result = await self._session.execute(
             sql_text(
                 "SELECT id, subject, content, confidence, superseded_by "
-                "FROM memories WHERE subject = :subject ORDER BY created_at DESC"
+                "FROM memories WHERE subject = :subject AND user_id = :user_id "
+                "ORDER BY created_at DESC"
             ),
-            {"subject": normalise_subject(subject)},
+            {"subject": normalise_subject(subject), "user_id": str(self._actor.id)},
         )
         return [
             Fact(
@@ -212,6 +223,9 @@ class SemanticMemory:
 
     async def count_current(self) -> int:
         result = await self._session.execute(
-            sql_text("SELECT count(*) FROM memories WHERE superseded_by IS NULL")
+            sql_text(
+                "SELECT count(*) FROM memories WHERE superseded_by IS NULL AND user_id = :user_id"
+            ),
+            {"user_id": str(self._actor.id)},
         )
         return int(result.scalar_one())

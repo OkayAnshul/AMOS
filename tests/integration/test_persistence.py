@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence
 from amos.api.persistence import RunService
+from amos.auth import Actor
 from amos.database.models import Run
 from amos.database.repository import RunRepository, RunStatus
 from amos.errors import ProviderTimeoutError
@@ -72,8 +73,8 @@ class FakeAgent:
 # ---------- repository ----------
 
 
-async def test_run_is_persisted_with_full_trace(db_session: AsyncSession) -> None:
-    repo = RunRepository(db_session)
+async def test_run_is_persisted_with_full_trace(db_session: AsyncSession, actor: Actor) -> None:
+    repo = RunRepository(db_session, actor)
     run = await repo.create_run(goal="What is 17% of 2340 plus 88?", request_id="req-1")
     await repo.record_success(run, sample_result())
 
@@ -92,9 +93,10 @@ async def test_run_is_persisted_with_full_trace(db_session: AsyncSession) -> Non
 
 async def test_trace_is_complete_every_call_reachable_from_the_run(
     db_session: AsyncSession,
+    actor: Actor,
 ) -> None:
     """The V0.3 promise: nothing that happened is missing from the trace."""
-    repo = RunRepository(db_session)
+    repo = RunRepository(db_session, actor)
     result = sample_result()
     run = await repo.create_run(goal="g", request_id="r")
     await repo.record_success(run, result)
@@ -109,9 +111,9 @@ async def test_trace_is_complete_every_call_reachable_from_the_run(
     assert all(t.run_id == run.id for t in stored.tool_calls)
 
 
-async def test_failed_run_keeps_its_partial_trace(db_session: AsyncSession) -> None:
+async def test_failed_run_keeps_its_partial_trace(db_session: AsyncSession, actor: Actor) -> None:
     """A failure that burned tokens must show that it did."""
-    repo = RunRepository(db_session)
+    repo = RunRepository(db_session, actor)
     run = await repo.create_run(goal="g", request_id="r")
     await repo.record_failure(run, "ProviderTimeoutError", "timed out", sample_result())
 
@@ -125,9 +127,9 @@ async def test_failed_run_keeps_its_partial_trace(db_session: AsyncSession) -> N
     assert stored.steps[0].status == "FAILED"
 
 
-async def test_run_is_recorded_before_execution(db_session: AsyncSession) -> None:
+async def test_run_is_recorded_before_execution(db_session: AsyncSession, actor: Actor) -> None:
     """A crash mid-run must still leave evidence the run was attempted."""
-    repo = RunRepository(db_session)
+    repo = RunRepository(db_session, actor)
     run = await repo.create_run(goal="g", request_id="r")
     assert run.status == RunStatus.RECEIVED
 
@@ -135,12 +137,14 @@ async def test_run_is_recorded_before_execution(db_session: AsyncSession) -> Non
     assert stored is not None, "the row exists before any result does"
 
 
-async def test_unknown_run_id_returns_none(db_session: AsyncSession) -> None:
-    assert await RunRepository(db_session).get_trace(uuid.uuid4()) is None
+async def test_unknown_run_id_returns_none(db_session: AsyncSession, actor: Actor) -> None:
+    assert await RunRepository(db_session, actor).get_trace(uuid.uuid4()) is None
 
 
-async def test_cascade_delete_removes_child_rows(db_session: AsyncSession) -> None:
-    repo = RunRepository(db_session)
+async def test_cascade_delete_removes_child_rows(
+    db_session: AsyncSession, actor: Actor, factory_actor: Actor
+) -> None:
+    repo = RunRepository(db_session, actor)
     run = await repo.create_run(goal="g", request_id="r")
     await repo.record_success(run, sample_result())
     run_id = run.id
@@ -155,14 +159,17 @@ async def test_cascade_delete_removes_child_rows(db_session: AsyncSession) -> No
 
 async def test_idempotent_resubmit_returns_the_original_run(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     """Without this, a client timeout plus a retry silently doubles the cost."""
     agent = FakeAgent(sample_result())
     service = RunService(agent, db_factory)
     key = f"key-{uuid.uuid4()}"
 
-    _, first_id = await service.execute("goal", request_id="r1", idempotency_key=key)
-    _, second_id = await service.execute("goal", request_id="r2", idempotency_key=key)
+    _, first_id = await service.execute("goal", factory_actor, request_id="r1", idempotency_key=key)
+    _, second_id = await service.execute(
+        "goal", factory_actor, request_id="r2", idempotency_key=key
+    )
 
     assert first_id == second_id
     assert agent.calls == 1, "the second submit must not re-run the agent"
@@ -174,12 +181,17 @@ async def test_idempotent_resubmit_returns_the_original_run(
 
 async def test_different_keys_create_different_runs(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     agent = FakeAgent(sample_result())
     service = RunService(agent, db_factory)
 
-    _, a = await service.execute("goal", request_id="r", idempotency_key=f"k-{uuid.uuid4()}")
-    _, b = await service.execute("goal", request_id="r", idempotency_key=f"k-{uuid.uuid4()}")
+    _, a = await service.execute(
+        "goal", factory_actor, request_id="r", idempotency_key=f"k-{uuid.uuid4()}"
+    )
+    _, b = await service.execute(
+        "goal", factory_actor, request_id="r", idempotency_key=f"k-{uuid.uuid4()}"
+    )
 
     assert a != b
     assert agent.calls == 2
@@ -191,12 +203,13 @@ async def test_different_keys_create_different_runs(
 
 async def test_no_key_means_no_deduplication(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     agent = FakeAgent(sample_result())
     service = RunService(agent, db_factory)
 
-    _, a = await service.execute("goal", request_id="r")
-    _, b = await service.execute("goal", request_id="r")
+    _, a = await service.execute("goal", factory_actor, request_id="r")
+    _, b = await service.execute("goal", factory_actor, request_id="r")
 
     assert a != b
     assert agent.calls == 2
@@ -208,14 +221,15 @@ async def test_no_key_means_no_deduplication(
 
 async def test_agent_failure_is_recorded_then_reraised(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     service = RunService(FakeAgent(ProviderTimeoutError("timed out")), db_factory)
 
     with pytest.raises(ProviderTimeoutError):
-        await service.execute("goal", request_id="r")
+        await service.execute("goal", factory_actor, request_id="r")
 
     async with db_factory() as session:
-        runs = await RunRepository(session).list_recent(limit=1)
+        runs = await RunRepository(session, factory_actor).list_recent(limit=1)
         assert runs[0].status == RunStatus.FAILED
         assert runs[0].error is not None
         await session.execute(delete(Run).where(Run.id == runs[0].id))
@@ -227,15 +241,16 @@ async def test_agent_failure_is_recorded_then_reraised(
 
 async def test_trace_is_assembled_from_stored_rows_only(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     """The trace must be answerable by a process that never saw the run."""
     service = RunService(FakeAgent(sample_result()), db_factory)
-    _, run_id = await service.execute("What is 17% of 2340?", request_id="req-x")
+    _, run_id = await service.execute("What is 17% of 2340?", factory_actor, request_id="req-x")
     assert run_id is not None
 
     # A brand-new service instance — nothing in memory from the execution.
     fresh = RunService(FakeAgent(sample_result()), db_factory)
-    trace = await fresh.get_trace(run_id)
+    trace = await fresh.get_trace(run_id, factory_actor)
 
     assert trace is not None
     assert trace.goal == "What is 17% of 2340?"
@@ -253,10 +268,11 @@ async def test_trace_is_assembled_from_stored_rows_only(
 
 async def test_trace_records_the_arguments_a_tool_was_called_with(
     db_session: AsyncSession,
+    actor: Actor,
 ) -> None:
     """A trace without inputs is half a trace: you can see what came back but
     not what was asked, which is exactly what you need when debugging."""
-    repo = RunRepository(db_session)
+    repo = RunRepository(db_session, actor)
     result = sample_result()
     result.tool_outcomes[0].arguments = {"expression": "2340 * 0.17"}
 
@@ -273,12 +289,13 @@ async def test_trace_records_the_arguments_a_tool_was_called_with(
 
 async def test_task_dag_is_persisted_with_resolved_dependencies(
     db_session: AsyncSession,
+    actor: Actor,
 ) -> None:
     """Stored dependencies are row UUIDs, not the planner's symbolic refs, so the
     graph stays intact without the plan text."""
     from amos.agents.schemas import TaskRecord
 
-    repo = RunRepository(db_session)
+    repo = RunRepository(db_session, actor)
     result = sample_result()
     result.tasks = [
         TaskRecord(
@@ -311,11 +328,12 @@ async def test_task_dag_is_persisted_with_resolved_dependencies(
 
 async def test_partially_completed_run_is_not_recorded_as_success(
     db_session: AsyncSession,
+    actor: Actor,
 ) -> None:
     """A run where some tasks failed must not read as an unqualified success."""
     from amos.agents.schemas import TaskRecord
 
-    repo = RunRepository(db_session)
+    repo = RunRepository(db_session, actor)
     result = sample_result()
     result.outcome = "PARTIALLY_COMPLETED"
     result.tasks = [

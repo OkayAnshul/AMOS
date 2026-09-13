@@ -427,3 +427,46 @@ cannot do*. The second cannot be replaced by the first because the need is disco
 execution rather than predictable before it.
 *Reconsider if:* delegation depth needs to exceed 2, which would mean the planner should have
 decomposed instead.
+
+---
+
+## 2026-09-13 — Session 14 (V1.4, authentication and isolation)
+
+**ADR-013 — authentication, and isolation enforced where queries are built.** Full record in
+`docs/03-architecture-decisions.md`. It is also a **reversal**: multi-tenancy was an explicit
+non-goal, and `01-requirements.md` records that it was removed rather than silently dropped.
+
+**Isolation is enforced at construction, not per call.**
+*Why:* isolation fails *silently* — a missing filter returns more data rather than less, so it
+looks like a working feature. A `user_id` parameter is one forgotten argument away from a leak, in
+a version that still compiles and still returns rows. There is no repository without an owner.
+*Backed by:* two static guards, each verified by reintroducing the bypass.
+*Reconsider if:* a second service shares this database — then row-level security.
+
+**API keys, hashed, not JWT.**
+*Why:* stateless verification is worth complexity when many services check auth without sharing a
+store. One process, one database: it buys nothing and costs key management.
+
+**The worker acts as the run's owner.**
+*Why:* an unscoped worker would make the one component that touches every user's runs the one
+component with no isolation.
+
+**Memory tools resolve the owner from the run, not a second contextvar.**
+*Why:* ambient identity is how a query ends up scoped to whoever happened to be in the contextvar.
+One ambient value, and the scope follows the data.
+*Cost:* one indexed lookup per memory-tool call.
+
+**`documents.user_id` is nullable; NULL is the shared system corpus.**
+*Why:* AMOS's own documentation *is* the corpus. A private copy per user means re-embedding ~300
+chunks per user to isolate data already public in this repository.
+*This is the one place isolation is deliberately not total*, which is why it is written down.
+
+**Without a database, the API is unauthenticated — and warns.**
+*Why:* no users to check against, nothing stored, no isolation to enforce. Requiring a key would
+break "runs without infrastructure", a property held since V0.3 with its own CI job.
+*Why a `logger.warning` and not a log field:* `authenticated=false` in structured output is easy
+to miss, and an operator assuming V1.4's auth applies would expose an open API.
+
+**404, not 403, for another user's run.**
+*Why:* confirming a run exists but is not yours is itself a leak. Falls out of the scoped query
+rather than being special-cased.

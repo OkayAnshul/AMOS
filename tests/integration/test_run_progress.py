@@ -54,7 +54,7 @@ def execution(plan_ref: str, state: TaskState, answer: str | None = None) -> Tas
 
 
 @pytest.fixture
-async def run_id(db_factory: async_sessionmaker):  # type: ignore[type-arg]
+async def run_id(db_factory: async_sessionmaker, factory_actor):  # type: ignore[type-arg,no-untyped-def]
     """A committed run row, removed afterwards.
 
     Committed rather than rolled back: the point of these tests is what another
@@ -62,7 +62,14 @@ async def run_id(db_factory: async_sessionmaker):  # type: ignore[type-arg]
     """
     new_id = uuid.uuid4()
     async with session_scope(db_factory) as session:
-        session.add(Run(id=new_id, goal_text="compare two designs", status="QUEUED"))
+        session.add(
+            Run(
+                id=new_id,
+                user_id=factory_actor.id,
+                goal_text="compare two designs",
+                status="QUEUED",
+            )
+        )
     set_current_run_id(str(new_id))
     try:
         yield new_id

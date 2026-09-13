@@ -467,10 +467,60 @@ distribution mechanisms are defensible.
 
 ---
 
-## Beyond V1.3
+## V1.4 — Authentication and Multi-User Isolation
 
-Chosen 2026-09-13, still needing its ADR before any code: **V1.4** authentication and multi-user
-isolation.
+**Objective** Make AMOS exposable *in principle*: give it a notion of who is asking, and make one
+user's data unreachable by another.
+**User capability** An API key identifies the caller; runs and memories are private to their
+owner.
+**Architecture** Adds a `users` table and an auth dependency. Repositories are constructed with
+their owner.
+**Technologies** None new — hashlib and the existing database.
+
+**Learn** Authentication versus authorization · why hashed credentials · why isolation fails
+*silently* and what that implies for where it is enforced · backfilling a NOT NULL column.
+
+**Implementation** SHA-256-hashed API keys, `Authorization: Bearer` (ADR-013) · `user_id` on
+`runs` and `memories`, **nullable on `documents`** where NULL is the shared system corpus ·
+scoping applied where queries are built, so there is no repository without an owner · the worker
+acts as the run's owner · memory tools resolve the owner from the run rather than a second ambient
+value · one reversible migration with a backfill.
+
+**Tests** One user cannot read another's run, list, trace, fact, history or count · idempotency
+keys are per-user · supersession does not reach across users · an unauthenticated goal is rejected
+**before any model call** · missing, malformed and wrong keys are indistinguishable · two
+structural guards asserting the bypass cannot be written, both verified by reintroducing it.
+
+**Demo** Create two users; each submits a goal and stores a fact; neither can fetch the other's
+trace (404, not 403 — confirming existence is itself a leak) or recall the other's fact.
+
+**Definition of Done** As before, plus ADR-013, `docs/interview/security.md`, and the reversal
+recorded in `01-requirements.md` rather than silently applied.
+
+**Failure modes handled** A forgotten filter (made unwritable) · a leaked database (hashes only) ·
+a worker with no owner · a memory tool with no owning run · an existing database full of
+unowned rows.
+
+**Resume value** "Multi-tenant data isolation enforced at the persistence layer, with hashed
+API-key authentication and structural guards preventing unscoped queries."
+**Interview value** Why identity came last when security did not · why isolation fails silently
+and what follows from that · why enforce at construction rather than per call · why the corpus is
+deliberately shared · why 404 rather than 403.
+**Future extension** Authorization; key rotation; row-level security.
+
+> **STOPPING POINT** — The first version that could honestly be exposed to a second person. Still
+> **not** safe to expose publicly: no TLS, no rate limiting, no key rotation, and no authorization
+> within an account.
+
+---
+
+## Beyond V1.4
+
+Nothing is chosen. Candidates, each needing an ADR: **authorization** (the gap most likely to be
+mistaken for solved, because "we have auth" is routinely used to mean both) · key rotation and an
+audit of authentication attempts · TLS and inbound rate limiting · row-level security · a web UI ·
+independently authored golden sets · hybrid search and reranking · a per-run cost budget ·
+re-planning on failure.
 
 Unscheduled, and only with a real driver: MCP tool transport · human-approval workflows · a web
 UI · Temporal for durable workflows · Kubernetes · hybrid search and reranking · a per-run cost

@@ -32,10 +32,34 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
 
+from amos.auth import actor_for_run
 from amos.memory.episodic import EpisodicMemory
 from amos.memory.semantic import SemanticMemory
 from amos.observability import get_current_run_id
 from amos.tools.base import Permission, Tool
+
+
+def current_run_uuid(override: uuid.UUID | None = None) -> uuid.UUID | None:
+    """The run this tool call belongs to.
+
+    Provenance for a stored fact, and — since V1.4 — how the tool learns **whose**
+    memory it is: the owner is looked up from the run rather than carried as a
+    second ambient value (`amos.auth.actor_for_run`).
+
+    The tool is built once at startup, before any run exists, so the run id
+    cannot be a constructor argument. It comes from a contextvar set by
+    RunService and by the worker — the same pattern as the request id threaded
+    since V0.1.
+    """
+    if override is not None:
+        return override
+    current = get_current_run_id()
+    if current is None:
+        return None
+    try:
+        return uuid.UUID(current)
+    except ValueError:
+        return None
 
 
 class RememberArgs(BaseModel):
@@ -72,27 +96,19 @@ class RememberFactTool(Tool):
         self._run_id = run_id
 
     def _source_run_id(self) -> uuid.UUID | None:
-        """Provenance for this fact.
-
-        The tool is built once at startup, before any run exists, so the run id
-        cannot be a constructor argument. It comes from a contextvar set by
-        RunService — the same pattern as the request id threaded since V0.1.
-        """
-        if self._run_id is not None:
-            return self._run_id
-        current = get_current_run_id()
-        if current is None:
-            return None
-        try:
-            return uuid.UUID(current)
-        except ValueError:
-            return None
+        return current_run_uuid(self._run_id)
 
     async def _run(self, args: RememberArgs) -> dict[str, Any]:
         from amos.database.engine import session_scope
 
         async with session_scope(self._factory) as session:
-            memory = SemanticMemory(session, self._embeddings)
+            actor = await actor_for_run(session, self._source_run_id())
+            if actor is None:
+                return {
+                    "stored": False,
+                    "reason": "No owning run for this call, so there is nobody to remember for.",
+                }
+            memory = SemanticMemory(session, self._embeddings, actor)
             previous = await memory.recall_exact(args.subject)
             fact = await memory.remember(
                 args.subject, args.content, source_run_id=self._source_run_id()
@@ -149,7 +165,21 @@ class RecallFactsTool(Tool):
         from amos.database.engine import session_scope
 
         async with session_scope(self._factory) as session:
-            memory = SemanticMemory(session, self._embeddings)
+            actor = await actor_for_run(session, current_run_uuid())
+            if actor is None:
+                # No owning run means no owner, and a memory store with no owner
+                # would have to read everybody's. Refusing is the only safe
+                # answer, and saying so lets the model proceed honestly.
+                return {
+                    "found": 0,
+                    "match": "none",
+                    "facts": [],
+                    "instruction": (
+                        "Memory is unavailable for this call. Do not invent a "
+                        "remembered fact; say you do not have this stored."
+                    ),
+                }
+            memory = SemanticMemory(session, self._embeddings, actor)
 
             # Exact first, always. If the caller knows the key, a ranking is the
             # wrong answer — it can return a similar fact about someone else.

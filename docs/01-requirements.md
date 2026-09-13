@@ -62,6 +62,25 @@ target can be set later from data rather than guessed now.
 
 ## Explicit non-goals
 
-Multi-tenancy. Horizontal scale. High availability. Real-time streaming UI. Fine-tuning or
-model training. Mobile clients. These are not deferred-and-planned; they are **out of scope**,
-and pretending otherwise would distort the architecture.
+Horizontal scale. High availability. Real-time streaming UI. Fine-tuning or model training.
+Mobile clients. These are not deferred-and-planned; they are **out of scope**, and pretending
+otherwise would distort the architecture.
+
+> **Multi-tenancy was on this list until 2026-09-13 and was removed by ADR-013.** It is recorded
+> here rather than silently deleted, because a non-goal that quietly becomes a goal is how a
+> requirements document stops being trustworthy. The original entry was right for V0.1–V1.3:
+> building isolation before there was anything to isolate would have distorted the architecture.
+> V1.4 built it once, against a schema that had stopped moving.
+>
+> What changed with it: F-19 and F-20 below, three rows in `13-security.md`, and the "single
+> user" framing throughout `05-data-model.md`.
+
+**Added at V1.4:**
+
+| ID | Requirement | Milestone |
+|---|---|---|
+| F-19 | Authenticate every request against a stored credential, and reject unauthenticated ones before any model call | V1.4 |
+| F-20 | Scope every run and memory to its owner, enforced where queries are built rather than in handlers | V1.4 |
+
+- N-18 Isolation is enforced at construction, not per call: there is no repository without an
+  owner. A missing filter must be impossible to write, not merely absent. (V1.4)

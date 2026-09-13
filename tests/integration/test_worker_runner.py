@@ -9,6 +9,7 @@ from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence
+from amos.auth import Actor
 from amos.database.engine import session_scope
 from amos.database.models import Run
 from amos.database.repository import RunRepository
@@ -41,9 +42,11 @@ class ScriptedAgent:
         return self.outcome  # type: ignore[return-value]
 
 
-async def queue_a_run(factory: async_sessionmaker[AsyncSession], goal: str) -> uuid.UUID:
+async def queue_a_run(
+    factory: async_sessionmaker[AsyncSession], actor: Actor, goal: str = "a goal"
+) -> uuid.UUID:
     async with session_scope(factory) as session:
-        run = await RunRepository(session).create_run(goal=goal, request_id="r")
+        run = await RunRepository(session, actor).create_run(goal=goal, request_id="r")
         await enqueue(session, run.id)
         return run.id
 
@@ -63,8 +66,9 @@ async def cleanup(factory: async_sessionmaker[AsyncSession], *ids: uuid.UUID) ->
 
 async def test_the_worker_executes_a_queued_run(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
-    run_id = await queue_a_run(db_factory, "a queued goal")
+    run_id = await queue_a_run(db_factory, factory_actor, "a queued goal")
     agent = ScriptedAgent()
     worker = Worker(db_factory, lambda: agent)
 
@@ -85,9 +89,10 @@ async def test_run_once_reports_when_there_is_nothing_to_do(
 
 async def test_a_failing_run_does_not_kill_the_worker(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     """A worker that dies on one bad run stops draining the queue entirely."""
-    run_id = await queue_a_run(db_factory, "will fail")
+    run_id = await queue_a_run(db_factory, factory_actor, "will fail")
     agent = ScriptedAgent(ProviderTimeoutError("timed out"))
     worker = Worker(db_factory, lambda: agent, max_attempts=3)
 
@@ -97,10 +102,11 @@ async def test_a_failing_run_does_not_kill_the_worker(
 
 async def test_an_unexpected_exception_is_also_survived(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     """Not just AmosError — anything. An unhandled exception in one run must not
     take the worker down."""
-    run_id = await queue_a_run(db_factory, "will explode")
+    run_id = await queue_a_run(db_factory, factory_actor, "will explode")
     worker = Worker(db_factory, lambda: ScriptedAgent(RuntimeError("boom")))
 
     assert await worker.run_once() is True
@@ -109,9 +115,10 @@ async def test_an_unexpected_exception_is_also_survived(
 
 async def test_a_run_that_exhausts_its_attempts_is_given_up(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     """The poison-message ceiling, end to end."""
-    run_id = await queue_a_run(db_factory, "always fails")
+    run_id = await queue_a_run(db_factory, factory_actor, "always fails")
     async with session_scope(db_factory) as session:
         await session.execute(
             text("UPDATE runs SET attempt_count = 2 WHERE id = :id"), {"id": str(run_id)}
@@ -129,9 +136,10 @@ async def test_a_run_that_exhausts_its_attempts_is_given_up(
 
 async def test_the_worker_id_identifies_who_holds_a_run(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     """So a stuck run names its owner rather than being anonymous."""
-    run_id = await queue_a_run(db_factory, "goal")
+    run_id = await queue_a_run(db_factory, factory_actor, "goal")
     worker = Worker(db_factory, ScriptedAgent, worker_id="worker-alpha")
     await worker.run_once()
 
@@ -145,8 +153,9 @@ async def test_the_worker_id_identifies_who_holds_a_run(
 
 async def test_sweep_returns_abandoned_runs_to_the_queue(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
-    run_id = await queue_a_run(db_factory, "abandoned")
+    run_id = await queue_a_run(db_factory, factory_actor, "abandoned")
     async with session_scope(db_factory) as session:
         await session.execute(
             text(
@@ -164,8 +173,9 @@ async def test_sweep_returns_abandoned_runs_to_the_queue(
 
 async def test_completed_runs_are_counted(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
-    ids = [await queue_a_run(db_factory, f"g{i}") for i in range(2)]
+    ids = [await queue_a_run(db_factory, factory_actor, f"g{i}") for i in range(2)]
     worker = Worker(db_factory, ScriptedAgent)
     await worker.run_once()
     await worker.run_once()
@@ -176,6 +186,7 @@ async def test_completed_runs_are_counted(
 
 async def test_the_worker_puts_the_run_id_in_context(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     """Without this the plan store and task checkpoint are inert in the worker
     (ADR-010) — and the worker is the only place a reclaim happens, so a
@@ -196,7 +207,7 @@ async def test_the_worker_puts_the_run_id_in_context(
             seen.append(get_current_run_id())
             return result()
 
-    run_id = await queue_a_run(db_factory, "context")
+    run_id = await queue_a_run(db_factory, factory_actor, "context")
     worker = Worker(db_factory, ContextReadingAgent)
     await worker.run_once()
 
@@ -206,13 +217,14 @@ async def test_the_worker_puts_the_run_id_in_context(
 
 async def test_the_run_id_does_not_leak_into_the_next_claim(
     db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
 ) -> None:
     """A worker is a long-lived loop. A run id left in the contextvar would make
     the *next* run's checkpoints land on the previous run's rows.
     """
     from amos.observability import get_current_run_id
 
-    run_id = await queue_a_run(db_factory, "first")
+    run_id = await queue_a_run(db_factory, factory_actor, "first")
     worker = Worker(db_factory, ScriptedAgent)
     await worker.run_once()
 

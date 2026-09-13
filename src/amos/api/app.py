@@ -10,8 +10,9 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from amos import __version__
@@ -20,8 +21,9 @@ from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent
 from amos.api.dependencies import build_agent, build_provider, build_registry
 from amos.api.persistence import RunService
+from amos.auth import LOCAL_ACTOR, Actor, authenticate, key_from_header
 from amos.config import Settings, get_settings
-from amos.database.engine import create_engine, create_session_factory
+from amos.database.engine import create_engine, create_session_factory, session_scope
 from amos.errors import (
     AmosError,
     ConfigurationError,
@@ -64,6 +66,51 @@ def _status_for(exc: AmosError) -> int:
         if isinstance(exc, error_type):
             return status
     return 500
+
+
+async def current_actor(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> Actor:
+    """Who is asking. 401 for anything that is not a valid key.
+
+    A dependency rather than middleware, so an endpoint that needs no identity
+    (`/health`) simply does not declare it — rather than being exempted by a
+    path list somebody has to remember to maintain.
+
+    **Module level, deliberately.** Defined inside `create_app` it was a local
+    name, and `from __future__ import annotations` makes FastAPI resolve the
+    annotation as a *string* against module globals — where it was not found, so
+    every protected endpoint silently treated `actor` as a query parameter and
+    answered 422 instead of 401. The symptom looked nothing like the cause.
+    """
+    service: RunService = request.app.state.run_service
+    if service.session_factory is None:
+        # No database means no users, nothing stored, and no isolation to
+        # enforce. Requiring a key here would mean the API could not run without
+        # infrastructure at all — a property held since V0.3, with its own CI
+        # job. The cost is that this deployment is unauthenticated, which is
+        # logged at startup and stated in docs/13-security.md.
+        return LOCAL_ACTOR
+
+    async with session_scope(service.session_factory) as session:
+        actor = await authenticate(session, key_from_header(authorization))
+
+    if actor is None:
+        # One failure path for missing, malformed and wrong keys. The distinction
+        # is not useful to a client, and enumerating it tells an attacker which
+        # half of their guess was right.
+        raise HTTPException(
+            status_code=401,
+            detail="Provide a valid API key: Authorization: Bearer <key>",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return actor
+
+
+#: Annotated rather than a Depends() default: the modern FastAPI idiom, and it
+#: keeps a function call out of an argument default.
+CurrentActor = Annotated[Actor, Depends(current_actor)]
 
 
 def create_app(
@@ -135,7 +182,16 @@ def create_app(
             planning=isinstance(app.state.agent, Orchestrator),
             tracing=tracing_on,
             persistence=app.state.run_service.persistence_enabled,
+            authenticated=app.state.run_service.persistence_enabled,
         )
+        if not app.state.run_service.persistence_enabled:
+            # Loud, because the alternative is an operator assuming V1.4's auth
+            # applies and exposing an open API. `authenticated=false` in a log
+            # line is easy to miss; a warning is not.
+            logger.warning(
+                "AMOS is running WITHOUT a database, so the API is UNAUTHENTICATED. "
+                "Every request acts as the single local user. Do not expose this."
+            )
         try:
             yield
         finally:
@@ -195,6 +251,7 @@ def create_app(
     @app.post("/v1/goals", response_model=AgentResult)
     async def submit_goal(
         payload: GoalRequest,
+        actor: CurrentActor,
         idempotency_key: str | None = Header(default=None, alias="idempotency-key"),
     ) -> AgentResult:
         log_event(
@@ -206,6 +263,7 @@ def create_app(
         service: RunService = app.state.run_service
         result, run_id = await service.execute(
             payload.goal,
+            actor,
             request_id=get_request_id() or "",
             idempotency_key=idempotency_key,
         )
@@ -227,6 +285,7 @@ def create_app(
         async def submit_goal_async(
             payload: GoalRequest,
             response: Response,
+            actor: CurrentActor,
             idempotency_key: str | None = Header(default=None, alias="idempotency-key"),
         ) -> QueuedRun:
             """Queue a goal for a worker and return immediately.
@@ -238,6 +297,7 @@ def create_app(
             service: RunService = app.state.run_service
             run_id = await service.enqueue_only(
                 payload.goal,
+                actor,
                 request_id=get_request_id() or "",
                 idempotency_key=idempotency_key,
             )
@@ -251,7 +311,7 @@ def create_app(
     # binds as a run_id and the request dies on the UUID check — a 422 on a path
     # that exists. The ordering is load-bearing; the test below pins it.
     @app.get("/v1/runs/dead-letter", response_model=list[DeadLetteredRun])
-    async def list_dead_lettered(limit: int = 50) -> list[DeadLetteredRun]:
+    async def list_dead_lettered(actor: CurrentActor, limit: int = 50) -> list[DeadLetteredRun]:
         """Runs the queue gave up on, newest first.
 
         These are not ordinary failures. A FAILED run executed and produced a
@@ -268,7 +328,7 @@ def create_app(
         return await service.list_dead_letter(min(max(limit, 1), 200))
 
     @app.get("/v1/runs/{run_id}", response_model=RunTrace)
-    async def get_run_trace(run_id: str) -> RunTrace:
+    async def get_run_trace(run_id: str, actor: CurrentActor) -> RunTrace:
         """What exactly happened on this request.
 
         Assembled from stored rows only, so it answers for runs that finished
@@ -285,7 +345,7 @@ def create_app(
                 status_code=503,
                 detail="Persistence is not configured; set AMOS_DATABASE_URL.",
             )
-        trace = await service.get_trace(parsed)
+        trace = await service.get_trace(parsed, actor)
         if trace is None:
             raise HTTPException(status_code=404, detail=f"No run with id {run_id}")
         return trace

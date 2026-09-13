@@ -6,8 +6,11 @@ stores, so the tool's own behaviour is under test rather than the SQL.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
+from amos.auth import Actor
 from amos.memory.tools import RecallFactsTool, RememberFactTool
 from amos.tools.base import ToolCall, ToolStatus
 
@@ -57,6 +60,37 @@ async def test_recall_rejects_an_empty_query() -> None:
     assert outcome.status is ToolStatus.INVALID_ARGS
 
 
+async def _fake_actor(*_args: object, **_kwargs: object) -> Actor:
+    """Stands in for the run-owner lookup (V1.4)."""
+    return Actor(id=uuid.UUID(int=1), name="test")
+
+
+async def test_recall_refuses_rather_than_guessing_when_there_is_no_owner(
+    monkeypatch,  # type: ignore[no-untyped-def]
+) -> None:
+    """A memory store with no owner would have to read everybody's.
+
+    Refusing is the only safe answer, and saying so in the instruction is what
+    lets the model proceed honestly instead of inventing a remembered fact.
+    """
+
+    async def _no_actor(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("amos.memory.tools.actor_for_run", _no_actor)
+    monkeypatch.setattr("amos.database.engine.session_scope", lambda _f: _NullScope())
+
+    tool = RecallFactsTool(object(), object())
+    outcome = await tool.execute(
+        ToolCall(id="m", name="recall_facts", arguments={"query": "anything"})
+    )
+
+    assert outcome.status is ToolStatus.OK
+    assert outcome.output is not None
+    assert outcome.output["found"] == 0
+    assert "Do not invent" in outcome.output["instruction"]
+
+
 async def test_recall_prefers_an_exact_match_over_similarity(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """When the caller knows the key, a ranking is the wrong answer — it can
     return a similar fact about someone else."""
@@ -69,6 +103,8 @@ async def test_recall_prefers_an_exact_match_over_similarity(monkeypatch) -> Non
     tool = RecallFactsTool(object(), object())
 
     monkeypatch.setattr("amos.memory.tools.SemanticMemory", lambda *_a, **_k: fake)
+    # V1.4: the tool resolves the owner from the run before touching memory.
+    monkeypatch.setattr("amos.memory.tools.actor_for_run", _fake_actor)
     monkeypatch.setattr(
         "amos.database.engine.session_scope",
         lambda _f: _NullScope(),
@@ -87,6 +123,8 @@ async def test_recall_instructs_against_invention_when_nothing_is_stored(
 ) -> None:
     fake = _FakeSemantic(exact=None, similar=[])
     monkeypatch.setattr("amos.memory.tools.SemanticMemory", lambda *_a, **_k: fake)
+    # V1.4: the tool resolves the owner from the run before touching memory.
+    monkeypatch.setattr("amos.memory.tools.actor_for_run", _fake_actor)
     monkeypatch.setattr("amos.database.engine.session_scope", lambda _f: _NullScope())
 
     tool = RecallFactsTool(object(), object())
