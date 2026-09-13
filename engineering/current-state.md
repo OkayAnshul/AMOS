@@ -3,10 +3,10 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-09-13 (Session 12 — V1.2 evaluation credibility)
+**Last updated:** 2026-09-13 (Session 13 — V1.3 delegation)
 
 ## Current Version
-**V1.2 — Evaluation credibility.** The V0.1–V1.0 roadmap is complete; V1.1 and V1.2 are past it.
+**V1.3 — Delegation.** The V0.1–V1.0 roadmap is complete; V1.1–V1.3 are past it.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -16,7 +16,8 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 ## Completed Modules
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
-V0.9 observability · V1.0 evaluation · V1.1 reliability · **V1.2 evaluation credibility**
+V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
+**V1.3 delegation**
 
 ## What Works
 ```
@@ -32,7 +33,7 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 - Facts persist across process restarts; past runs findable by goal similarity
 - `GET /v1/runs/{id}` reconstructs any past run from stored rows
 - OpenTelemetry spans; goal text excluded by default, metric labels allowlisted
-- **567 tests** (569 collected, 2 live opt-in); `mypy --strict` and `ruff` clean; **CI runs
+- **587 tests** (589 collected, 2 live opt-in); `mypy --strict` and `ruff` clean; **CI runs
   with and without a database**, migrations both directions, and with no API key
 
 ### Measured
@@ -60,7 +61,8 @@ regression against it. Only deterministic rates gate; the judged score is contex
 - **`remember_fact` persists a model decision** with no approval step and no provenance check on
   *content* (the source run is now recorded)
 - No forgetting/TTL; memories accumulate forever
-- No agent-to-agent delegation; the orchestrator assigns work. `AgentTask` is defined and unused
+- Agents delegate within a task (V1.3), but **do not negotiate** — a delegate answers, it does
+  not push back or ask clarifying questions. The orchestrator still assigns all top-level work
 - No heartbeats, no graceful shutdown
 - **No human calibration of the judge** — groundedness 1.00 has no known relationship to a
   human verdict. Adversarial coverage now exists, as tests (ADR-011), but the golden sets are
@@ -83,8 +85,12 @@ regression against it. Only deterministic rates gate; the judged score is contex
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`feat/v1.2-evaluation`. Merge to `main` when reviewed. Last known good commit on `main`: the
-`v1.1` tag.
+`feat/v1.3-delegation`. Merge to `main` when reviewed. Last known good commit on `main`: the
+`v1.2` tag.
+
+**Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
+in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` now does
+bump→check→commit→tag in order so it cannot recur.
 
 ## Known Bugs
 None open. Twenty fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson
@@ -95,7 +101,8 @@ were false.
 - `steps` is one row per run; the schema supports one per task attempt.
 - `compose.yaml` **verified on podman only**; the Docker path is untested and labelled as such.
 - Backups: a documented `pg_dump` with **no restore drill**.
-- `AgentTask` is defined but unused — no agent-to-agent delegation. **V1.3 gives it a caller.**
+- **Delegation quality is unmeasured.** The bounds are tested; whether models delegate *well*
+  has no number, unlike routing accuracy.
 - `steps` still one per run: V1.1 made *tasks* incremental, not steps.
 - **`db_factory` tests commit for real and clean up at the end of the test body**, not in a
   fixture teardown — so a failing assertion leaks rows into the developer's database. Seen
@@ -138,13 +145,14 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**V1.3 — Agent-to-agent delegation.** ADR-012 is written. Give `AgentTask` a caller so a
-researcher that needs arithmetic can hand it to the analyst instead of computing in its head or
-failing — with depth, budget and self-delegation bounded **structurally**, by the tool being
-absent from the registry rather than refused.
+**V1.4 — Authentication and multi-user isolation.** The largest change in the plan. A `users`
+table, authentication on the API, and `user_id` on `runs`, `memories` and `documents`, with
+scoping enforced **in the repository layer** so a query cannot forget it. One migration with a
+backfill to a single owner.
 
-Then V1.4 auth and multi-user isolation, last because it touches every table and every query and
-is cheapest done once against a schema that has stopped moving.
+The ADR must say out loud that `docs/01-requirements.md` currently lists multi-tenancy as an
+explicit **non-goal**, and that `docs/13-security.md` has a table of controls this milestone
+flips from ❌ to ✅. The whole "single user" framing across several documents changes with it.
 
 **Worth re-running when convenient:** `make retrieval` and `make routing` still report numbers
 measured on the older, smaller sets.

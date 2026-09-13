@@ -555,3 +555,85 @@ after it: they captured no spans and failed asserting on spans that had genuinel
 **Rule adopted:** run the whole suite before committing, not the files touched. The failures were
 in a directory the change never opened.
 **Status:** ⬜ Recognise
+
+# V1.2 — Evaluation credibility
+
+## What a golden set can and cannot tell you
+**Problem it solves:** "it seems better" is not a measurement — but a small self-authored set is
+not a characterisation of quality either, and treating it as one is the more dangerous error.
+**In AMOS:** `evaluation/cases.py`, `rag/evaluation.py`, `agents/router.py`. V1.2 made all three
+larger and harder; none of them independent.
+**Read:** <https://hamel.dev/blog/posts/evals/> · <https://eugeneyan.com/writing/evals/>
+**Answer before moving on:**
+- Why does enlarging a set authored by one person not fix the independence problem?
+- The suite cost 21252 tokens at six cases and 40852 at nine. What does that imply about the
+  *method*, not just the budget?
+**Status:** ⬜ Recognise
+
+## Adversarial testing under a compromised-model assumption
+**Problem it solves:** a real-model test that passes because the model resisted the injection
+tells you about that model on that day.
+**In AMOS:** `tests/unit/rag/test_adversarial_retrieval.py` — the fake provider **complies** with
+every attack.
+**Read:** <https://simonwillison.net/series/prompt-injection/> · <https://genai.owasp.org/llm-top-10/>
+**Answer:**
+- Why is a fake that obeys the attacker a *stronger* test than a real model that refuses?
+- What is the rule for deciding whether something is an adversarial test or an eval case?
+**Status:** ⬜ Recognise
+
+## Regression gating
+**Problem it solves:** a score printed and discarded makes "did that change make things worse?"
+unanswerable.
+**In AMOS:** `evaluation/baseline.py`, `engineering/eval-baseline.json`.
+**Answer:**
+- Why is the baseline a committed file rather than a database table?
+- Why must the judged metric never gate?
+- Why does a different model or corpus report "not comparable" rather than a regression?
+**Status:** ⬜ Recognise
+
+---
+
+# V1.3 — Delegation
+
+## Structured contracts versus free-form handoff
+**Problem it solves:** a natural-language handoff is unparseable, unvalidatable and untestable.
+When the receiver misunderstands, there is nothing to point at — no field was wrong, because there
+were no fields.
+**In AMOS:** `agents/messages.py` (`AgentTask`), `agents/delegation.py`.
+**Read:** <https://a2a-protocol.org/latest/> ·
+<https://www.anthropic.com/engineering/multi-agent-research-system>
+**Answer before moving on:**
+- Why is delegation a *tool* rather than a new mechanism?
+- What does the structured contract change about the failure mode?
+**Status:** ⬜ Recognise
+
+## A bound enforced by absence
+**Problem it solves:** a depth check *inside* a tool is code that model output flows into, and can
+be argued past. A tool that is not in the registry cannot be.
+**In AMOS:** `agents/team.py` — past the cap, `delegate` is not built into the registry at all.
+**Answer:**
+- Why does this mean cycles need no separate detection?
+- Where else in AMOS is a guarantee enforced by something's absence rather than by a check?
+**Status:** ⬜ Recognise
+
+## Privilege boundaries between agents
+**Problem it solves:** delegation that moved *authority* would be a privilege-escalation path
+dressed as a feature.
+**In AMOS:** the delegate is built from its own `AgentSpec`, never the caller's.
+**Answer:**
+- What could a prompt injection achieve if a delegate inherited the caller's tools?
+- Why does strict specialisation *depend* on delegation existing?
+**Status:** ⬜ Recognise
+
+## Session-level lesson
+
+### A guard that keeps firing is doing someone else's job (Session 12)
+`test_the_version_matches_the_latest_git_tag` caught the same class of mistake **three times in
+one session**: v1.1 tagged at 1.0.0, v1.2 tagged at 1.1.0, and the original V1.0 instance it was
+written for. Each time I fixed the value.
+
+The third catch was the signal. The problem was never the version — it was that *bump, verify,
+commit, tag* is four steps in a required order performed from memory. `make release VERSION=x.y.z`
+now does all four and refuses to tag if `make check` fails.
+**Rule adopted:** when a test catches the same class twice, fix the process, not the instance.
+**Status:** ⬜ Recognise
