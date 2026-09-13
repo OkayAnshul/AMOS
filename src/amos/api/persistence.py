@@ -30,6 +30,7 @@ from amos.memory.reconcile import MemoryReconciler
 from amos.observability import log_event, set_current_run_id
 from amos.telemetry.metrics import instruments, safe_labels
 from amos.telemetry.tracing import describe_goal, span
+from amos.worker.queue import DeadLetteredRun
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,15 @@ class RunService:
 
         log_event(logger, "run.persisted", run_id=str(run_id))
         return result, run_id
+
+    async def list_dead_letter(self, limit: int = 50) -> list[DeadLetteredRun]:
+        """Runs the queue gave up on. Empty without persistence."""
+        from amos.worker.queue import list_dead_letter
+
+        if self._factory is None:
+            return []
+        async with session_scope(self._factory) as session:
+            return await list_dead_letter(session, limit)
 
     async def get_trace(self, run_id: uuid.UUID) -> RunTrace | None:
         if self._factory is None:

@@ -120,7 +120,10 @@ async def test_a_run_that_exhausts_its_attempts_is_given_up(
     worker = Worker(db_factory, lambda: ScriptedAgent(ProviderTimeoutError("x")), max_attempts=3)
     await worker.run_once()
 
-    assert await status_of(db_factory, run_id) == RunStatus.FAILED
+    # DEAD_LETTER since V1.1, not FAILED: the ceiling stopped the retries, so
+    # nobody ever got a verdict on this run. It is now collectable from
+    # GET /v1/runs/dead-letter instead of being lost among ordinary failures.
+    assert await status_of(db_factory, run_id) == RunStatus.DEAD_LETTER
     await cleanup(db_factory, run_id)
 
 

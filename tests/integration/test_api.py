@@ -154,3 +154,26 @@ def test_async_route_is_mounted_when_enabled(valid_json: str) -> None:
     agent = ToolUsingAgent(FakeProvider([valid_json]), ToolRegistry([CalculatorTool()]))  # type: ignore[arg-type]
     paths = {route.path for route in create_app(settings, agent=agent).routes}  # type: ignore[attr-defined]
     assert "/v1/goals/async" in paths
+
+
+def test_dead_letter_route_is_declared_before_the_run_id_route(valid_json: str) -> None:
+    """FastAPI matches routes in declaration order.
+
+    With `/v1/runs/{run_id}` first, "dead-letter" binds as a run_id and the
+    request dies on the UUID check — a 422 on a path that exists, and a
+    genuinely confusing one. The ordering is load-bearing, so it is pinned here
+    rather than left to whoever next edits the file.
+    """
+    agent = ToolUsingAgent(FakeProvider([valid_json]), ToolRegistry([CalculatorTool()]))  # type: ignore[arg-type]
+    paths = [
+        route.path  # type: ignore[attr-defined]
+        for route in create_app(isolated_settings(), agent=agent).routes
+        if route.path.startswith("/v1/runs")  # type: ignore[attr-defined]
+    ]
+    assert paths.index("/v1/runs/dead-letter") < paths.index("/v1/runs/{run_id}")
+
+
+def test_dead_letter_returns_503_without_persistence(valid_json: str) -> None:
+    with build_client(FakeProvider([valid_json])) as client:
+        response = client.get("/v1/runs/dead-letter")
+    assert response.status_code == 503

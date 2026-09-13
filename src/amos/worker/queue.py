@@ -45,6 +45,7 @@ harmless, by luck rather than design. This is recorded in
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -64,12 +65,29 @@ class RunStatus:
     COMPLETED = "COMPLETED"
     PARTIALLY_COMPLETED = "PARTIALLY_COMPLETED"
     FAILED = "FAILED"
+    #: Attempts exhausted; the queue has given up. Distinct from FAILED, which
+    #: means the run executed and produced a failure — a real outcome. This means
+    #: nobody ever got a verdict, and a person should look. Not claimable, because
+    #: the claim query only selects QUEUED.
+    DEAD_LETTER = "DEAD_LETTER"
 
 
 #: A run RUNNING longer than this is presumed abandoned by a dead worker.
 #: Long enough that a slow-but-alive run is never stolen; short enough that a
 #: crash is recovered within a few minutes.
 DEFAULT_VISIBILITY_TIMEOUT = 600
+
+
+@dataclass
+class DeadLetteredRun:
+    """One give-up, as a reviewer needs to see it."""
+
+    run_id: str
+    goal: str
+    attempt_count: int
+    last_worker: str | None
+    reason: str
+    dead_lettered_at: str | None
 
 
 @dataclass
@@ -181,20 +199,55 @@ async def queue_depth(session: AsyncSession) -> int:
 
 
 async def give_up(session: AsyncSession, run_id: uuid.UUID, reason: str) -> None:
-    """Mark a run permanently failed after exhausting its attempts.
+    """Dead-letter a run after exhausting its attempts.
 
     Without this, a run that crashes its worker every time would be reclaimed
     forever — a poison message quietly consuming the whole queue.
+
+    The status is DEAD_LETTER rather than FAILED so the two are distinguishable:
+    a FAILED run got a verdict, and this one never did. Before V1.1 both landed
+    in FAILED, which meant the queue's give-ups were indistinguishable from
+    ordinary failures and nothing collected them for review.
     """
     await session.execute(
         sql_text(
-            "UPDATE runs SET status = :failed, error = CAST(:error AS jsonb), "
+            "UPDATE runs SET status = :status, error = CAST(:error AS jsonb), "
             "completed_at = now() WHERE id = :run_id"
         ),
         {
-            "failed": RunStatus.FAILED,
-            "error": f'{{"type": "AttemptsExhausted", "message": "{reason}"}}',
+            "status": RunStatus.DEAD_LETTER,
+            # json.dumps, not an f-string: `reason` carries an exception message,
+            # and a single quote or backslash in it would previously have
+            # produced malformed JSON that Postgres rejected — turning a
+            # give-up into a crash, in the path that exists to handle crashes.
+            "error": json.dumps({"type": "AttemptsExhausted", "message": reason}),
             "run_id": str(run_id),
         },
     )
-    log_event(logger, "worker.gave_up", run_id=str(run_id), reason=reason)
+    log_event(logger, "worker.dead_lettered", run_id=str(run_id), reason=reason)
+
+
+async def list_dead_letter(session: AsyncSession, limit: int = 50) -> list[DeadLetteredRun]:
+    """Runs the queue gave up on, newest first.
+
+    A dead-letter queue nobody can read is a status column. This is the read.
+    """
+    result = await session.execute(
+        sql_text(
+            "SELECT id, goal_text, attempt_count, claimed_by, error, completed_at "
+            "FROM runs WHERE status = :status "
+            "ORDER BY completed_at DESC NULLS LAST LIMIT :limit"
+        ),
+        {"status": RunStatus.DEAD_LETTER, "limit": limit},
+    )
+    return [
+        DeadLetteredRun(
+            run_id=str(row.id),
+            goal=row.goal_text,
+            attempt_count=row.attempt_count,
+            last_worker=row.claimed_by,
+            reason=(row.error or {}).get("message", ""),
+            dead_lettered_at=row.completed_at.isoformat() if row.completed_at else None,
+        )
+        for row in result
+    ]
