@@ -110,7 +110,10 @@ were false.
 ## Technical Debt
 - `steps` is one row per run; the schema supports one per task attempt.
 - `compose.yaml` **verified on podman only**; the Docker path is untested and labelled as such.
-- Backups: a documented `pg_dump` with **no restore drill**.
+- **Backups: a documented `pg_dump` with no restore drill — and on 2026-09-13 this debt came
+  due.** An `alembic downgrade base` run as a reversibility check dropped every table and
+  destroyed the local corpus, with no backup to restore. See `bugs-log.md`. A `make backup`
+  target and an actual restore drill are still unbuilt.
 - **Delegation quality is unmeasured.** The bounds are tested; whether models delegate *well*
   has no number, unlike routing accuracy.
 - `steps` still one per run: V1.1 made *tasks* incremental, not steps.
@@ -142,7 +145,7 @@ were false.
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
 | Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` → `835121ee2bd2` |
 | Users | `alembic upgrade head` creates `default` and **prints its key once**. `AMOS_BOOTSTRAP_API_KEY` sets it instead |
-| Corpus | 28 documents, 300 chunks **indexed** (the 24 numbered docs + 4 interview docs as they stood at V0.5). A fresh `make ingest` would index 48 / ~906, and several indexed documents have been rewritten since |
+| Corpus | **EMPTY — destroyed 2026-09-13, see bugs-log.md.** Re-ingest with `make ingest` (~10 min of embedding quota, ~48 docs / ~906 chunks). Every retrieval number in the docs predates this and is marked accordingly |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
 

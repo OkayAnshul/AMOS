@@ -566,3 +566,32 @@ Worth asking of any guard that keeps firing: is it describing the defect, or a n
 that merely excludes it?
 **Test added:** the same test, with the comparison corrected — and verified to still fail on a
 version behind the tag (0.7.0 against v1.2), which is the case it was written for.
+
+---
+
+## 2026-09-13 — I destroyed the local database verifying a migration
+**Milestone:** V1.4
+**Symptom:** After a final `alembic downgrade base` / `upgrade head`, every table was empty:
+0 runs, 0 memories, **0 documents, 0 chunks**. The 28-document / 300-chunk corpus was gone.
+**Expected:** a reversibility check that does not destroy data.
+**Root cause:** `downgrade base` unwinds **every** migration, dropping every table. The earlier
+checks in this session used `downgrade -1`, which reverses one step and is the safe form; the
+final check used `base` out of thoroughness and got exactly what it asked for.
+**Fix:** none possible — **there was no backup.** `docs/18-deployment.md` has said since V0.3 that
+backups are "a documented `pg_dump` with no restore drill", filed under technical debt. The debt
+came due against the person who wrote it down.
+**How it was found:** by querying the row counts afterwards, not by anything failing. The
+migration reported success, because it *was* successful.
+**Lesson (two):**
+1. **`downgrade base` is a destructive command, and reversibility does not need it.** `-1` proves
+   the step under test. Testing the whole chain belongs on a scratch database, not the one holding
+   a corpus that cost ten minutes of embedding quota.
+2. **A backup documented but never taken is not a backup.** That row sat in the technical-debt
+   list for eleven milestones and was accurate the whole time.
+**Consequence:** every retrieval number in `docs/10-rag-architecture.md` and the
+`engineering/eval-baseline.json` scorecard were measured against a corpus that no longer exists.
+The baseline's per-corpus guard will report **"not comparable"** on the next `make eval` rather
+than a false regression — which is the one part of this that worked as designed.
+**Test added:** none possible for operator error. The mitigation is a `make backup` target and an
+actual restore drill, which remain unbuilt and are now in `current-state.md` as debt with this
+incident attached.
