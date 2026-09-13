@@ -374,10 +374,10 @@ widening ground truth after seeing results.
 
 ---
 
-# Tier 6 — V0.6 · Memory (next milestone)
+# Tier 6 — V0.6 · Memory
 
-Pre-read **before** starting. The deliverable is `09-memory-architecture.md`, so the reading is
-the work.
+Written as pre-read; V0.6 has since shipped, so this is now **re-read with the code open**. The
+deliverable was `09-memory-architecture.md`.
 
 | Concept | Read |
 |---|---|
@@ -456,6 +456,10 @@ The strongest distributed-systems content in the project. **[core] throughout.**
 
 The "what algorithms does it use" answer, with the file to open.
 
+Line numbers are a snapshot — the file and the symbol are the durable part. Rows 25–34 read
+*Not built yet* with an em-dash for the file long after V0.6–V1.0 shipped, which made this
+table useless for exactly the half of the codebase a reader would most need pointing at.
+
 | # | Algorithm | Milestone | File |
 |---|---|---|---|
 | 1 | Bounded validate-and-repair over a non-deterministic producer | V0.1 | `agents/agent.py:85` |
@@ -469,9 +473,9 @@ The "what algorithms does it use" answer, with the file to open.
 | 9 | Eager loading to avoid N+1 | V0.3 | `database/repository.py:214` |
 | 10 | Transactional-rollback test isolation | V0.3 | `tests/integration/conftest.py` |
 | 11 | DFS cycle detection on a proposed plan | V0.4 | `orchestration/plan.py:102` |
-| 12 | Topological ordering | V0.4 | `orchestration/plan.py`, `executor.py:119` |
-| 13 | Ready-set scheduling with concurrent independent tasks | V0.4 | `orchestration/executor.py:124` |
-| 14 | Fixed-point transitive skip propagation | V0.4 | `orchestration/executor.py:147` |
+| 12 | Topological ordering | V0.4 | `orchestration/plan.py:79`, `executor.py:128` |
+| 13 | Ready-set scheduling with concurrent independent tasks | V0.4 | `orchestration/executor.py:137` |
+| 14 | Fixed-point transitive skip propagation | V0.4 | `orchestration/executor.py:156` |
 | 15 | State machine with an explicit transition table | V0.4 | `orchestration/state.py:36` |
 | 16 | Exponential backoff with full jitter | V0.4 | `orchestration/retry.py:28` |
 | 17 | Heading-aware chunking, overlap, best-break search | V0.5 | `rag/chunking.py:49` |
@@ -482,13 +486,20 @@ The "what algorithms does it use" answer, with the file to open.
 | 22 | Cosine distance search, distance → similarity | V0.5 | `rag/store.py:110` |
 | 23 | HNSW approximate nearest neighbour index | V0.5 | `migrations/versions/5a881f4bdb98_*` |
 | 24 | recall@k, strict recall, MRR | V0.5 | `rag/evaluation.py:95` |
+| 25 | Deterministic contradiction resolution (supersession chain, newest wins) | V0.6 | `memory/semantic.py:126` |
+| 26 | Exact-key lookup before similarity, and why that order | V0.6 | `memory/semantic.py:145,156` |
+| 27 | Claim-vs-claimed reconciliation (never claim an unwritten memory) | V0.6 | `memory/reconcile.py:153` |
+| 28 | Task routing / classification, and measuring its accuracy | V0.7 | `agents/router.py:57,136` |
+| 29 | `SKIP LOCKED` claiming — claim and state change in one statement | V0.8 | `worker/queue.py:82` |
+| 30 | Visibility-timeout reclaim, and the poison-message ceiling | V0.8 | `worker/queue.py:132,183` |
+| 31 | Attribute and label allowlisting (cardinality, secret redaction) | V0.9 | `telemetry/tracing.py:59`, `telemetry/metrics.py:29` |
+| 32 | LLM-as-judge scoring, with unmeasurable separated from failed | V1.0 | `evaluation/judge.py:74`, `evaluation/metrics.py` |
+| 33 | Separating deterministic from judged evidence, never averaging them | V1.0 | `evaluation/harness.py:56` |
+| 34 | Wall-clock containment of an unbounded loop (task timeout) | ADR-009 | `orchestration/executor.py:189` |
 | — | *Not built yet* | | |
-| 25 | Deterministic contradiction resolution | V0.6 | — |
-| 26 | Task routing / classification accuracy | V0.7 | — |
-| 27 | `SKIP LOCKED` claiming, visibility-timeout reclaim | V0.8 | — |
-| 28 | Trace sampling | V0.9 | — |
-| 29 | LLM-as-judge scoring, regression gating | V1.0 | — |
-| 30 | Hybrid BM25 + vector, reciprocal rank fusion, reranking | future | — |
+| 35 | Trace sampling | — | not built; every span is exported |
+| 36 | Task-level idempotency keys / resumable reclaim | V1.1 | — |
+| 37 | Hybrid BM25 + vector, reciprocal rank fusion, reranking | future | — |
 
 ---
 
@@ -515,6 +526,11 @@ Four, in priority order. Everything above is free; these are the ones worth buyi
 
 Rough, and deliberately not a schedule. Tier 0 and Tier A are the only ones that must come first.
 
+**This table used to end "Build V0.6" and "Build V0.7–V1.0".** All ten milestones have shipped;
+the reading is no longer pre-read for unbuilt work but re-read against code that exists, and
+every block now ends at the interview document it closes. That gate — not the building — is what
+remains outstanding.
+
 | Block | Read | Then do |
 |---|---|---|
 | 1 | Tier 0 (0.1–0.4) | Read `llm/`, `agents/`, `api/` and explain the request path aloud |
@@ -522,9 +538,12 @@ Rough, and deliberately not a schedule. Tier 0 and Tier A are the only ones that
 | 3 | Tier 2 | Close `interview/agents.md` |
 | 4 | Tier A (A.1–A.4) + Tier 3 | Close `interview/persistence.md` |
 | 5 | Tier A (A.5–A.6) + Tier 4 | Close `interview/orchestration.md` |
-| 6 | Tier 5 | Close `interview/rag.md` — **the advance gate to V0.6** |
-| 7 | Tier 6 + Tier A.7 | Build V0.6 |
-| 8+ | Tiers 7–10, at their milestones | Build V0.7–V1.0 |
+| 6 | Tier 5 | Close `interview/rag.md` |
+| 7 | Tier 6 + Tier A.7 | Close `interview/memory.md` |
+| 8 | Tier 7 | Close `interview/multi-agent.md` |
+| 9 | Tier 8 | Close `interview/async.md` |
+| 10 | Tier 9 | Close `interview/observability.md` |
+| 11 | Tier 10 | Close `interview/evaluation.md` |
 
 ---
 

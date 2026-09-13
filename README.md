@@ -24,16 +24,20 @@ AMOS is built as **independently valuable vertical slices**, not as modules that
 the last one lands. Every milestone leaves the repository runnable, tested, demoable and
 documented. Stop at any version and there is still a real project here.
 
-That principle has visible consequences:
+That principle had visible consequences, and they are worth reading in the past tense — this
+list described V0.1, and every item on it has since come true on schedule:
 
-- `src/` contains only what V0.1 built. Directories for unbuilt modules would be a lie about
-  progress, so each appears at the milestone that fills it.
-- Most of `docs/` is one-line stubs naming the milestone that will write them. A
-  chunking-strategy document written before anything has been embedded would be inventing
-  decisions, not recording them.
-- No Docker and no database. They arrive at V0.3, when durable runs are the milestone — each
+- **`src/` only ever contained what was built.** Directories for unbuilt modules would have been
+  a lie about progress, so each appeared at the milestone that filled it. There are now eleven.
+- **Most of `docs/` began as one-line stubs** naming the milestone that would write them. A
+  chunking-strategy document written before anything had been embedded would have been inventing
+  decisions, not recording them (ADR-007). One stub remains, and it says why.
+- **Docker and the database arrived at V0.3**, when durable runs were the milestone — each
   justified by an ADR in
   [`docs/03-architecture-decisions.md`](docs/03-architecture-decisions.md).
+
+Every dependency in the stack below arrived the same way, and the ones deliberately *not*
+adopted — Qdrant, Celery, Redis, Kafka, Kubernetes — have records saying why.
 
 ## Roadmap at a glance
 

@@ -76,7 +76,16 @@ Definition of Done for exactly this reason.
 AMOS_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest tests/live -s   # opt-in
 ```
 
+## Since resolved
+
+**CI shipped at V1.0** — `.github/workflows/ci.yml`. It runs the suite with a database and
+again without one, applies migrations forwards *and* backwards, and runs with **no API key
+present**, which enforces N-14 rather than documenting it. Evaluation tests shipped at V1.0 too,
+but deliberately do **not** run in CI: they cost real Gemini calls against a 20-per-day quota,
+so per-push runs would exhaust the day's budget on the first few commits.
+
 ## Not yet
 
-Coverage measurement, property-based testing, load testing, CI. CI arrives when there is
-something to protect against regression across machines; evaluation tests arrive at V1.0.
+Coverage measurement, property-based testing, load testing. No contract-test or API-snapshot
+suite either — `test_schema_drift.py` checks the *database* schema against the models, not the
+API schema against its consumers.

@@ -103,7 +103,7 @@ Unbounded anything is a denial-of-service vector, including a self-inflicted one
 |---|---|---|
 | Agent loop iterations | 5 (configurable, hard cap) | runaway tool loops, unbounded cost |
 | Provider timeout | 30s | hung requests |
-| Per-tool timeout | 2–15s | a slow tool hanging the agent |
+| Per-tool timeout | 2–30s | a slow tool hanging the agent |
 | File read | 100 KB | memory exhaustion |
 | HTTP response | 200 KB | memory exhaustion |
 | Goal length | 8000 chars | oversized prompts |
@@ -113,12 +113,12 @@ Unbounded anything is a denial-of-service vector, including a self-inflicted one
 
 | Control | Status | Why |
 |---|---|---|
-| Authentication | ❌ | Single local user. Would mean a `users` table with one permanent row. |
-| Authorization / RBAC | ❌ | No users to distinguish |
+| Authentication | ❌ | Single local user. Would mean a `users` table with one permanent row. **Scheduled V1.4.** |
+| Authorization / RBAC | ❌ | No users to distinguish. **Scheduled V1.4.** |
 | Rate limiting (inbound) | ❌ | No untrusted callers yet |
-| Audit log | ⚠️ partial | Structured logs record every tool call; not durable until V0.3 |
+| Audit log | ✅ **durable since V0.3** | Every LLM and tool call is a row (`llm_calls`, `tool_calls`), reachable from `GET /v1/runs/{id}`. This row read "not durable until V0.3" for seven milestones after V0.3 shipped. |
 | Human approval workflow | ❌ | Required before any `WRITE` tool. Registry refuses them until it exists. |
-| Data isolation | ❌ | Single user |
+| Data isolation | ❌ | Single user. **Scheduled V1.4** — `user_id` on `runs`, `memories` and `documents`, scoped in the repository layer. |
 
 Reconsider all of these the moment AMOS is exposed to a second user or reachable from a network
 it does not control. **AMOS is not currently safe to expose publicly**, and nothing in it should

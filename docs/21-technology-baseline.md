@@ -73,7 +73,7 @@ Model IDs change frequently. Check <https://ai.google.dev/gemini-api/docs/models
 | SQLAlchemy | 2.0 async | ORM with real async support | <https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html> |
 | Alembic | latest | Migrations in version control | <https://alembic.sqlalchemy.org/en/latest/tutorial.html> |
 | asyncpg | latest | Async Postgres driver | — |
-| Docker Compose | not yet installed | Local orchestration | — |
+| podman-compose | 5.8.2 (rootless) | Local orchestration — `compose.yaml`, run by `make up` | <https://docs.podman.io/en/latest/markdown/podman-compose.1.html> |
 
 **Known limitation** — pgvector HNSW/IVFFlat index **2000 dimensions maximum** for the `vector`
 type (4000 for `halfvec`). This directly drives ADR-008.

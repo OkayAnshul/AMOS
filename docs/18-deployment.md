@@ -98,8 +98,12 @@ backup strategy, and should not be described as one.
 
 ## Not done, and not claimed
 
-No CI, no container image for AMOS itself, no reverse proxy, no TLS, no secrets manager, no
+No container image for AMOS itself, no reverse proxy, no TLS, no secrets manager, no
 monitoring, no health-checked readiness probe distinct from liveness.
+
+(**CI is done** — it was listed here as missing from V0.3 onward and shipped at V1.0:
+`.github/workflows/ci.yml`, running the suite with and without a database and verifying
+migrations in both directions.)
 
 **AMOS is not deployed anywhere and is not safe to expose publicly** — there is no
 authentication (`docs/13-security.md`). "Production" is not a word that applies to it.

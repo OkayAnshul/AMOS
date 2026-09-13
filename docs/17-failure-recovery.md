@@ -68,13 +68,19 @@ Stating these matters more than the table above — an unlisted gap reads as a c
 
 | Gap | Why | When |
 |---|---|---|
-| **Crash mid-run leaves an abandoned `RECEIVED` run** | Nothing sweeps them. The row is evidence, but no process resumes or fails it. | V0.8 — visibility timeout on `claimed_at` |
-| **No resumption.** A restarted process does not continue an interrupted run | Requires a worker that claims work, not an HTTP handler that holds it | V0.8 |
-| **Tasks are not idempotent.** A retried task re-executes fully | Safe today because every tool is read-only. **This becomes a real bug the moment a `WRITE` tool exists** — which is why the registry refuses to register one | before any write tool |
-| **No re-planning.** A failed task is retried as written, not re-approached | The planner runs once per goal | future |
-| **No circuit breaker.** Repeated provider failures keep being attempted | Retry budgets bound it; a breaker would bound it sooner | if it becomes a problem |
-| **No dead-letter queue** for permanently failed work | Failures are recorded, not queued for later attention | V0.8 |
-| **No per-run cost budget.** Retries are bounded by count, not by tokens spent | Count is a proxy; a budget would be the real thing | V1.0 |
+| ✅ **Crash mid-run leaves an abandoned run** | ~~Nothing sweeps them.~~ | **Closed at V0.8** — visibility timeout on `runs.claimed_at`, not `tasks.claimed_at` as predicted here. Claiming is per *run* |
+| ✅ **No resumption.** A restarted process does not continue an interrupted run | ~~Requires a worker that claims work~~ | **Partly closed at V0.8.** Another worker reclaims the run — but re-executes it *from the start*. Genuine resumption is V1.1 |
+| ✅ **No task-level timeout** | ~~Only the provider timeout bounds a task~~ | **Closed by ADR-009.** `TaskState.TIMED_OUT` had been declared and unreachable since V0.4 |
+| ❌ **Tasks are not idempotent.** A retried task re-executes fully | Safe today because every tool is read-only. **This becomes a real bug the moment a `WRITE` tool exists** — which is why the registry refuses to register one | before any write tool; scheduled V1.1 |
+| ❌ **No re-planning.** A failed task is retried as written, not re-approached | The planner runs once per goal | future |
+| ❌ **No circuit breaker.** Repeated provider failures keep being attempted | Retry budgets bound it; a breaker would bound it sooner | if it becomes a problem |
+| ❌ **No dead-letter queue** for permanently failed work | Failures are recorded, not queued for later attention | ~~V0.8~~ — **V0.8 shipped without one.** Scheduled V1.1 |
+| ❌ **No per-run cost budget.** Retries are bounded by count, not by tokens spent | Count is a proxy; a budget would be the real thing | ~~V1.0~~ — **V1.0 shipped without one.** Unscheduled |
+
+Two rows in the **When** column were promises this project did not keep: the dead-letter queue
+was pencilled in for V0.8 and the cost budget for V1.0, and both milestones shipped without
+them. A gap table is only honest if it is re-read when the milestone it points at arrives —
+otherwise it converts, silently, into a claim.
 
 ## Exactly-once, and why it is not on offer
 
