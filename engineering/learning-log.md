@@ -637,3 +637,63 @@ commit, tag* is four steps in a required order performed from memory. `make rele
 now does all four and refuses to tag if `make check` fails.
 **Rule adopted:** when a test catches the same class twice, fix the process, not the instance.
 **Status:** ⬜ Recognise
+
+---
+
+# V1.4 — Authentication and isolation
+
+## Authentication versus authorization
+**Problem it solves:** knowing which of the two you have. "We have auth" routinely means both,
+and AMOS has only the first.
+**In AMOS:** `auth.py` establishes *who*. Nothing establishes *what they may do* — every
+authenticated user can call every endpoint.
+**Read:** <https://owasp.org/www-project-top-ten/> (A01 is broken access control) ·
+<https://datatracker.ietf.org/doc/html/rfc7235>
+**Answer before moving on:**
+- Which one does `docs/13-security.md` still mark ❌, and why is that the gap most likely to be
+  assumed solved?
+**Status:** ⬜ Recognise
+
+## A failure mode that returns *more* data
+**Problem it solves:** most bugs announce themselves. A missing `WHERE user_id = ...` does not
+raise, does not log, and returns more rows — so it presents as a working feature.
+**In AMOS:** why enforcement is at *construction* (`RunRepository(session, actor)`) rather than a
+`user_id` argument per method.
+**Answer:**
+- Why is "pass the user id to each method" one forgotten argument away from a leak, in a version
+  that still compiles?
+- Why is `recall_similar` more dangerous than `recall_exact` if the filter is missing?
+- What would row-level security buy, and what would it cost on a pooled connection?
+**Status:** ⬜ Recognise
+
+## Credential storage
+**Problem it solves:** a database that leaks should not also hand over access.
+**In AMOS:** SHA-256 hashes; lookup by hash, so the plaintext exists only in the request.
+**Read:** <https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html>
+**Answer:**
+- Why is a *random high-entropy API key* hashed with plain SHA-256, when a password would need
+  bcrypt/argon2? (Hint: what makes a password hash slow, and why does that not apply here?)
+- Why does `create_user` return the plaintext, and why only once?
+**Status:** ⬜ Recognise
+
+## Backfilling a NOT NULL column
+**Problem it solves:** `ADD COLUMN ... NOT NULL` fails on any table with rows in it.
+**In AMOS:** `migrations/versions/835121ee2bd2_*` — create users, insert an owner, add nullable,
+backfill, then tighten.
+**Answer:**
+- Why is the order load-bearing?
+- Why is `documents.user_id` deliberately *not* backfilled?
+**Status:** ⬜ Recognise
+
+## Session-level lesson
+
+### A symptom can look nothing like its cause (Session 14)
+Defining the auth dependency inside `create_app` made every protected endpoint answer **422**
+instead of 401. `from __future__ import annotations` turns annotations into strings, and FastAPI
+resolves them against *module* globals — where a function-local alias does not exist — so `actor`
+was treated as an ordinary query parameter and failed validation.
+
+Nothing about "422 on a request with no auth header" points at scoping of a type alias.
+**Rule adopted:** when a framework's behaviour is inexplicable, check what it can actually *see*
+at runtime — deferred annotations mean the name you wrote is not the object it resolves.
+**Status:** ⬜ Recognise

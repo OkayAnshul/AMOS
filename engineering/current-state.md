@@ -3,10 +3,11 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-09-13 (Session 13 — V1.3 delegation)
+**Last updated:** 2026-09-13 (Session 14 — V1.4 auth and isolation)
 
 ## Current Version
-**V1.3 — Delegation.** The V0.1–V1.0 roadmap is complete; V1.1–V1.3 are past it.
+**V1.4 — Authentication and multi-user isolation.** The V0.1–V1.0 roadmap is complete; V1.1–V1.4
+are past it.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -17,7 +18,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
 V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
-**V1.3 delegation**
+V1.3 delegation · **V1.4 auth + isolation**
 
 ## What Works
 ```
@@ -33,7 +34,7 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 - Facts persist across process restarts; past runs findable by goal similarity
 - `GET /v1/runs/{id}` reconstructs any past run from stored rows
 - OpenTelemetry spans; goal text excluded by default, metric labels allowlisted
-- **587 tests** (589 collected, 2 live opt-in); `mypy --strict` and `ruff` clean; **CI runs
+- **616 tests** (618 collected, 2 live opt-in); `mypy --strict` and `ruff` clean; **CI runs
   with and without a database**, migrations both directions, and with no API key
 
 ### Measured
@@ -69,7 +70,12 @@ regression against it. Only deterministic rates gate; the judged score is contex
   **still self-authored**, which V1.2 did not fix
 - **2 of 5 memory kinds built** — semantic and episodic. No working, conversation or
   knowledge-graph tier (`docs/09-memory-architecture.md` says why for each)
-- No authentication, authorization or multi-user isolation. **Not safe to expose publicly**
+- **Authentication yes, authorization no.** Any authenticated user can call every endpoint —
+  no scopes, roles or read-only keys. The gap most likely to be assumed solved
+- No key rotation, no audit of auth attempts, no TLS, no inbound rate limiting.
+  **Still not safe to expose publicly**
+- **Without a database the API is unauthenticated** — by design, with a startup warning
+- The corpus is shared across users by design (`documents.user_id` NULL = system corpus)
 - No UI. CLIs and FastAPI's `/docs`
 - `Tool` has no output schema, no retry policy and no audit metadata (`docs/08`)
 - Kubernetes, Kafka, Celery, microservices: **never built, never claimed**
@@ -85,8 +91,8 @@ regression against it. Only deterministic rates gate; the judged score is contex
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`feat/v1.3-delegation`. Merge to `main` when reviewed. Last known good commit on `main`: the
-`v1.2` tag.
+`feat/v1.4-auth`. Merge to `main` when reviewed. Last known good commit on `main`: the `v1.3.0`
+tag.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -134,7 +140,8 @@ were false.
 | Python | 3.14.4, `.venv/` |
 | Container | podman 5.8.2 + podman-compose (rootless) |
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
-| Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` |
+| Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` → `835121ee2bd2` |
+| Users | `alembic upgrade head` creates `default` and **prints its key once**. `AMOS_BOOTSTRAP_API_KEY` sets it instead |
 | Corpus | 28 documents, 300 chunks **indexed** (the 24 numbered docs + 4 interview docs as they stood at V0.5). A fresh `make ingest` would index 48 / ~906, and several indexed documents have been rewritten since |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
@@ -149,14 +156,22 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**V1.4 — Authentication and multi-user isolation.** The largest change in the plan. A `users`
-table, authentication on the API, and `user_id` on `runs`, `memories` and `documents`, with
-scoping enforced **in the repository layer** so a query cannot forget it. One migration with a
-backfill to a single owner.
+**Nothing is committed to.** The four milestones chosen on 2026-09-13 (V1.1–V1.4) are all
+shipped. `docs/19-roadmap.md`'s "Beyond V1.4" lists candidates, each needing an ADR;
+**authorization** is the strongest, because it is the gap most likely to be assumed already
+solved once a system "has auth".
 
-The ADR must say out loud that `docs/01-requirements.md` currently lists multi-tenancy as an
-explicit **non-goal**, and that `docs/13-security.md` has a table of controls this milestone
-flips from ❌ to ✅. The whole "single user" framing across several documents changes with it.
+### The advance gate — now twelve documents, and never met
+
+`docs/interview/*.md`. This is the second of the project's two equal objectives and the only one
+still outstanding; V1.1–V1.4 added four more modules to a backlog that was already ten deep.
+
+Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/interview/*.md` in milestone
+order. Building further before closing this is a deliberate choice against `CLAUDE.md`'s own rule,
+made on 2026-09-13, and worth revisiting.
+
+**Also worth re-running when convenient:** `make retrieval` and `make routing` still report numbers
+measured on the older, smaller sets.
 
 **Worth re-running when convenient:** `make retrieval` and `make routing` still report numbers
 measured on the older, smaller sets.

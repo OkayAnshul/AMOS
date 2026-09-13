@@ -1,6 +1,6 @@
 # 05 — Data Model
 
-PostgreSQL. The schema as it exists at **V1.1**, built up across five migrations, each created at
+PostgreSQL. The schema as it exists at **V1.4**, built up across six migrations, each created at
 the milestone that needed it and never before (ADR-006).
 
 > **The migrations in `migrations/versions/` are the source of truth**, and
@@ -15,7 +15,7 @@ the milestone that needed it and never before (ADR-006).
 
 Migration chain: `e25051359e64` (V0.4 baseline) → `5a881f4bdb98` (V0.5 pgvector) →
 `a0621f74b57c` (V0.6 memory) → `5892709841cc` (V0.8 run claiming) → `453890cfd6a9`
-(V1.1 trace continuity).
+(V1.1 trace continuity) → `835121ee2bd2` (V1.4 users and ownership).
 
 ## Why PostgreSQL
 
@@ -27,8 +27,18 @@ backup stories and two consistency problems, for one user.
 ## Core tables
 
 ```sql
+CREATE TABLE users (                          -- V1.4
+    id           UUID PRIMARY KEY,
+    name         TEXT NOT NULL,
+    api_key_hash TEXT NOT NULL,                 -- SHA-256; the plaintext is never stored
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT users_api_key_hash_unique UNIQUE (api_key_hash),
+    CONSTRAINT users_name_unique UNIQUE (name)
+);
+
 CREATE TABLE runs (
     id                UUID PRIMARY KEY,
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- V1.4
     goal_text         TEXT        NOT NULL,
     status            TEXT        NOT NULL,   -- QUEUED|RUNNING|COMPLETED|FAILED|DEAD_LETTER|...
     idempotency_key   TEXT,                   -- nullable, so the index is partial
@@ -129,6 +139,7 @@ anyway — the join buys nothing and costs a table.
 ```sql
 CREATE TABLE memories (
     id            UUID PRIMARY KEY,
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- V1.4
     subject       TEXT   NOT NULL,             -- normalised key, for exact lookup
     content       TEXT   NOT NULL,
     confidence    DOUBLE PRECISION NOT NULL DEFAULT 1.0,
@@ -151,6 +162,14 @@ means embed-everything:
 `embedding` still exists, for questions that have no key. It is the secondary path, never a
 substitute for the exact one.
 
+**`documents.user_id` is nullable, and that is the design.** `NULL` means the **system corpus**:
+readable by everyone, owned by nobody. AMOS's own documentation is the corpus, so a private copy
+per user would mean re-embedding it per user — roughly ten minutes of quota each — to isolate data
+that is already public in this repository. Retrieval matches `user_id IS NULL OR user_id = :actor`.
+
+`runs.user_id` and `memories.user_id` are **not** nullable. A run is what someone asked and what
+came back; a memory is a fact about a person. Both are private by construction.
+
 **There is no `episodes` table.** An episode *is* a run, so episodic memory is `runs.lesson` and
 `runs.goal_embedding` rather than a second table duplicating goal, status, tokens and timings to
 add two columns. Full reasoning in `docs/09-memory-architecture.md`.
@@ -162,6 +181,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE documents (
     id           UUID PRIMARY KEY,
+    user_id      UUID REFERENCES users(id) ON DELETE CASCADE,  -- V1.4, NULLABLE: see below
     source       TEXT NOT NULL,
     title        TEXT,
     content_hash TEXT NOT NULL,     -- re-ingest detection
@@ -213,6 +233,11 @@ CREATE INDEX idx_runs_created     ON runs(created_at);
 
 -- idempotency lookup on submit
 CREATE INDEX idx_runs_idempotency ON runs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+-- isolation: every scoped query filters on these (V1.4)
+CREATE INDEX idx_runs_user       ON runs(user_id, created_at);
+CREATE INDEX idx_memories_user   ON memories(user_id);
+CREATE INDEX idx_documents_user  ON documents(user_id);
 
 -- memory: current facts only
 CREATE INDEX idx_memories_current     ON memories(subject) WHERE superseded_by IS NULL;
@@ -266,9 +291,10 @@ Reference: <https://www.postgresql.org/docs/current/sql-select.html>
 
 ## Deliberate omissions
 
-- **No `users` table until authentication exists.** Single user, no auth, no table. Adding one
-  now would mean a foreign key everywhere pointing at one permanent row. *Scheduled for V1.4,
-  which is where `user_id` arrives on `runs`, `memories` and `documents` together.*
+- ~~No `users` table until authentication exists.~~ **Built at V1.4** (ADR-013). The original
+  reasoning — that adding one earlier meant a foreign key everywhere pointing at one permanent
+  row — was right, and is exactly what the V1.4 migration had to do *once*, with a backfill,
+  rather than carrying from V0.3.
 - **No soft deletes.** Nothing is deleted yet. `deleted_at` on every table is a cost paid
   against a hypothetical.
 - **No `agents` or `tools` tables.** Agents and tools are code, registered at startup. They

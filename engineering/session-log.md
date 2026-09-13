@@ -1113,3 +1113,74 @@ repository layer so a query cannot forget it. ADR first, and it must say out lou
 
 ## Recommended Commit
 Committed in two parts on `feat/v1.3-delegation`.
+
+---
+
+# Session 14
+
+**Date:** 2026-09-13
+**Module:** V1.4 — Authentication and multi-user isolation
+**Objective:** Give AMOS a notion of who is asking, and make one user's data unreachable by
+another. The largest change in the plan, and deliberately last.
+
+## What We Changed
+- `src/amos/auth.py` (new) — hashed API keys, `Actor`, `actor_for_run`, `LOCAL_ACTOR`.
+- `src/amos/database/models.py` — `users`; `user_id` on `runs` and `memories` (NOT NULL) and on
+  `documents` (nullable — NULL is the shared system corpus).
+- `migrations/versions/835121ee2bd2_*` — reversible, with the NOT NULL backfill.
+- `repository.py` and `memory/semantic.py` — constructed with their owner; every query scoped.
+- `api/app.py` — the auth dependency, 401 before any model call.
+- `worker/runner.py` — the worker acts as the run's owner.
+- ADR-013; `docs/interview/security.md` (new); `01`, `02`, `05`, `13`, `19`, `22` updated.
+- `tests/integration/test_isolation.py` (new) — 23 tests plus two structural guards.
+
+## Architecture Decisions
+In `decisions-log.md`. The one that shaped everything: **isolation fails silently**, so
+enforcement is at construction rather than per call.
+
+## Problems Encountered
+1. Every protected endpoint returned **422** instead of 401.
+2. 73 tests failed at once after the constructor signatures changed.
+3. Several tests mixed the rollback session with the committing factory and hit FK violations.
+4. The no-database API tests all failed: with auth required, they could not authenticate.
+
+## How We Solved Them
+1. The auth dependency was defined *inside* `create_app`, so it was a function-local name — and
+   `from __future__ import annotations` makes FastAPI resolve the annotation as a **string against
+   module globals**, where it did not exist. FastAPI then treated `actor` as an ordinary query
+   parameter. Moved to module level. **The symptom looked nothing like the cause.**
+2. Expected, and the point: mypy enumerated every call site before a single test ran. Threaded the
+   actor through mechanically, using the AST rather than regex after a first attempt mangled
+   multi-line signatures.
+3. An actor created in a rolled-back session does not exist to a committing one. Added a separate
+   `factory_actor` fixture, and used it in exactly the tests that commit.
+4. **A real design question, not a test problem.** No database means no users and no isolation to
+   enforce, and requiring a key would break "runs without infrastructure" — held since V0.3, with
+   its own CI job. Resolved as: unauthenticated in that mode, with a loud startup warning, and
+   said plainly in `13-security.md`.
+
+## Tests Performed
+589 → **616**. Migration applied, reversed and re-applied; 422 existing runs backfilled, 28
+documents left as system corpus. Both structural guards verified by reintroducing the bypass.
+
+## Things I Learned
+- **Isolation is the only failure mode in this project that returns more data rather than less.**
+  Everything else announces itself — an illegal transition raises, a bad plan is rejected. This one
+  looks like a feature working, which is what justifies enforcing it at construction.
+- "Security designed in from the start" and "identity built last" are both true here, and the
+  distinction is worth being able to state: the controls that constrain the *model* were V0.2 and
+  would have been expensive to retrofit; identity is mechanical and scales with the number of
+  tables, so doing it once against a settled schema was cheaper.
+- Reversing a stated non-goal is fine; reversing it *silently* is what would make the requirements
+  document untrustworthy.
+- A guard nobody has seen fail is a guard nobody knows works.
+
+## Next Exact Step
+**Authorization** is the obvious next one, and the gap most likely to be assumed already solved.
+Nothing is committed to; `docs/19-roadmap.md`'s "Beyond V1.4" lists the candidates.
+
+**The advance gate is now twelve documents deep** — `docs/interview/*.md` — and has never been
+met. That is the second of the project's two equal objectives and the only one still outstanding.
+
+## Recommended Commit
+Committed in two parts on `feat/v1.4-auth`.
