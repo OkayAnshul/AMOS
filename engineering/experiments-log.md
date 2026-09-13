@@ -15,20 +15,25 @@ Decision affected:   which ADR or milestone this fed into
 
 ---
 
-## No experiments yet
+## Phase 0 — verification, not experiment
 
 Phase 0 involved verification (checking documented facts), not experimentation (measuring
-unknown behaviour). Verification results are in `docs/21-technology-baseline.md`.
+unknown behaviour). Those results are in `docs/21-technology-baseline.md`.
 
-## Experiments already queued
+*(This section read "No experiments yet" until 2026-09-13, above fifteen recorded experiments.)*
 
-| Question | Milestone | Why it must be measured rather than assumed |
+## Questions queued at Phase 0, and what became of them
+
+| Question | Milestone | Outcome |
 |---|---|---|
-| How often does `gemini-3.5-flash` structured output actually fail validation? | V0.1 | Determines whether the repair loop is load-bearing or dead code. Assuming either way is a guess. |
-| Chunk size vs recall@k on the AMOS corpus | V0.5 | `docs/10-rag-architecture.md` must contain measured numbers, not defaults copied from a blog post |
-| Recall at 1536 vs 3072 dimensions | V0.5 | Tests ADR-008's central assumption; the fallback is `halfvec(3072)` |
-| Routing accuracy across specialised agents | V0.7 | "Multi-agent" is only claimable with a routing number behind it |
-| Poll interval vs latency and DB load | V0.8 | Sets the `SKIP LOCKED` poll interval from data rather than by feel |
+| How often does structured output actually fail validation? | V0.1 | ✅ **Measured** — see below. Determined whether the repair loop was load-bearing or dead code |
+| Chunk size vs recall@k on the AMOS corpus | V0.5 | ⚠️ **Not run as posed.** Retrieval quality was measured at the chosen chunk size (recall@5 100%, MRR 0.958) but never *compared across* sizes, so the setting is defensible rather than optimised |
+| Recall at 1536 vs 3072 dimensions | V0.5 | ❌ **Never run.** ADR-008's central assumption — that quality loss from MRL truncation is small — is still taken on the model card's word. The `halfvec(3072)` fallback stays documented and untested |
+| Routing accuracy across specialised agents | V0.7 | ✅ **Measured** — 10/10 on a labelled set. See below |
+| Poll interval vs latency and DB load | V0.8 | ❌ **Never run.** The 2s default was chosen by feel and `docs/12-event-system.md` says so |
+
+Two of the five were never run, and one was run in a weaker form than asked. Recording that is
+the point of keeping the table: an unrun experiment quietly becomes an assumption otherwise.
 
 ---
 

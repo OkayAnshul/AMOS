@@ -83,3 +83,30 @@ def test_every_setting_is_read_by_something() -> None:
     assert not unread, (
         f"these settings are declared but never read, so setting them does nothing: {unread}"
     )
+
+
+def test_every_setting_has_an_env_example_entry() -> None:
+    """`.env.example` is how an operator discovers what is configurable.
+
+    It stopped at "--- Database (V0.3) ---" while fourteen settings arrived in
+    the six milestones after it, so the file documented a third of the surface
+    and silently implied the rest did not exist.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    declared = set(
+        re.findall(r"^\s{4}([a-z_]+):\s", (root / "src" / "amos" / "config.py").read_text(), re.M)
+    )
+    documented = {
+        line.split("=")[0].removeprefix("AMOS_").lower()
+        for line in (root / ".env.example").read_text().splitlines()
+        if line.startswith("AMOS_")
+    }
+    assert not declared - documented, (
+        f"settings with no .env.example entry: {sorted(declared - documented)}"
+    )
+    assert not documented - declared, (
+        f".env.example names settings that do not exist: {sorted(documented - declared)}"
+    )

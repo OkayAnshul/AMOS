@@ -72,18 +72,27 @@ reversed is a one-way door.
 Everything from the environment (12-factor). `.env` is gitignored; `.env.example` shows the
 shape with no real values. A missing key or URL fails at **startup**, not on the first request.
 
+**[`.env.example`](../.env.example) is the complete list**, grouped by the milestone each
+setting arrived with, and a test keeps it complete
+(`test_every_setting_has_an_env_example_entry`). The ones worth knowing before a first run:
+
 | Variable | Purpose |
 |---|---|
-| `AMOS_GEMINI_API_KEY` | required |
-| `AMOS_DATABASE_URL` | `postgresql+asyncpg://amos:amos@localhost:5432/amos` |
-| `AMOS_LLM_MODEL` | defaults to `gemini-3.5-flash-lite` — free-tier quota is per model and daily |
+| `AMOS_GEMINI_API_KEY` | required; a missing key fails at startup |
+| `AMOS_DATABASE_URL` | `postgresql+asyncpg://amos:amos@localhost:5432/amos`. Unset is supported — see below |
+| `AMOS_LLM_MODEL` | defaults to `gemini-3.5-flash-lite`. Quota shapes differ per model — `docs/21-technology-baseline.md` is canonical |
 | `AMOS_AGENT_MAX_ITERATIONS` | hard cap on tool-calling rounds |
+| `AMOS_ASYNC_ENABLED` | mounts `POST /v1/goals/async`. **Off by default** — queueing with no worker leaves runs QUEUED forever |
+| `AMOS_TASK_TIMEOUT_SECONDS` | wall time per task attempt. Must stay below `AMOS_WORKER_VISIBILITY_TIMEOUT` (ADR-009) |
+| `AMOS_OTLP_ENDPOINT` | empty disables tracing; no collector is needed to run AMOS |
+| `AMOS_PLANNING_ENABLED` · `AMOS_MULTI_AGENT_ENABLED` · `AMOS_CRITIC_ENABLED` | each costs LLM calls; turn them off on a tight quota |
 
 ## Running without a database
 
 Deliberately supported. With `AMOS_DATABASE_URL` unset, the app starts, serves goals, and
 returns `503` from `/v1/runs/{id}` with an explanatory message. V0.1 and V0.2 behaviour stays
-reachable, and the test suite needs no container — 118 of 136 tests pass with nothing running.
+reachable, and the test suite needs no container — measured 2026-09-13, **451 of 523 tests
+pass with nothing running**, the other 72 skipping themselves.
 
 Optional infrastructure is what keeps "every milestone is runnable" true after V0.3.
 

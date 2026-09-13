@@ -96,7 +96,7 @@ It costs real API calls against a 20-request/day quota. Running it per push woul
 day's budget in a few commits, and a gate that cannot run is worse than no gate — it fails for
 reasons unrelated to the change.
 
-CI runs the 520 deterministic tests, applies migrations in both directions, and runs the suite both
+CI runs the 521 deterministic tests, applies migrations in both directions, and runs the suite both
 with and without a database. The evaluation suite is run deliberately, by a person, and its numbers
 are recorded in `docs/16-evaluation.md`.
 

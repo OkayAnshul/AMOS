@@ -564,7 +564,7 @@ The reading list now exists to close them. After that, V0.6 — Memory.
 
 ---
 
-# Session 7
+# Session 8
 
 **Date:** 2026-09-09
 **Module:** V0.6 — Memory
@@ -631,7 +631,7 @@ V0.7 — Multi-agent. Delete `_finalise` first. Specialised agents need **distin
 not just distinct prompts, and routing accuracy must be measured or "specialised" is an unmeasured
 claim. Full sequence in `engineering/current-state.md`.
 
-## Session 7 (continued) — V0.7
+## Session 8 (continued) — V0.7
 
 **Module:** V0.7 — Multi-Agent
 **Objective:** Make "multi-agent" an honest word: agents that differ in capability, structured
@@ -685,7 +685,7 @@ milestones). Fixed the randomised test fake and the version drift. Wrote
 V0.8 — asynchronous execution. `tasks.claimed_at` and the partial claimable index already exist
 from V0.4, so this adds a worker rather than a migration.
 
-## Session 7 (continued) — V0.8
+## Session 8 (continued) — V0.8
 
 **Module:** V0.8 — Asynchronous Execution
 **Objective:** Queue goals to workers; survive a worker crash.
@@ -734,7 +734,7 @@ Removed V0.4's speculative task-level claim column. Added `test_schema_drift.py`
 V0.9 — observability. The request id threaded since V0.1 becomes the OTel trace id. Watch metric
 cardinality, and keep goal text out of span attributes.
 
-## Session 7 (continued) — V0.9 and V1.0
+## Session 8 (continued) — V0.9 and V1.0
 
 **Modules:** V0.9 Observability, V1.0 Evaluation
 **Objective:** Emit standard telemetry; make every quality claim checkable by a command.
@@ -790,3 +790,123 @@ journal chapters 10 and 11. 480 tests.
 ## Next Exact Step
 **The roadmap is complete.** The outstanding work is the advance gate: ten interview documents,
 never met. Start with `docs/25-build-journal.md`.
+
+---
+
+# Session 9
+
+**Date:** 2026-09-09 → 2026-09-11
+**Module:** Post-V1.0 — memory reliability, version drift, and the build-along guide
+**Objective:** Make `remember_fact` actually work, and write the guide for building AMOS by hand.
+
+> **Backfilled 2026-09-13.** This session produced **21 commits** (`v1.0..main`) and was never
+> written up. `CLAUDE.md` makes updating this file part of the end-of-session protocol, so the
+> omission is a protocol violation visible in `git log` — which is the argument for the protocol.
+> Reconstructed from the commits, `bugs-log.md` and `experiments-log.md`, all of which *were*
+> kept current.
+
+## What We Changed
+- `src/amos/memory/reconcile.py` (new) — guarantees the system never claims to have remembered
+  something it did not store.
+- `src/amos/agents/registry.py` — `remember_fact` added to the Researcher's allowlist.
+- `src/amos/__init__.py`, `src/amos/api/app.py` — version defined once, read everywhere.
+- `src/amos/memory/trials.py`, `Makefile` — `make memory-trials`.
+- `docs/build-along/` (new, 12 documents) — what file to write, when, why then, and the trap
+  waiting in each milestone. Contracts, not code; the git tags are the answer key.
+- `docs/25-build-journal.md` chapter 12; `docs/09-memory-architecture.md` reliability figures.
+
+## Problems Encountered
+1. `/health` reported version 0.7.0 from a v1.0 build.
+2. `remember_fact` was called unreliably — the model said it had remembered things it had not.
+3. Three prompt fixes in a row failed to improve the store rate.
+
+## How We Solved Them
+1. The version had been a literal in three files. Moved to `amos.__version__`, with the build
+   deriving from it via hatchling — the reverse of the original arrangement, which read the
+   version recorded at *install* time and so silently ignored every bump.
+2. `MemoryReconciler`: compare what the answer *claims* against what was actually written, then
+   re-run the tool or flag the caveat. Ground truth is read from the `memories` table, never
+   from the model's own account of itself.
+3. **The root cause was not a prompt problem at all.** `remember_fact` was registered globally
+   and appeared in **no** `AgentSpec` allowlist, so every specialist's filtered registry removed
+   it. With routing enabled, storing a memory was *structurally impossible* — and the prompts
+   were being tuned to ask for a tool that did not exist in the agent's registry.
+   Store rate went 0% → 100% (8/8); false-claim rate 38% → 0%.
+
+## Things I Learned
+- **Three failed fixes of the same kind is a signal about the diagnosis, not the fix.** Each
+  prompt change was a reasonable idea; the third failure was the evidence that the layer was wrong.
+- A capability can be fully built, fully tested, fully documented and completely unreachable.
+  The unit tests passed because they constructed the tool directly; nothing tested the wiring.
+- A version read at install time is not the version you are running.
+
+## Next Exact Step
+Recorded at the time as: the advance gate, still unmet.
+
+---
+
+# Session 10
+
+**Date:** 2026-09-13
+**Module:** Coherence audit — code and documentation against the master build prompt
+**Objective:** Establish what is built, what is left, and where the documentation has drifted
+from the code. Then fix what the audit found.
+
+## What We Changed
+
+**Code — six defects where AMOS disagreed with itself** (`fix/coherence`):
+- `httpx` moved to runtime dependencies. It was declared under `[dev]` with the comment
+  "required by fastapi.testclient" while `http_get.py` imports it at runtime, so `pip install .`
+  produced a package whose only network tool could not import. Nobody saw it because everyone
+  installs `-e ".[dev]"`.
+- The OpenAPI description read "— V0.7" through the whole of a v1.0 build, served from
+  `/openapi.json` and `/docs`.
+- `AMOS_ASYNC_ENABLED` was read by nothing while three documents told the reader to set it.
+- `retrieval_top_k` and `memory_min_score` were likewise unread.
+- `amos.task.retries` was created at V0.9 and never incremented.
+- `TaskState.TIMED_OUT` was declared with legal transitions and was unreachable — ADR-009 adds
+  the task-level timeout.
+
+**Documentation** — roughly forty discrepancies, in four tiers by how badly a reader is misled.
+The worst were: `22-resume-evidence.md` contradicting *itself* about whether "RAG" and
+"autonomous" were earned; `07-agent-specification.md` still describing the allowlist from before
+the memory bug was fixed; `05-data-model.md` teaching a schema V0.8 deliberately deleted; and
+`06-api-specification.md` documenting two of four endpoints at "Current version: V0.1".
+
+**Engineering logs** — `decisions-log.md` had stopped at V0.4 and `learning-log.md` at V0.1;
+both backfilled. `23-glossary.md`, the last stub, written.
+
+## Architecture Decisions
+- **ADR-009 — a task-level timeout.** The decision is the *ordering* — per-call bounds < task
+  timeout < worker visibility timeout — more than the 300s.
+- **`AMOS_ASYNC_ENABLED` default stays `false`**, rather than flipping to `true` to preserve the
+  current behaviour. The three documents that mention it already assume opt-in, and queueing
+  with no worker leaves runs QUEUED forever. Making the documented mental model true was worth
+  more than preserving an undocumented one.
+- **A test per defect *class*, not per defect.**
+
+## Tests Performed
+521 pass (523 collected, 2 live skipped), up from 510. `ruff`, `ruff format` and `mypy --strict`
+clean. Measured directly rather than quoted: **451 of 523 pass with no database reachable**,
+the other 72 skipping themselves.
+
+## Things I Learned
+- **Three of the six defects already had a test nearby that passed.** The version test asserted
+  that the *current* version did not appear as a literal, so a stale one sailed through. The
+  state-machine tests were exhaustive over the transition *table* — which was correct — while
+  nothing produced one of its states. A test that names the bug just fixed protects against a
+  bug that has already been fixed.
+- **Documentation drifts hardest where it is most confident.** The document that contradicted
+  itself was `22-resume-evidence.md`, whose entire purpose is preventing overclaiming.
+- **A gap table silently becomes a claim.** `17-failure-recovery.md` promised a dead-letter
+  queue "V0.8" and a cost budget "V1.0"; both milestones shipped without them, and nobody
+  re-read the table when the milestone arrived.
+- Every quota figure in the repo was one of three mutually inconsistent values, because each
+  document had learned *one* shape of the limit and written it down as *the* shape.
+
+## Next Exact Step
+V1.1 — Reliability: task-level idempotency so a reclaimed run resumes rather than re-executing,
+a dead-letter queue, and trace context propagated into workers. ADR first.
+
+## Recommended Commit
+Already committed in five parts on `fix/coherence`.

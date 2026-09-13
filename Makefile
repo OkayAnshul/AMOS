@@ -1,5 +1,5 @@
 # Common commands. `make help` lists them.
-.PHONY: help test lint types check fmt up down migrate ingest eval routing retrieval run worker
+.PHONY: help test lint types check fmt up down migrate ingest eval routing retrieval memory-trials run worker
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'

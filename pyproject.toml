@@ -47,7 +47,6 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "live: hits the real Gemini API; skipped unless AMOS_RUN_LIVE_TESTS=1",
-    "db: needs a running PostgreSQL; skipped automatically when unreachable",
 ]
 
 [tool.ruff]

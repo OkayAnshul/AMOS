@@ -98,12 +98,25 @@ Model IDs change frequently. Check <https://ai.google.dev/gemini-api/docs/models
 **Known limitation** — pgvector HNSW/IVFFlat index **2000 dimensions maximum** for the `vector`
 type (4000 for `halfvec`). This directly drives ADR-008.
 
-## Later
+## Added after V0.3
 
-| Technology | Milestone | Why |
+| Technology | Milestone | Why | Docs |
+|---|---|---|---|
+| httpx | V0.2 | Async HTTP for the `http_get` tool. **A runtime dependency**, though it sat under `[dev]` with the comment "required by fastapi.testclient" until 2026-09-13 — so `pip install .` produced a package whose `http_get` could not import | <https://www.python-httpx.org/> |
+| `opentelemetry-api` · `-sdk` · `-exporter-otlp-proto-http` | V0.9 | Tracing and metrics, exported over OTLP/HTTP | <https://opentelemetry.io/docs/languages/python/> |
+
+## Build and test toolchain
+
+Not application dependencies, but they are declared in `pyproject.toml` and a reader looking for
+"what is this built with" should find them here.
+
+| Technology | Role | Docs |
 |---|---|---|
-| httpx | V0.2 | Async HTTP for the `http_get` tool |
-| OpenTelemetry | V0.9 | Tracing — <https://opentelemetry.io/docs/languages/python/> |
+| uvicorn[standard] | ASGI server — `python -m amos` runs it | <https://www.uvicorn.org/> |
+| hatchling | Build backend; reads the version from `amos.__version__` | <https://hatch.pypa.io/latest/> |
+| pytest + pytest-asyncio | Test runner, `asyncio_mode = "auto"` | <https://docs.pytest.org/en/stable/> |
+| ruff | Lint and format | <https://docs.astral.sh/ruff/> |
+| mypy | `--strict`, over `src/` | <https://mypy.readthedocs.io/en/stable/> |
 
 ## Deliberately not used
 
