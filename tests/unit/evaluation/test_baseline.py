@@ -116,3 +116,44 @@ def test_an_unknown_field_in_the_file_is_ignored(tmp_path: Path) -> None:
 
     assert loaded is not None
     assert loaded.model == "m"
+
+
+# ---------- the gate, end to end, with no quota spent ----------
+
+
+def test_the_gate_fails_on_a_regression_even_when_every_case_passes(tmp_path: Path) -> None:
+    """The case this exists for.
+
+    A suite where every case still passes can nevertheless have a rate fall —
+    fewer cases measured, or a check that applies to a subset. "All cases passed"
+    would report that as fine, which is exactly the regression nobody notices.
+    """
+    from amos.evaluation.baseline import compare
+
+    stored = baseline()
+    stored.save(tmp_path / "b.json")
+
+    current = baseline(
+        rates={**{n: 1.0 for n in GATED_METRICS}, "answer_correct": 0.67},
+        pass_rate=1.0,
+    )
+
+    result = compare(current, Baseline.load(tmp_path / "b.json"))  # type: ignore[arg-type]
+
+    assert result.regressed, "a rate falling must fail even when pass_rate is 1.0"
+    assert "answer_correct: 100% -> 67%" in result.summary()
+
+
+def test_a_baseline_is_not_written_unless_asked(tmp_path: Path) -> None:
+    """A gate that updates itself on failure is not a gate.
+
+    `compare` has no side effects; writing is a separate, explicit call, which is
+    what makes accepting a new number show up in a diff.
+    """
+    path = tmp_path / "b.json"
+    baseline().save(path)
+    before = path.read_text()
+
+    compare(baseline(rates={n: 0.0 for n in GATED_METRICS}), baseline())
+
+    assert path.read_text() == before
