@@ -54,6 +54,7 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from amos.observability import log_event
+from amos.telemetry.tracing import current_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,8 @@ class ClaimedRun:
     run_id: uuid.UUID
     goal: str
     attempt_count: int
+    #: W3C traceparent of the request that enqueued this run, if tracing was on.
+    trace_parent: str | None = None
 
 
 async def claim_next_run(
@@ -123,7 +126,7 @@ async def claim_next_run(
                       FOR UPDATE SKIP LOCKED
                     LIMIT 1
              )
-         RETURNING id, goal_text, attempt_count
+         RETURNING id, goal_text, attempt_count, trace_parent
             """
         ),
         {
@@ -144,7 +147,12 @@ async def claim_next_run(
         worker=worker_id,
         attempt=row.attempt_count,
     )
-    return ClaimedRun(run_id=row.id, goal=row.goal_text, attempt_count=row.attempt_count)
+    return ClaimedRun(
+        run_id=row.id,
+        goal=row.goal_text,
+        attempt_count=row.attempt_count,
+        trace_parent=row.trace_parent,
+    )
 
 
 async def reclaim_abandoned_runs(
@@ -183,10 +191,21 @@ async def reclaim_abandoned_runs(
 
 
 async def enqueue(session: AsyncSession, run_id: uuid.UUID) -> None:
-    """Mark a recorded run as ready for a worker."""
+    """Mark a recorded run as ready for a worker.
+
+    The current trace context is captured here rather than at creation, because
+    here is where the work crosses a process boundary — this is the last moment
+    the submitting request and the run are in the same trace.
+    """
     await session.execute(
-        sql_text("UPDATE runs SET status = :queued WHERE id = :run_id"),
-        {"queued": RunStatus.QUEUED, "run_id": str(run_id)},
+        sql_text(
+            "UPDATE runs SET status = :queued, trace_parent = :trace_parent WHERE id = :run_id"
+        ),
+        {
+            "queued": RunStatus.QUEUED,
+            "trace_parent": current_trace_context(),
+            "run_id": str(run_id),
+        },
     )
 
 

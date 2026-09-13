@@ -172,3 +172,49 @@ async def test_completed_runs_are_counted(
 
     assert worker.runs_completed == 2
     await cleanup(db_factory, *ids)
+
+
+async def test_the_worker_puts_the_run_id_in_context(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Without this the plan store and task checkpoint are inert in the worker
+    (ADR-010) — and the worker is the only place a reclaim happens, so a
+    reclaimed run would silently re-execute from the start.
+
+    The bug this pins is one of omission: the synchronous path set the run id
+    and the worker path did not, so resumption worked everywhere except where
+    it mattered.
+    """
+    from amos.observability import get_current_run_id
+
+    seen: list[str | None] = []
+
+    class ContextReadingAgent:
+        tool_names: list[str] = []
+
+        async def run(self, goal: str) -> AgentResult:
+            seen.append(get_current_run_id())
+            return result()
+
+    run_id = await queue_a_run(db_factory, "context")
+    worker = Worker(db_factory, ContextReadingAgent)
+    await worker.run_once()
+
+    assert seen == [str(run_id)]
+    await cleanup(db_factory, run_id)
+
+
+async def test_the_run_id_does_not_leak_into_the_next_claim(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A worker is a long-lived loop. A run id left in the contextvar would make
+    the *next* run's checkpoints land on the previous run's rows.
+    """
+    from amos.observability import get_current_run_id
+
+    run_id = await queue_a_run(db_factory, "first")
+    worker = Worker(db_factory, ScriptedAgent)
+    await worker.run_once()
+
+    assert get_current_run_id() is None
+    await cleanup(db_factory, run_id)

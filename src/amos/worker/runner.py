@@ -28,7 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from amos.database.engine import session_scope
 from amos.database.repository import RunRepository
 from amos.errors import AmosError
-from amos.observability import log_event, set_request_id
+from amos.observability import log_event, set_current_run_id, set_request_id
+from amos.telemetry.tracing import continued_trace
 from amos.worker.queue import (
     DEFAULT_VISIBILITY_TIMEOUT,
     claim_next_run,
@@ -74,13 +75,30 @@ class Worker:
             return False
 
         set_request_id(str(claimed.run_id)[:16])
+        # V1.1: the run id has to be in context here too, not only on the
+        # synchronous path. The plan store and the task checkpoint read it
+        # (ADR-010), so without this a reclaimed run would silently re-execute
+        # from the start — in the worker, which is the only place a reclaim
+        # happens and therefore the only place resumption matters.
+        set_current_run_id(str(claimed.run_id))
 
         # Execution happens outside any transaction — the V0.3 reasoning still
         # applies, and matters more here: a run can take minutes, and holding a
         # pooled connection open across it would starve every other worker.
         try:
             agent = self._agent_factory()
-            result = await agent.run(claimed.goal)  # type: ignore[attr-defined]
+            # Continues the trace of the request that enqueued this run, rather
+            # than starting a second one that nothing links to the first.
+            with continued_trace(
+                claimed.trace_parent,
+                "run.execute.worker",
+                **{
+                    "amos.run_id": str(claimed.run_id),
+                    "amos.worker_id": self.worker_id,
+                    "amos.attempt": claimed.attempt_count,
+                },
+            ):
+                result = await agent.run(claimed.goal)  # type: ignore[attr-defined]
         except AmosError as exc:
             await self._record_failure(claimed.run_id, exc)
             return True
@@ -96,6 +114,7 @@ class Worker:
 
         self.runs_completed += 1
         log_event(logger, "worker.completed", run_id=str(claimed.run_id))
+        set_current_run_id(None)
         return True
 
     async def _record_failure(self, run_id: uuid.UUID, exc: Exception) -> None:

@@ -84,6 +84,11 @@ class Run(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     claimed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # V1.1: the W3C traceparent of the request that enqueued this run, so the
+    # worker continues that trace instead of starting a second one. Nullable —
+    # a run enqueued with tracing off has no parent, and inventing one would be
+    # worse than the gap.
+    trace_parent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

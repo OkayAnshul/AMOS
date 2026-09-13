@@ -148,9 +148,7 @@ class RunRepository:
 
         existing = {
             row.plan_ref: row
-            for row in (
-                await self._session.execute(select(Task).where(Task.run_id == run.id))
-            )
+            for row in (await self._session.execute(select(Task).where(Task.run_id == run.id)))
             .scalars()
             .all()
         }

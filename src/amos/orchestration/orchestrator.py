@@ -129,9 +129,7 @@ class Orchestrator:
             latency_ms=total_ms,
         )
 
-    async def _plan_for(
-        self, goal: str, calls: list[LLMCallRecord]
-    ) -> tuple[Plan, dict[str, str]]:
+    async def _plan_for(self, goal: str, calls: list[LLMCallRecord]) -> tuple[Plan, dict[str, str]]:
         """The stored plan if this run has one, otherwise a fresh one.
 
         Resuming skips a planning call, which on a 20-request/day quota is a
