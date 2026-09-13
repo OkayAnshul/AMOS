@@ -1,5 +1,5 @@
 # Common commands. `make help` lists them.
-.PHONY: help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker
+.PHONY: help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker release
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -51,3 +51,14 @@ memory-trials:  ## Memory storage reliability (capture a baseline with AMOS_MEMO
 
 routing:  ## Agent routing accuracy
 	.venv/bin/python -m amos.agents.cli
+
+# --- release. Bump, verify, commit, tag — in that order, every time. ---
+
+release:  ## Tag a release: make release VERSION=1.2.0
+	@test -n "$(VERSION)" || (echo "usage: make release VERSION=1.2.0"; exit 1)
+	@sed -i 's/^__version__ = ".*"$$/__version__ = "$(VERSION)"/' src/amos/__init__.py
+	@$(MAKE) --no-print-directory check
+	@git add src/amos/__init__.py
+	@git commit -m "chore: version $(VERSION)"
+	@git tag -a "v$(VERSION)" -m "v$(VERSION)"
+	@echo "tagged v$(VERSION) — push with: git push origin main --tags"

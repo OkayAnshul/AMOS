@@ -525,3 +525,23 @@ they replace; the test is what covers the rest.
 **Test added:** none needed — the existing one caught it. Worth noting that a `make release`
 target doing bump-commit-tag-push in order would remove the opportunity entirely, and is not
 built.
+
+---
+
+## 2026-09-13 — The version/tag slip, twice more in one session
+**Milestone:** V1.2
+**Symptom:** `test_the_version_matches_the_latest_git_tag` failed twice more — once after tagging
+`v1.1` with `__version__` at 1.0.0, and again after tagging `v1.2` with it at 1.1.0.
+**Expected:** the version and the newest tag agree.
+**Root cause:** not the code. **The release sequence had no mechanism** — only a test that fires
+afterwards. Bump, verify, commit, tag is four steps in a required order, performed from memory,
+and I got it wrong three times in one day.
+**Fix:** `make release VERSION=x.y.z` does all four in order and refuses to tag if `make check`
+fails. The opportunity to get the order wrong is removed rather than tested for.
+**How it was found:** the same regression test, both times. It is now the most productive test in
+the repository.
+**Lesson:** **a test that keeps catching the same class of mistake is evidence the process is
+wrong, not that the test is good.** Three catches should have prompted a mechanism after the
+first. A guard that fires repeatedly is a guard doing someone else's job.
+**Test added:** none — the existing one is sufficient, and is now backed by a target that makes
+the mistake hard to make.
