@@ -422,10 +422,55 @@ must never gate · what a bigger golden set does and does not fix · why the bas
 
 ---
 
-## Beyond V1.2
+## V1.3 — Agent-to-Agent Delegation
 
-Chosen 2026-09-13, each still needing its ADR before any code: **V1.3** agent-to-agent delegation
-· **V1.4** authentication and multi-user isolation.
+**Objective** Give `AgentTask` a caller, making the brief's §10 true rather than aspirational.
+**User capability** A specialist that hits a capability it does not have hands that piece to the
+agent that does, instead of guessing or failing.
+**Architecture** Adds a `delegate` tool and a shared per-run budget. No new components.
+**Technologies** None new.
+
+**Learn** Structured inter-agent contracts versus free-form handoff · why a bound enforced by
+*absence* beats a bound enforced by a check · privilege boundaries between agents · cost
+amplification in multi-hop systems.
+
+**Implementation** `delegate` as a Tool (ADR-012), inheriting schema validation, timeouts,
+tracing and per-agent allowlisting · depth enforced by the tool being absent from the registry
+past the cap · a budget shared across the run · self-delegation rejected before execution · the
+delegate built from **its own** AgentSpec, never the caller's · the system instruction extended
+only when the tool is present.
+
+**Tests** Depth cap removes the tool rather than refusing the call · a delegation cycle
+terminates · the budget is shared, not per-agent · an exhausted budget is a refusal the caller
+can act on, not a failure · a delegate does not inherit the caller's tools · the end-to-end
+researcher→analyst→researcher chain, with the researcher never acquiring a calculator.
+
+**Demo** Ask for a percentage of a documented number: the researcher retrieves it, delegates the
+arithmetic, and the trace shows the `delegate` call and the analyst's `calculator` call beneath it.
+
+**Definition of Done** As before, plus ADR-012, `docs/interview/delegation.md`, and
+`07-agent-specification.md` extended.
+
+**Failure modes handled** Infinite delegation · cycles · self-delegation · an unknown target ·
+budget exhaustion mid-task · a delegate failing · privilege escalation via delegation.
+
+**Resume value** "Bounded agent-to-agent delegation over a validated message contract, with depth
+and budget limits enforced structurally and no privilege inheritance between agents."
+**Interview value** Why delegation is a tool · why the depth bound is the tool's absence rather
+than a check · why the budget is shared · why a delegate uses its own allowlist · why two
+distribution mechanisms are defensible.
+**Future extension** Delegation-accuracy measurement; negotiation; clarifying questions.
+
+> **STOPPING POINT** — Specialisation stays strict *because* delegation exists. Without it the
+> pressure is to widen allowlists until they overlap, at which point routing accuracy stops
+> meaning anything.
+
+---
+
+## Beyond V1.3
+
+Chosen 2026-09-13, still needing its ADR before any code: **V1.4** authentication and multi-user
+isolation.
 
 Unscheduled, and only with a real driver: MCP tool transport · human-approval workflows · a web
 UI · Temporal for durable workflows · Kubernetes · hybrid search and reranking · a per-run cost

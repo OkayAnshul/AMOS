@@ -30,6 +30,7 @@ demo does not go on a resume.**
 | Distributed tracing with OpenTelemetry | V0.9 | `src/amos/telemetry/**` | 23 telemetry tests | live collector capture | ✅ **shipped** |
 | Evaluation harness gating regressions in CI | V1.0 | `src/amos/evaluation/**`, `.github/workflows/ci.yml` | 39 evaluation tests | `make eval` → 6/6 | ✅ **shipped** |
 | Resumable execution across worker crashes, with a dead-letter path and cross-process tracing | V1.1 | `src/amos/database/progress.py`, `src/amos/orchestration/executor.py`, `src/amos/worker/queue.py` | 20 progress + queue tests | kill a worker mid-run; only the unfinished task re-runs | ✅ **shipped** |
+| Bounded agent-to-agent delegation over a validated contract, with no privilege inheritance | V1.3 | `src/amos/agents/delegation.py`, `src/amos/agents/team.py` | 21 delegation tests | researcher delegates arithmetic to the analyst, never acquiring a calculator | ✅ **shipped** |
 
 ## Words that must never be used unless earned
 
@@ -703,3 +704,48 @@ the judge**, so groundedness 1.00 has no known relationship to a human's verdict
 over eight of nine cases because one judge call failed. Only the latest scorecard is stored, not
 per-case history. And the corpus is a V0.5 snapshot several of whose documents have since been
 rewritten.
+
+---
+
+## V1.3 — Agent-to-Agent Delegation
+
+**What was implemented:** `AgentTask` finally has a caller. A specialist that hits a capability it
+does not have delegates that piece to the agent that does, under a validated contract with depth,
+budget and privilege bounds enforced in code.
+
+**Evidence (files):**
+- `src/amos/agents/delegation.py` — the `delegate` tool, the shared budget, the refusal paths
+- `src/amos/agents/team.py` — depth enforced by the tool's **absence** from the registry; the
+  instruction extended only when the tool is present
+- `src/amos/agents/messages.py` — `AgentTask`, defined at V0.7 and used from here
+- `tests/unit/agents/test_delegation.py` — 21 tests, most of them about the bounds
+
+**Measured:** 587 tests. No delegation-*accuracy* number exists, deliberately — the bounds are
+tested; whether models delegate *well* is unmeasured, and quoting the golden-set pass rate as if
+it covered this would be the overclaim this file exists to prevent.
+
+**Technical explanation (unaided):** Delegation is a tool for the same reason retrieval is: it
+inherits schema-validated arguments, a timeout, a trace entry and per-agent allowlisting, so
+"which agents may delegate" needs no new enforcement path. The depth bound is the tool's
+**absence** from the delegate's registry rather than a check inside it — a check is code that
+model output flows into, and could be argued past; a missing tool cannot be. Cycles therefore need
+no detection, because depth terminates them. The budget is shared across the run rather than
+per-agent, since three agents with three each is nine. And a delegate is built from its own
+`AgentSpec`: **delegation moves work, not authority**, or an injection that talked a researcher
+into delegating would inherit whatever the analyst can do.
+
+The reason it matters beyond convenience: without delegation, the pressure is to widen the
+researcher's allowlist to include `calculator` — and once allowlists overlap, routing accuracy
+stops meaning anything.
+
+**Likely interview questions:** `docs/interview/delegation.md`.
+
+**Honest resume wording:**
+> Implemented bounded agent-to-agent delegation in a multi-agent system over a schema-validated
+> message contract, with recursion depth enforced by capability removal rather than runtime checks,
+> a shared per-run budget, and no privilege inheritance between agents.
+
+**What this does NOT demonstrate:** **Delegation quality is unmeasured.** No agent negotiates,
+asks clarifying questions, or refuses on its own judgement — a delegate answers. There is no
+shared state: everything must be in the instruction and context. The orchestrator still assigns
+all top-level work, so this is delegation *within* a task, not autonomous agent coordination.

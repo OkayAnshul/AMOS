@@ -357,3 +357,73 @@ asking the next person to be careful is not a control.
 *Context:* it was an f-string interpolating an exception message, so a quote or backslash in the
 reason produced malformed JSON that Postgres rejected — turning a give-up into a crash, in the
 code path that exists to handle crashes. Found by reading the function, not by a failure.
+
+---
+
+## 2026-09-13 — Session 12 (V1.2, evaluation credibility)
+
+**ADR-011 — adversarial cases are tests; the eval suite gets a stored baseline.** Full record in
+`docs/03-architecture-decisions.md`.
+
+**The deciding question for where a case lives: could code settle this?**
+*Why:* if the claim is "the boundary holds even assuming the model is compromised", the model's
+cooperation is irrelevant — so a fake that complies is stronger evidence than a real model that
+resists, and it runs in CI for free rather than against a 20/day quota.
+
+**Only deterministic metrics gate.**
+*Why:* the judged score comes from a model in the same family as the one judged. A threshold on it
+invites tuning the threshold rather than fixing the system.
+
+**A baseline reports "not comparable" rather than a regression on a model or corpus change.**
+*Why:* otherwise switching models reads as a quality collapse — a different and far more confusing
+claim than the truth.
+
+**Nothing is written unless asked** (`make eval` compares, `make eval-baseline` writes).
+*Why:* a gate that updates itself on failure is not a gate.
+
+### Smaller decisions
+
+**`make release VERSION=x.y.z`.**
+*Context:* the version/tag test fired three times in one session.
+*Why:* the root cause was never the code. Four steps in a required order, performed from memory.
+The target removes the opportunity rather than testing for it.
+*Lesson recorded in `bugs-log.md`:* a test that keeps catching the same class is evidence the
+process is wrong, not that the test is good.
+
+---
+
+## 2026-09-13 — Session 13 (V1.3, delegation)
+
+**ADR-012 — delegation is a tool, and its bound is structural.** Full record in
+`docs/03-architecture-decisions.md`.
+
+**The depth bound is the tool's absence, not a check inside it.**
+*Why:* a check is code that model output flows into and could be argued past. A tool that is not
+in the registry returns NOT_FOUND through machinery that never reads model output — the same
+principle as `docs/13-security.md`. Cycles then need no detection of their own.
+*Reconsider if:* never while the model is untrusted.
+
+**The budget is shared across the run, not per agent.**
+*Why:* three agents with three delegations each is nine. Cost is a property of the run.
+
+**An exhausted budget is a refusal, not an exception.**
+*Why:* an exception fails a task that was probably nearly complete. A refusal lets the caller
+finish with what it has and say what is missing — the same pattern as empty retrieval returning a
+refusal instruction rather than an empty list.
+
+**A delegate is built from its own `AgentSpec`.**
+*Why:* delegation moves work, not authority. Inheriting the caller's tools would make an injection
+that induced a delegation into a privilege-escalation path, in whichever direction had the more
+useful tools.
+
+**The delegation paragraph is appended only when the tool is present.**
+*Why:* `07-agent-specification.md` already required instructions to match allowlists. Delegation
+makes that rule *dynamic*, since the tool's presence depends on depth.
+
+**Two distribution mechanisms are kept, deliberately.**
+*Context:* planned decomposition (V0.4) and delegation (V1.3) both hand work around.
+*Why:* they answer different questions — *what are the steps* versus *I have hit something I
+cannot do*. The second cannot be replaced by the first because the need is discovered during
+execution rather than predictable before it.
+*Reconsider if:* delegation depth needs to exceed 2, which would mean the planner should have
+decomposed instead.

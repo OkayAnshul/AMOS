@@ -1,6 +1,6 @@
 # 07 — Agent Specification
 
-**Written at V0.7**, when there was more than one agent. A specification describing how agents
+**Written at V0.7**, when there was more than one agent; extended at V1.3 with delegation. A specification describing how agents
 differ is meaningless while there is exactly one, which is why this was a stub for six milestones.
 
 ## What an agent is
@@ -151,3 +151,66 @@ On a 20-request/day quota that is material, which is why `AMOS_MULTI_AGENT_ENABL
 - **No critic specialisation** — one critic judges every kind of answer.
 - **Routing measured on 10 self-authored cases**, which cannot distinguish a good router from a
   set of easy questions.
+
+
+---
+
+## Delegation (V1.3)
+
+Until V1.3 the orchestrator assigned every task and agents never spoke to each other. `AgentTask`
+— the structured contract §10 of the brief asks for — had been defined since V0.7 with **no
+caller**.
+
+The gap was concrete. A Researcher retrieves *"the quota is 20 requests per day"*, is asked for
+15% of it, and **cannot do the arithmetic**: `calculator` is not in its allowlist. Widening the
+allowlist is the wrong fix — disjoint allowlists are what make routing accuracy mean anything —
+so its only options were to compute in its head, the exact failure tools exist to prevent, or to
+fail.
+
+**Delegation is a tool.** Same argument as retrieval at V0.5: it inherits schema validation,
+timeouts, trace entries, `tool_calls` rows, and — most usefully — per-agent allowlisting. Which
+agents may delegate becomes the same mechanism as which agents may search.
+
+```
+researcher --delegate(analyst, "15% of 20", context=["quota is 20/day"])--> analyst
+                                                                              |
+researcher <---------------- {"answer": "3", "agent": "analyst"} -------------+
+```
+
+### The three bounds, and why none is a prompt
+
+| Bound | Default | Mechanism |
+|---|---|---|
+| **Depth** | 1 | Past the cap, `delegate` is **absent from the registry**. A payload cannot talk its way past a tool that does not exist. |
+| **Budget** | 3 per run | A shared counter. Per-agent would let a chain each spend the full allowance, which is not a budget. |
+| **Self-delegation** | — | Rejected as an invalid argument, before execution. |
+
+Cycles need no detection of their own: researcher → analyst → researcher terminates because depth
+is bounded, and depth is bounded by *removing the capability* rather than refusing the call.
+
+### A delegate uses its own allowlist
+
+Never the caller's. **Delegation moves work, not authority.** The alternative is a
+privilege-escalation path dressed as a feature: a prompt injection that talked a Researcher into
+delegating would inherit whatever the Analyst can do.
+
+### The instruction follows the tool
+
+`docs/07` already required that instructions match allowlists — a prompt promising a capability
+the registry denies produces an agent that burns iterations attempting it. Delegation makes that
+rule *dynamic*, because the tool's presence depends on depth. So the delegation paragraph is
+appended only when the tool is actually in the registry, and the list of other agents in it is
+built from the registry rather than written into each spec.
+
+### What it costs
+
+Each hop is at least one LLM call, and the caller then continues its own loop with the result. A
+depth of 1 with a budget of 3 can still triple a task's cost on a 20-request/day quota, which is
+why `AMOS_DELEGATION_ENABLED` exists alongside the other cost switches.
+
+### What is still true
+
+The orchestrator has not gone away, so work is now distributed two ways: **planned decomposition**
+(up front, deterministic) and **delegation** (mid-task, model-decided). That is a real increase in
+surface area, justified only because they answer different questions — *what are the steps* versus
+*I have hit something I cannot do*.

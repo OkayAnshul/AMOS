@@ -1055,3 +1055,61 @@ two expected to be hardest.
 
 ## Recommended Commit
 Committed in three parts on `feat/v1.2-evaluation`.
+
+---
+
+# Session 13
+
+**Date:** 2026-09-13
+**Module:** V1.3 — Agent-to-Agent Delegation
+**Objective:** Give `AgentTask` a caller, six milestones after it was defined.
+
+## What We Changed
+- `src/amos/agents/delegation.py` (new) — the `delegate` tool, `DelegationBudget`, refusal paths.
+- `src/amos/agents/team.py` — depth enforced by the tool's absence from the registry; the
+  delegation paragraph appended only when the tool is present; the agent list built from the
+  registry rather than written into each spec.
+- `src/amos/config.py`, `api/dependencies.py`, `.env.example` — three settings.
+- ADR-012; `docs/interview/delegation.md` (new); `07-agent-specification.md` extended; roadmap;
+  resume evidence.
+
+## Architecture Decisions
+In `decisions-log.md`. The one that shaped the rest: **the depth bound is the tool's absence**,
+not a check inside it — a check is code that model output flows into.
+
+## Problems Encountered
+1. An existing team test asserted the analyst's declared tools were exactly `{calculator}`.
+2. The end-to-end test failed on `ToolOutcome.tool_name`.
+
+## How We Solved Them
+1. Correct failure — delegation genuinely adds a tool to every routable agent. Updated it, and
+   added a second test pinning the invariant it was really protecting: with delegation off, no
+   other agent's tools leak in. The original assertion conflated "only its own tools" with "only
+   these exact tools".
+2. The field is `name`. A five-second fix, worth noting only because it is the kind of thing that
+   would have been caught earlier by writing the assertion against the model definition rather
+   than from memory.
+
+## Tests Performed
+567 → **587**. Most of the new ones are about the bounds rather than the happy path: depth removes
+the tool, a cycle terminates, the budget is shared, an exhausted budget is a refusal the caller
+can act on, and a delegate does not inherit the caller's tools.
+
+## Things I Learned
+- **Specialisation depends on delegation existing.** Without it, the pressure is to widen the
+  researcher's allowlist to include `calculator` — and once allowlists overlap, routing accuracy
+  stops meaning anything. The feature protects an earlier measurement.
+- A bound enforced by **absence** is categorically stronger than one enforced by a check, and the
+  difference only shows up under an adversarial assumption.
+- Making a prompt depend on a registry that varies at runtime turned a static rule
+  ("instructions must match allowlists") into a dynamic one. The rule survived; its implementation
+  had to move.
+
+## Next Exact Step
+**V1.4 — Authentication and multi-user isolation.** The largest change in the plan: a `users`
+table, auth on the API, and `user_id` scoping on runs, memories and documents, enforced in the
+repository layer so a query cannot forget it. ADR first, and it must say out loud that
+`docs/01-requirements.md` currently lists multi-tenancy as an explicit **non-goal**.
+
+## Recommended Commit
+Committed in two parts on `feat/v1.3-delegation`.

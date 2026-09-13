@@ -4,7 +4,7 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V1.1.** The V0.1–V1.0 roadmap is complete; V1.1 is the first milestone past it.
+> **Status: V1.3.** The V0.1–V1.0 roadmap is complete; V1.1–V1.3 are past it.
 > Queues goals to worker processes that survive being killed mid-run — and now **resume** rather
 > than start over — routes work to specialised agents, plans task graphs, uses tools, retrieves
 > with citations, remembers facts across sessions, reviews its own answers, emits standard traces
@@ -54,7 +54,9 @@ adopted — Qdrant, Celery, Redis, Kafka, Kubernetes — have records saying why
 | 0.8 ✅ | Async execution | Long-running goals execute asynchronously with crash-safe job claiming |
 | 0.9 ✅ | Observability | Full distributed trace of any run |
 | 1.0 ✅ | Evaluation | Quality is measured, not asserted |
-| **1.1 ✅** | **Reliability** | **A reclaimed run resumes instead of redoing completed work; give-ups are collected; a queued run is one trace** |
+| 1.1 ✅ | Reliability | A reclaimed run resumes instead of redoing completed work; give-ups are collected; a queued run is one trace |
+| 1.2 ✅ | Evaluation credibility | Adversarial coverage, and a regression fails a command instead of going unnoticed |
+| **1.3 ✅** | **Delegation** | **A specialist hands work it cannot do to the one that can, under a bounded contract** |
 
 Full detail, including failure modes and stopping points, in
 [`docs/19-roadmap.md`](docs/19-roadmap.md).
@@ -288,7 +290,7 @@ quota is per model, which keeps `gemini-3.5-flash`'s allowance free for demos.
 ## Testing
 
 ```bash
-make check      # lint + types + 567 tests
+make check      # lint + types + 587 tests
 make test       # tests only; database ones skip if none is running
 ```
 
@@ -303,7 +305,7 @@ something enforced.
 | End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
 | Agent routing | `make routing` | 10/10 |
-| Tests | `make test` | 567 passing, 2 live tests skipped |
+| Tests | `make test` | 587 passing, 2 live tests skipped |
 
 Every one of those sets is small and was written by the person who built the system. They are a
 regression gate, not a characterisation of quality, and

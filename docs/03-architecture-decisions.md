@@ -574,3 +574,89 @@ would put the history somewhere `git log` cannot see it.
 ### Reconsider if
 A second person starts authoring cases — at which point the golden set can grow past what one
 quota can run, and the interesting question becomes sampling rather than coverage.
+
+---
+
+## ADR-012 — Delegation is a tool, and its bound is structural
+
+**Date** 2026-09-13 · **Status** Accepted (V1.3)
+
+### Context
+`agents/messages.py` has defined `AgentTask` — the structured agent-to-agent contract the project
+brief's §10 asks for — since V0.7, and **nothing has ever constructed one**. It has been listed as
+technical debt in `engineering/current-state.md` ever since. The orchestrator assigns every task;
+agents never talk to each other.
+
+The concrete gap: a Researcher that retrieves "the quota is 20 requests per day" and is then asked
+for 15% of it **cannot do the arithmetic**. `calculator` is not in its allowlist, deliberately —
+disjoint allowlists are what make routing meaningful. Its only options are to answer from its head
+(the exact failure tools exist to prevent) or to fail.
+
+### Problem
+How does one agent hand work to another, without inventing a second mechanism for something the
+system already does well?
+
+### Options
+1. **A `delegate` tool** the specialist calls like any other.
+2. **An extra LLM turn per task** — "do you need another agent?" — before or after execution.
+3. **Router-level decomposition**: detect multi-capability goals up front and split them.
+4. **Free-form handoff**: one agent writes a message, another reads it.
+
+### Decision
+**Option 1.** Delegation is a tool named `delegate`, taking a target agent, an instruction and
+context; it constructs an `AgentTask`, runs the target specialist, and returns its answer as tool
+output.
+
+### Why
+The same argument that made retrieval a tool at V0.5. A tool already gets, for free and without
+a second code path: **schema-validated arguments** before anything executes, a timeout, an entry
+in the trace and in `tool_calls`, an outcome the model can see and react to, and — most
+importantly — **per-agent allowlisting**. Which agents may delegate is then the same mechanism as
+which agents may search, and needs no new concept.
+
+Option 2 spends a call per task asking a question whose answer is usually no. On a 20/day quota
+that is the difference between six goals and three.
+
+Option 3 is not delegation; it is planning, and the planner already exists. It also cannot help
+mid-task, when the need for another capability is discovered rather than predicted.
+
+Option 4 is what §10 of the brief explicitly warns against, and the reason `AgentTask` exists.
+
+### The bounds, and why they are structural
+An agent that can delegate can delegate to an agent that can delegate. Three bounds, none of them
+a prompt instruction:
+
+| Bound | Mechanism |
+|---|---|
+| **Depth** | A delegate is built with a registry that **does not contain `delegate`** once the cap is reached. Not a check it could argue past — the tool does not exist. |
+| **Budget** | A per-run ceiling on total delegations, enforced by the tool's own counter. |
+| **No self-delegation** | Rejected as an invalid argument, before execution. |
+
+Cycles need no separate detection: researcher → analyst → researcher terminates because depth is
+bounded, and depth is bounded by removing the capability rather than refusing the call.
+
+The delegate runs with **its own** allowlist, never the caller's. Delegation moves work, not
+authority — otherwise it would be a privilege-escalation path dressed as a feature, and a prompt
+injection that talked a Researcher into delegating would inherit whatever the Analyst can do.
+
+### Tradeoffs
+- **Cost amplification is real.** Each hop is at least one LLM call, and the caller then continues
+  its own loop with the result. A depth of 2 with a budget of 3 can triple a task's cost, which is
+  why the budget is small and configurable rather than generous.
+- **The orchestrator still exists**, so there are now two ways work gets distributed: planned
+  decomposition (up front, deterministic) and delegation (mid-task, model-decided). That is a
+  genuine increase in surface area, justified only because they answer different questions —
+  *what are the steps* versus *I have hit something I cannot do*.
+- A delegated failure surfaces as a tool failure to the caller, which means the caller's model
+  decides what to do about it. That is the same trust boundary every other tool has.
+
+### Consequences
+- `AgentTask` finally has a caller, and §10 is true rather than aspirational.
+- The Researcher's allowlist stays free of `calculator`. Specialisation is preserved *because*
+  delegation exists — the alternative pressure was to widen allowlists until they overlapped, at
+  which point routing accuracy would stop meaning anything.
+
+### Reconsider if
+Delegation depth ever needs to exceed 2, which would suggest the planner should have decomposed
+the goal instead — or if a `WRITE` tool is ever added, at which point "the delegate uses its own
+allowlist" needs re-examining against a caller that could be induced to delegate.

@@ -20,6 +20,12 @@ from __future__ import annotations
 import logging
 
 from amos.agents.critic import Critic, apply_report
+from amos.agents.delegation import (
+    DEFAULT_BUDGET,
+    DEFAULT_MAX_DEPTH,
+    DelegateTool,
+    DelegationBudget,
+)
 from amos.agents.messages import CriticReport
 from amos.agents.registry import AgentRegistry, AgentSpec
 from amos.agents.router import Router
@@ -52,6 +58,9 @@ class AgentTeam:
         max_revisions: int = 1,
         critic_enabled: bool = True,
         routing_enabled: bool = True,
+        delegation_enabled: bool = True,
+        max_delegation_depth: int = DEFAULT_MAX_DEPTH,
+        delegation_budget: int = DEFAULT_BUDGET,
     ) -> None:
         self._provider = provider
         self._tools = tools
@@ -61,6 +70,9 @@ class AgentTeam:
         self._max_revisions = max_revisions
         self._critic_enabled = critic_enabled
         self._routing_enabled = routing_enabled
+        self._delegation_enabled = delegation_enabled
+        self._max_delegation_depth = max_delegation_depth
+        self._delegation_budget = delegation_budget
         self._router = Router(provider, self._agents, timeout=timeout)
         self._critic = Critic(provider, timeout=timeout)
 
@@ -68,19 +80,61 @@ class AgentTeam:
     def tool_names(self) -> list[str]:
         return self._tools.names
 
-    def agent_for(self, spec: AgentSpec) -> ToolUsingAgent:
+    def agent_for(
+        self,
+        spec: AgentSpec,
+        *,
+        depth: int = 0,
+        budget: DelegationBudget | None = None,
+    ) -> ToolUsingAgent:
         """Build a specialist restricted to its own tools.
 
         The restriction is structural: the agent is handed a registry that does
         not contain the other tools, so refusing them needs no extra code path.
+
+        Delegation is the same mechanism one level up. A specialist gets the
+        `delegate` tool only while `depth < max_delegation_depth`; past that the
+        tool is **absent from its registry**, so the bound is not a check the
+        model could be talked past (ADR-012).
         """
+        registry = spec.registry_from(self._tools)
+        instruction = spec.system_instruction
+
+        if self._delegation_enabled and depth < self._max_delegation_depth:
+            shared = budget if budget is not None else DelegationBudget(self._delegation_budget)
+            others = frozenset(
+                other.name for other in self._agents.routable if other.name != spec.name
+            )
+            if others:
+                registry = ToolRegistry(
+                    [
+                        *registry,
+                        DelegateTool(
+                            spec.name,
+                            lambda name, *, depth: self.agent_for(
+                                self._agents.get(name), depth=depth, budget=shared
+                            ),
+                            shared,
+                            depth=depth,
+                            available=others,
+                        ),
+                    ]
+                )
+                # The instruction is extended only when the tool is actually
+                # present. A prompt promising a capability the registry denies
+                # produces an agent that repeatedly attempts a tool it cannot
+                # have, burning iterations — the rule in
+                # docs/07-agent-specification.md, now applied to a tool whose
+                # presence varies with depth.
+                instruction = f"{instruction}\n{_delegation_instruction(self._agents, spec)}"
+
         return ToolUsingAgent(
             self._provider,
-            spec.registry_from(self._tools),
+            registry,
             timeout=self._timeout,
             max_iterations=spec.max_iterations,
             temperature=self._temperature,
-            system_instruction=spec.system_instruction,
+            system_instruction=instruction,
         )
 
     async def run(self, goal: str) -> AgentResult:
@@ -159,6 +213,24 @@ class AgentTeam:
             answer = apply_report(answer, report)
 
         return answer, report, calls
+
+
+def _delegation_instruction(agents: AgentRegistry, spec: AgentSpec) -> str:
+    """What to tell an agent that actually has the `delegate` tool.
+
+    Built from the registry rather than written into each spec, so adding an
+    agent does not mean editing every other agent's prompt to mention it.
+    """
+    others = [other for other in agents.routable if other.name != spec.name]
+    lines = "\n".join(f"  - {other.name}: {other.purpose}" for other in others)
+    return (
+        "\n- If a step needs a capability you do not have, use `delegate` rather "
+        "than guessing at it or giving up. Available specialists:\n"
+        f"{lines}\n"
+        "  Give a self-contained instruction and include what you have already "
+        "established - the other agent cannot see your work. Delegation is "
+        "limited, so use it for what you genuinely cannot do."
+    )
 
 
 def _evidence_from(result: AgentResult) -> list[str]:
