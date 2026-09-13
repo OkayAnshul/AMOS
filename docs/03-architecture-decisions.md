@@ -660,3 +660,96 @@ injection that talked a Researcher into delegating would inherit whatever the An
 Delegation depth ever needs to exceed 2, which would suggest the planner should have decomposed
 the goal instead — or if a `WRITE` tool is ever added, at which point "the delegate uses its own
 allowlist" needs re-examining against a caller that could be induced to delegate.
+
+---
+
+## ADR-013 — Authentication, and isolation enforced where queries are built
+
+**Date** 2026-09-13 · **Status** Accepted (V1.4)
+
+### Context
+`docs/13-security.md` has carried a table of controls marked ❌ since V0.2 — authentication,
+authorization, data isolation — each with the same justification: *single local user*. Every run,
+memory and document is globally readable, and the document says plainly that **AMOS is not safe to
+expose publicly**.
+
+This ADR is also a **reversal**. `docs/01-requirements.md` lists multi-tenancy under *explicit
+non-goals*: "not deferred-and-planned; out of scope, and pretending otherwise would distort the
+architecture." That was the right call for V0.1–V1.3 and it is being overturned deliberately
+rather than quietly — the requirement document changes with this decision, and says it changed.
+
+### Problem
+Two problems, and the second is the one that actually matters.
+
+1. Anyone who can reach the API can do anything. There is no notion of *who*.
+2. **Isolation is a property that fails silently.** A missing `WHERE user_id = ...` does not raise,
+   does not log, and returns *more* data rather than less — so the failure looks like a working
+   feature. One forgotten filter in one query is a data breach, and it is invisible in review
+   because the code looks like every other query.
+
+### Options for the credential
+1. **Hashed API keys** in a `users` table, presented as `Authorization: Bearer <key>`.
+2. **JWT** with a signing key.
+3. **OAuth / an external identity provider.**
+
+**Decision: option 1.** JWT buys stateless verification, which is worth having when auth is
+checked by many services that should not share a database — AMOS is one process with one database
+(ADR-004), so it buys nothing and costs key management and rotation. OAuth solves identity
+federation, which is not a problem anyone has here. Keys are stored as **SHA-256 hashes**: the
+database should not contain anything that grants access if it leaks.
+
+### Options for enforcement
+1. **Filter in each handler.**
+2. **Pass `user_id` into every repository method.**
+3. **Construct the repository with its owner**, so no query can be built without one.
+4. Postgres row-level security.
+
+**Decision: option 3.** `RunRepository(session, actor)` takes the acting user at construction, and
+every query it builds applies the filter from that field. There is no method that can be called
+without an owner, because there is no repository without one.
+
+Option 1 puts the guarantee in the layer most likely to be copy-pasted. Option 2 is one forgotten
+argument away from a leak, and the forgotten version still compiles and still returns rows.
+Option 4 is genuinely stronger and is the right answer at a different scale; it moves the
+guarantee into the database at the cost of every query running under a session variable that must
+be set correctly on a pooled connection — a new failure mode, in exchange for defence against a
+class of mistake option 3 already makes hard. **Reconsider if** a second service ever shares this
+database.
+
+Backing that up, a test asserts no raw `select(Run)`/`select(Memory)` appears in the repository
+outside the scoped helper — so the mechanism cannot be bypassed by writing a query the ordinary
+way.
+
+### The corpus is shared, and that is deliberate
+`documents.user_id` is **nullable**, and `NULL` means *system corpus*: readable by everyone,
+writable by no one through the API. AMOS's own documentation is the corpus, and giving each user a
+private copy would mean re-embedding it per user — roughly ten minutes of quota each — to isolate
+data that is already public in the repository.
+
+Retrieval therefore matches `user_id IS NULL OR user_id = :actor`. That is the one place isolation
+is deliberately not total, and it is a decision rather than an oversight.
+
+`runs` and `memories` are **not** nullable. A run is what someone asked and what came back; a
+memory is a fact about a person. Both are private by construction.
+
+### Tradeoffs
+- **Every table and query changes.** This is why it went last: doing it once against a schema that
+  has stopped moving is far cheaper than twice.
+- The backfill assigns every existing row to one owner. That owner is created by the migration,
+  and is the only account that exists until someone makes another.
+- **A leaked key is full access for that user** until it is rotated, and there is no rotation
+  endpoint. Stated in `13-security.md` rather than implied to be solved.
+- Auth is per *user*, not per *scope*. There are no read-only keys and no permissions within an
+  account — that is authorization, and it is explicitly still ❌.
+
+### Consequences
+- `docs/01-requirements.md`'s non-goal list loses multi-tenancy and says when and why.
+- `docs/13-security.md` flips three rows from ❌ to ✅ and gains the new residual risks.
+- `docs/02-system-architecture.md`'s "API Layer — … auth" becomes true for the first time.
+- **"AMOS is not safe to expose publicly" is still true.** There is no TLS, no rate limiting, no
+  audit of authentication attempts, and no key rotation. Authentication is a precondition for
+  exposure, not a sufficient one, and the documents keep saying so.
+
+### Reconsider if
+A second service shares the database (row-level security), or accounts need permissions within
+them rather than only identity (authorization, a separate milestone).

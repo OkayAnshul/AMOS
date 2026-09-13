@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
@@ -103,3 +104,57 @@ async def db_factory(db_engine: object) -> AsyncIterator[async_sessionmaker[Asyn
     """
     factory = async_sessionmaker(db_engine, expire_on_commit=False)  # type: ignore[arg-type]
     yield factory
+
+
+@pytest_asyncio.fixture
+async def actor(db_session: AsyncSession):  # type: ignore[no-untyped-def]
+    """A user owning everything a test creates (V1.4).
+
+    Isolation is now a property of every query, so a test without an owner
+    cannot construct a repository at all — which is the point of ADR-013's
+    choice to take the actor at construction rather than per method.
+    """
+    from amos.auth import create_user
+
+    created, _key = await create_user(db_session, f"test-{uuid.uuid4().hex[:8]}")
+    return created
+
+
+@pytest_asyncio.fixture
+async def other_actor(db_session: AsyncSession):  # type: ignore[no-untyped-def]
+    """A second user, for the tests that matter most: the ones asserting one
+    user cannot see another's data."""
+    from amos.auth import create_user
+
+    created, _key = await create_user(db_session, f"other-{uuid.uuid4().hex[:8]}")
+    return created
+
+
+@pytest_asyncio.fixture
+async def factory_actor(db_factory: async_sessionmaker[AsyncSession]):  # type: ignore[no-untyped-def]
+    """An actor for the committing `db_factory` tests, removed afterwards.
+
+    Carries the plaintext key as `.api_key`, because a test that drives the HTTP
+    API needs to *present* it — and the key is unrecoverable after creation by
+    design, so the fixture is the only place it exists.
+    """
+    from sqlalchemy import delete
+
+    from amos.auth import create_user
+    from amos.database.engine import session_scope
+    from amos.database.models import User
+
+    async with session_scope(db_factory) as session:
+        created, key = await create_user(session, f"worker-{uuid.uuid4().hex[:8]}")
+    object.__setattr__(created, "api_key", key)
+    try:
+        yield created
+    finally:
+        async with session_scope(db_factory) as session:
+            await session.execute(delete(User).where(User.id == created.id))
+
+
+@pytest.fixture
+def auth(factory_actor):  # type: ignore[no-untyped-def]
+    """Headers that authenticate as `factory_actor`."""
+    return {"Authorization": f"Bearer {factory_actor.api_key}"}

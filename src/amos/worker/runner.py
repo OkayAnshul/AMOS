@@ -25,6 +25,7 @@ from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from amos.auth import Actor
 from amos.database.engine import session_scope
 from amos.database.repository import RunRepository
 from amos.errors import AmosError
@@ -81,6 +82,13 @@ class Worker:
         # from the start — in the worker, which is the only place a reclaim
         # happens and therefore the only place resumption matters.
         set_current_run_id(str(claimed.run_id))
+        # The worker acts AS the run's owner. Giving it an unscoped
+        # repository would make the one component that touches every user's
+        # runs the one component with no isolation (ADR-013).
+        actor = Actor(id=claimed.user_id, name="worker") if claimed.user_id else None
+        if actor is None:
+            log_event(logger, "worker.run_has_no_owner", run_id=str(claimed.run_id))
+            return True
 
         # Execution happens outside any transaction — the V0.3 reasoning still
         # applies, and matters more here: a run can take minutes, and holding a
@@ -100,14 +108,14 @@ class Worker:
             ):
                 result = await agent.run(claimed.goal)  # type: ignore[attr-defined]
         except AmosError as exc:
-            await self._record_failure(claimed.run_id, exc)
+            await self._record_failure(claimed.run_id, actor, exc)
             return True
         except Exception as exc:  # noqa: BLE001 - a worker must not die on one run
-            await self._record_failure(claimed.run_id, exc)
+            await self._record_failure(claimed.run_id, actor, exc)
             return True
 
         async with session_scope(self._factory) as session:
-            repo = RunRepository(session)
+            repo = RunRepository(session, actor)
             stored = await repo.get_trace(claimed.run_id)
             if stored is not None:
                 await repo.record_success(stored, result)
@@ -117,14 +125,14 @@ class Worker:
         set_current_run_id(None)
         return True
 
-    async def _record_failure(self, run_id: uuid.UUID, exc: Exception) -> None:
+    async def _record_failure(self, run_id: uuid.UUID, actor: Actor, exc: Exception) -> None:
         """Record a failed attempt, and stop retrying once the budget is spent.
 
         Leaving it QUEUED after the final attempt would make it a poison message:
         reclaimed forever, failing forever, consuming the queue.
         """
         async with session_scope(self._factory) as session:
-            repo = RunRepository(session)
+            repo = RunRepository(session, actor)
             stored = await repo.get_trace(run_id)
             if stored is None:
                 return

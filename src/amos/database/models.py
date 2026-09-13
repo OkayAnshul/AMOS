@@ -60,12 +60,38 @@ def _uuid_pk() -> Mapped[uuid.UUID]:
     return mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
 
+class User(Base):
+    """An account (V1.4, ADR-013).
+
+    The API key is stored as a **SHA-256 hash**, never in plaintext: a database
+    that leaks should not also hand over access. Lookup is by hash, so the
+    plaintext key exists only in the request that presents it.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    api_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("api_key_hash", name="users_api_key_hash_unique"),
+        UniqueConstraint("name", name="users_name_unique"),
+    )
+
+
 class Run(Base):
     """One execution attempt of a goal. The unit of tracing."""
 
     __tablename__ = "runs"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     goal_text: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     # Nullable + unique: most runs have no key, so the index is partial.
@@ -130,6 +156,8 @@ class Run(Base):
             postgresql_where=idempotency_key.isnot(None),
         ),
         Index("idx_runs_created", "created_at"),
+        # Every scoped query filters on this, so it is on the hot path.
+        Index("idx_runs_user", "user_id", "created_at"),
     )
 
 
@@ -160,6 +188,9 @@ class Memory(Base):
     __tablename__ = "memories"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     subject: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
@@ -184,6 +215,7 @@ class Memory(Base):
             postgresql_where=(superseded_by.is_(None)),
         ),
         Index("idx_memories_source_run", "source_run_id"),
+        Index("idx_memories_user", "user_id"),
     )
 
 
@@ -198,6 +230,12 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[uuid.UUID] = _uuid_pk()
+    #: NULL means the **system corpus** — readable by everyone, owned by nobody.
+    #: AMOS's own documentation is the corpus, and a private copy per user would
+    #: mean re-embedding it per user to isolate data that is already public.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     source: Mapped[str] = mapped_column(String(500), nullable=False)
     title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -212,6 +250,7 @@ class Document(Base):
     __table_args__ = (
         UniqueConstraint("content_hash", name="documents_content_hash_unique"),
         Index("idx_documents_source", "source"),
+        Index("idx_documents_user", "user_id"),
     )
 
 

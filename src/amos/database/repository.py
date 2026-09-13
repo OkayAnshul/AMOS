@@ -11,11 +11,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from amos.agents.schemas import AgentResult
+from amos.auth import Actor
 from amos.database.models import LLMCall, Run, Step, Task, ToolCallRow
 
 
@@ -28,19 +29,42 @@ class RunStatus:
 
 
 class RunRepository:
-    """Reads and writes runs and everything hanging off them."""
+    """Reads and writes runs and everything hanging off them.
 
-    def __init__(self, session: AsyncSession) -> None:
+    **Constructed with its owner** (V1.4, ADR-013). Every query is built through
+    `_runs()`, which applies the scope, so there is no method that can be called
+    without one — because there is no repository without one.
+
+    That shape was chosen over passing `user_id` into each method, which is one
+    forgotten argument away from a leak, and the forgotten version still compiles
+    and still returns rows. Isolation fails *silently*: a missing filter does not
+    raise, does not log, and returns **more** data rather than less.
+    """
+
+    def __init__(self, session: AsyncSession, actor: Actor) -> None:
         self._session = session
+        self._actor = actor
+
+    def _runs(self) -> Select[tuple[Run]]:
+        """The only way a query over runs is built.
+
+        `test_no_unscoped_run_query_exists` asserts nothing in this module
+        bypasses it, so the guarantee cannot be lost by writing a query the
+        ordinary way.
+        """
+        return select(Run).where(Run.user_id == self._actor.id)
 
     async def find_by_idempotency_key(self, key: str) -> Run | None:
         """Return an existing run for this key, if any.
 
         This is what makes a retried HTTP request safe: without it, a client
         timeout followed by a retry silently doubles the work and the cost.
+
+        Scoped, so two users may independently use the same key — theirs is a
+        key in *their* namespace, not a global one.
         """
         result = await self._session.execute(
-            select(Run).where(Run.idempotency_key == key).options(*_trace_loaders())
+            self._runs().where(Run.idempotency_key == key).options(*_trace_loaders())
         )
         return result.scalar_one_or_none()
 
@@ -59,6 +83,7 @@ class RunRepository:
         """
         run = Run(
             id=uuid.uuid4(),
+            user_id=self._actor.id,
             goal_text=goal,
             status=RunStatus.RECEIVED,
             request_id=request_id,
@@ -221,13 +246,13 @@ class RunRepository:
         for the single most common read in the system.
         """
         result = await self._session.execute(
-            select(Run).where(Run.id == run_id).options(*_trace_loaders())
+            self._runs().where(Run.id == run_id).options(*_trace_loaders())
         )
         return result.scalar_one_or_none()
 
     async def list_recent(self, limit: int = 20) -> list[Run]:
         result = await self._session.execute(
-            select(Run).order_by(Run.created_at.desc()).limit(limit)
+            self._runs().order_by(Run.created_at.desc()).limit(limit)
         )
         return list(result.scalars().all())
 

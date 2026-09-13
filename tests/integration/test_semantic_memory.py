@@ -12,14 +12,15 @@ import pytest
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from amos.auth import Actor
 from amos.memory.semantic import SemanticMemory, normalise_subject
 from amos.rag.embeddings import FakeEmbeddings
 
 pytestmark = pytest.mark.asyncio
 
 
-def memory(session: AsyncSession) -> SemanticMemory:
-    return SemanticMemory(session, FakeEmbeddings(dimensions=1536))
+def memory(session: AsyncSession, actor: Actor) -> SemanticMemory:
+    return SemanticMemory(session, FakeEmbeddings(dimensions=1536), actor)
 
 
 # ---------- subject normalisation ----------
@@ -41,16 +42,16 @@ async def test_subjects_normalise_to_stable_keys(raw: str, expected: str) -> Non
     assert normalise_subject(raw) == expected
 
 
-async def test_empty_subject_is_rejected(db_session: AsyncSession) -> None:
+async def test_empty_subject_is_rejected(db_session: AsyncSession, actor: Actor) -> None:
     with pytest.raises(ValueError):
-        await memory(db_session).remember("!!!", "content")
+        await memory(db_session, actor).remember("!!!", "content")
 
 
 # ---------- exact recall ----------
 
 
-async def test_remember_then_recall_exactly(db_session: AsyncSession) -> None:
-    store = memory(db_session)
+async def test_remember_then_recall_exactly(db_session: AsyncSession, actor: Actor) -> None:
+    store = memory(db_session, actor)
     await store.remember("user_name", "Anshul")
 
     fact = await store.recall_exact("user_name")
@@ -58,23 +59,25 @@ async def test_remember_then_recall_exactly(db_session: AsyncSession) -> None:
     assert fact.content == "Anshul"
 
 
-async def test_recall_is_case_and_format_insensitive(db_session: AsyncSession) -> None:
-    store = memory(db_session)
+async def test_recall_is_case_and_format_insensitive(
+    db_session: AsyncSession, actor: Actor
+) -> None:
+    store = memory(db_session, actor)
     await store.remember("Preferred Language", "Python")
     assert (await store.recall_exact("preferred_language")) is not None
     assert (await store.recall_exact("PREFERRED LANGUAGE")) is not None
 
 
-async def test_unknown_subject_returns_none(db_session: AsyncSession) -> None:
-    assert await memory(db_session).recall_exact("never_stored") is None
+async def test_unknown_subject_returns_none(db_session: AsyncSession, actor: Actor) -> None:
+    assert await memory(db_session, actor).recall_exact("never_stored") is None
 
 
 # ---------- contradiction resolution ----------
 
 
-async def test_a_new_fact_supersedes_the_old_one(db_session: AsyncSession) -> None:
+async def test_a_new_fact_supersedes_the_old_one(db_session: AsyncSession, actor: Actor) -> None:
     """Newest wins — a rule, not a judgement, and specifically not the model's."""
-    store = memory(db_session)
+    store = memory(db_session, actor)
     await store.remember("user_city", "Bhubaneswar")
     await store.remember("user_city", "Bangalore")
 
@@ -83,9 +86,9 @@ async def test_a_new_fact_supersedes_the_old_one(db_session: AsyncSession) -> No
     assert current.content == "Bangalore"
 
 
-async def test_exactly_one_current_fact_per_subject(db_session: AsyncSession) -> None:
+async def test_exactly_one_current_fact_per_subject(db_session: AsyncSession, actor: Actor) -> None:
     """The invariant the partial index depends on."""
-    store = memory(db_session)
+    store = memory(db_session, actor)
     for value in ("a", "b", "c", "d"):
         await store.remember("changing_fact", value)
 
@@ -98,9 +101,11 @@ async def test_exactly_one_current_fact_per_subject(db_session: AsyncSession) ->
     assert result.scalar_one() == 1
 
 
-async def test_superseded_facts_are_kept_not_deleted(db_session: AsyncSession) -> None:
+async def test_superseded_facts_are_kept_not_deleted(
+    db_session: AsyncSession, actor: Actor
+) -> None:
     """A changed fact stays auditable, and a bad write stays recoverable."""
-    store = memory(db_session)
+    store = memory(db_session, actor)
     await store.remember("role", "student")
     await store.remember("role", "engineer")
 
@@ -110,8 +115,8 @@ async def test_superseded_facts_are_kept_not_deleted(db_session: AsyncSession) -
     assert history[1].superseded is True
 
 
-async def test_different_subjects_do_not_interfere(db_session: AsyncSession) -> None:
-    store = memory(db_session)
+async def test_different_subjects_do_not_interfere(db_session: AsyncSession, actor: Actor) -> None:
+    store = memory(db_session, actor)
     await store.remember("user_name", "Anshul")
     await store.remember("user_city", "Bangalore")
     await store.remember("user_name", "A.")
@@ -123,8 +128,8 @@ async def test_different_subjects_do_not_interfere(db_session: AsyncSession) -> 
 # ---------- similarity, the secondary path ----------
 
 
-async def test_similar_recall_finds_related_facts(db_session: AsyncSession) -> None:
-    store = memory(db_session)
+async def test_similar_recall_finds_related_facts(db_session: AsyncSession, actor: Actor) -> None:
+    store = memory(db_session, actor)
     await store.remember("favourite_language", "the user prefers Python for backend work")
     await store.remember("favourite_food", "the user likes ramen and gyoza")
 
@@ -133,10 +138,12 @@ async def test_similar_recall_finds_related_facts(db_session: AsyncSession) -> N
     assert hits[0].subject == "favourite_language"
 
 
-async def test_similarity_never_returns_superseded_facts(db_session: AsyncSession) -> None:
+async def test_similarity_never_returns_superseded_facts(
+    db_session: AsyncSession, actor: Actor
+) -> None:
     """The reason facts are not stored in a vector index alone: a vector search
     has no notion of 'current', so an old value would keep resurfacing."""
-    store = memory(db_session)
+    store = memory(db_session, actor)
     await store.remember("deadline", "the project deadline is in March")
     await store.remember("deadline", "the project deadline is in June")
 
@@ -146,7 +153,7 @@ async def test_similarity_never_returns_superseded_facts(db_session: AsyncSessio
     assert not any("March" in c for c in contents)
 
 
-async def test_count_reports_only_current_facts(db_session: AsyncSession) -> None:
+async def test_count_reports_only_current_facts(db_session: AsyncSession, actor: Actor) -> None:
     """Asserts a delta, not an absolute.
 
     The first version compared `count_current()` to a fixed number and broke the
@@ -154,7 +161,7 @@ async def test_count_reports_only_current_facts(db_session: AsyncSession) -> Non
     test's writes, not everyone else's rows. A test over a shared table must
     measure its own effect.
     """
-    store = memory(db_session)
+    store = memory(db_session, actor)
     before = await store.count_current()
 
     await store.remember("count_test_a", "1")
@@ -166,6 +173,7 @@ async def test_count_reports_only_current_facts(db_session: AsyncSession) -> Non
 
 async def test_provenance_records_which_run_learned_the_fact(
     db_session: AsyncSession,
+    actor: Actor,
 ) -> None:
     """`source_run_id` was NULL for every row until this was wired.
 
@@ -177,8 +185,8 @@ async def test_provenance_records_which_run_learned_the_fact(
     """
     from amos.database.repository import RunRepository
 
-    run = await RunRepository(db_session).create_run(goal="g", request_id="r")
-    store = memory(db_session)
+    run = await RunRepository(db_session, actor).create_run(goal="g", request_id="r")
+    store = memory(db_session, actor)
     await store.remember("traced_fact", "a fact", source_run_id=run.id)
 
     result = await db_session.execute(

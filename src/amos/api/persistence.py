@@ -21,6 +21,7 @@ from amos.agents.schemas import (
     TraceTask,
     TraceToolCall,
 )
+from amos.auth import Actor
 from amos.database.engine import session_scope
 from amos.database.models import Run
 from amos.database.repository import RunRepository
@@ -61,8 +62,18 @@ class RunService:
     def persistence_enabled(self) -> bool:
         return self._factory is not None
 
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession] | None:
+        """Exposed for authentication, which must read `users` before any run
+        exists and therefore cannot go through a scoped repository."""
+        return self._factory
+
     async def enqueue_only(
-        self, goal: str, request_id: str, idempotency_key: str | None = None
+        self,
+        goal: str,
+        actor: Actor,
+        request_id: str,
+        idempotency_key: str | None = None,
     ) -> uuid.UUID:
         """Record the run and hand it to the queue, without executing it.
 
@@ -77,12 +88,13 @@ class RunService:
 
         if idempotency_key:
             async with session_scope(self._factory) as session:
-                existing = await RunRepository(session).find_by_idempotency_key(idempotency_key)
+                repo = RunRepository(session, actor)
+                existing = await repo.find_by_idempotency_key(idempotency_key)
                 if existing is not None:
                     return existing.id
 
         async with session_scope(self._factory) as session:
-            run = await RunRepository(session).create_run(
+            run = await RunRepository(session, actor).create_run(
                 goal=goal, request_id=request_id, idempotency_key=idempotency_key
             )
             run_id = run.id
@@ -92,7 +104,11 @@ class RunService:
         return run_id
 
     async def execute(
-        self, goal: str, request_id: str, idempotency_key: str | None = None
+        self,
+        goal: str,
+        actor: Actor,
+        request_id: str,
+        idempotency_key: str | None = None,
     ) -> tuple[AgentResult, uuid.UUID | None]:
         if self._factory is None:
             result = await self._agent.run(goal)  # type: ignore[attr-defined]
@@ -101,7 +117,8 @@ class RunService:
         # 1. Idempotency check, in its own transaction.
         if idempotency_key:
             async with session_scope(self._factory) as session:
-                existing = await RunRepository(session).find_by_idempotency_key(idempotency_key)
+                repo = RunRepository(session, actor)
+                existing = await repo.find_by_idempotency_key(idempotency_key)
                 if existing is not None:
                     log_event(
                         logger,
@@ -113,7 +130,7 @@ class RunService:
 
         # 2. Record the attempt before doing it.
         async with session_scope(self._factory) as session:
-            run = await RunRepository(session).create_run(
+            run = await RunRepository(session, actor).create_run(
                 goal=goal, request_id=request_id, idempotency_key=idempotency_key
             )
             run_id = run.id
@@ -134,7 +151,7 @@ class RunService:
         except AmosError as exc:
             instruments().runs.add(1, safe_labels(outcome="FAILED"))
             async with session_scope(self._factory) as session:
-                repo = RunRepository(session)
+                repo = RunRepository(session, actor)
                 run = await repo.get_trace(run_id)  # type: ignore[assignment]
                 if run is not None:
                     await repo.record_failure(run, type(exc).__name__, exc.message)
@@ -150,7 +167,7 @@ class RunService:
 
         # 4. Record the outcome.
         async with session_scope(self._factory) as session:
-            repo = RunRepository(session)
+            repo = RunRepository(session, actor)
             stored = await repo.get_trace(run_id)
             if stored is not None:
                 await repo.record_success(stored, result)
@@ -196,11 +213,11 @@ class RunService:
         async with session_scope(self._factory) as session:
             return await list_dead_letter(session, limit)
 
-    async def get_trace(self, run_id: uuid.UUID) -> RunTrace | None:
+    async def get_trace(self, run_id: uuid.UUID, actor: Actor) -> RunTrace | None:
         if self._factory is None:
             return None
         async with session_scope(self._factory) as session:
-            run = await RunRepository(session).get_trace(run_id)
+            run = await RunRepository(session, actor).get_trace(run_id)
             return _to_trace(run) if run is not None else None
 
 
