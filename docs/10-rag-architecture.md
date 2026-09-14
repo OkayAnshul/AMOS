@@ -166,6 +166,8 @@ daily quota, waiting is a real strategy: ingestion paces batches and honours the
 Ingestion commits **per document**, so a rate-limited run keeps its progress rather than rolling
 back 300 chunks of work.
 
+> **Correction, 2026-09-14:** the per-document transaction described here was **not in the code until 2026-09-14**. Ingestion ran the whole directory in one transaction for nine milestones; the pacing half of the fix hid it. A rebuild then failed and lost everything in exactly the way this section says cannot happen. See `engineering/bugs-log.md`.
+
 ## Not done
 
 - **No hybrid search.** Vector-only. A keyword match on an exact identifier (`SKIP LOCKED`) would

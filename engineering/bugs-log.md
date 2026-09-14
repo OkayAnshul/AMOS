@@ -595,3 +595,69 @@ than a false regression — which is the one part of this that worked as designe
 **Test added:** none possible for operator error. The mitigation is a `make backup` target and an
 actual restore drill, which remain unbuilt and are now in `current-state.md` as debt with this
 incident attached.
+
+---
+
+## 2026-09-14 — The V0.5 ingest fix was recorded here and never implemented
+**Milestone:** V0.5, found during the V1.4 corpus rebuild
+**Symptom:** a monitor watching the rebuild reported *no document committed after 8 minutes*.
+`pg_stat_activity` showed one transaction open for the entire life of the process, "idle in
+transaction", inserting document after document with nothing visible to any other connection.
+**Expected:** the fix recorded on 2026-09-05 — "one transaction **per document**" — so a failure
+partway costs one document, not the run.
+**Root cause:** **that fix was never written.** `src/amos/rag/cli.py` and `src/amos/rag/ingest.py`
+each have exactly one version in history, the V0.5 feature commit, and it already wrapped the whole
+directory in a single `session_scope`. The entry above described a change nobody made, and the
+description then propagated into `decisions-log.md`, `docs/10-rag-architecture.md`, the build-along
+guide and `docs/interview/rag.md`.
+
+Only half of that fix was real. The pacing between embedding batches and the retry honouring the
+provider's `retryDelay` *are* in `rag/embeddings.py` — and they are exactly why nobody noticed:
+they stopped the 429s, so no ingest ever failed partway again to expose the missing boundary.
+**Fix:** `Ingestor.ingest_directory` commits after each embedded document. The caller's
+`session_scope` still rolls back the document in progress on failure, and a rerun skips committed
+documents through the content hash, so an interrupted ingest now **resumes**.
+**How it was found:** a monitor that could not see uncommitted rows raised a false stall alarm, and
+diagnosing the false alarm found the real bug.
+**Lesson (two):**
+1. **A bugs-log "Fix:" line is a claim, and it needs the same evidence as a resume claim** — a
+   file, a test, a commit. This one had none of the three, and the original entry even said so
+   ("the transaction boundary is exercised by the real ingest, which is honest about the limits of
+   fakes") without anyone noticing that "exercised by the real ingest" meant "untested".
+2. **The rollback fixture cannot test a transaction boundary.** It wraps everything in an outer
+   transaction and rolls back at the end, so committed and uncommitted work look identical. A test
+   of *what survives a failure* has to commit for real and look from a fresh session.
+**Test added:** `tests/integration/test_ingest_transactions.py` —
+`test_documents_finished_before_a_failure_survive_it` and
+`test_a_rerun_after_a_failure_resumes_instead_of_repeating`. Both verified to **fail** with the fix
+removed (documents rolled back; nothing skipped on the rerun) and pass with it.
+
+**The rebuild that surfaced this then failed in exactly this way.** It had started before the fix,
+so it ran the old code in one transaction. After roughly a quarter of an hour it hit a **daily**
+embedding quota (`EmbedContentRequestsPerDayPerProjectPerModel-FreeTier`, limit 1000), the retry
+could not wait that out, and the rollback took every document it had embedded:
+`documents=0 chunks=0` afterwards. The 2026-09-05 failure, reproduced live, while its fix sat
+uncommitted on a branch next to the process that needed it.
+
+---
+
+## 2026-09-14 — The embedding retry waits out a quota that cannot reset in time
+**Milestone:** V0.5, found during the same failed rebuild
+**Symptom:** the rebuild spent its final minutes sleeping between retries before raising
+`ProviderRateLimitError` on a quota that would not reset until the next day.
+**Expected:** a limit that cannot clear within the retry budget fails immediately.
+**Root cause:** `GeminiEmbeddings._embed`'s docstring stated that "unlike generateContent's daily
+quota — where waiting is pointless — the embedding limit resets every minute". **There are two
+embedding limits**: 100 contents per minute, which waiting fixes, and a **daily limit of 1000** — named *requests*, though the run that hit it made well under 100,
+so it almost certainly counts contents — which it does not. The API attaches a `retryDelay` (here `57s`) to *both*, and `_retry_delay_from`
+honours whatever it is given — so on daily exhaustion the loop sleeps through every retry and then
+raises anyway.
+**Fix:** **not built.** The docstring is corrected so it no longer asserts something false. The
+real fix is to read `quotaId` from the error and fail fast on a `PerDay` limit; recorded as
+technical debt in `current-state.md`.
+**How it was found:** reading the traceback of the failed rebuild against the docstring above it.
+**Lesson:** a comment that explains *why* a retry is safe is a claim about someone else's API, and
+it goes stale silently. This one was written after measuring the per-minute limit and generalised
+to "the" embedding limit — the same mistake as the four quota shapes before it, where each document
+learned one shape and wrote it down as *the* shape.
+**Test added:** none, since nothing was fixed.

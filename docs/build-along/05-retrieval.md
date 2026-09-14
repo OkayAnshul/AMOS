@@ -203,6 +203,8 @@ rollback was correct; the *boundary* was wrong.
 **Transaction boundaries should follow units of useful work, not units of code.** "All 300 chunks
 atomically" reads as rigour and means "lose everything on any failure". Commit **per document**.
 
+> **If you compare against the `v0.5` tag, it will disagree with you here — and you will be right.** The tag commits the whole directory in one transaction; the per-document commit this section describes was recorded as done and not written until 2026-09-14 (commit on `fix/ingest-per-document-commit`). Build it the way this section says.
+
 No unit test would have caught it: `FakeEmbeddings` cannot rate-limit, and a 3-document fixture
 never runs long enough to fail partway.
 </details>
