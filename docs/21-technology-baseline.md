@@ -40,7 +40,7 @@ could exhaust the entire day's quota in one run.
 | `gemini-embedding-001` | Embeddings, V0.5 | 2048 token input, 3072 dims default, MRL-truncatable, `task_type` |
 | `gemini-embedding-2` | Alternative | 8192 token input, no `task_type` |
 
-### Four quota shapes, all measured — this table is canonical
+### Five quota shapes, all measured — this table is canonical
 
 The single most operationally important fact in this document, and not what the published guides
 say. **Every other document that quotes a quota figure should link here rather than restate it**;
@@ -52,6 +52,7 @@ had learned one shape and written it down as *the* shape.
 | `generateContent` | `gemini-3.5-flash` | **20 per day** |
 | `generateContent` | `gemini-3.5-flash-lite` | **15 per minute** |
 | `embed_content` | `gemini-embedding-001` | **100 per minute**, counting *contents*, not requests |
+| `embed_content` | `gemini-embedding-001` (reported by the API as `gemini-embedding-1.0`) | **1000 per day** — found 2026-09-14 when a corpus rebuild hit it. The metric is named *requests*, but the run that hit it made well under 100 requests, so it almost certainly counts **contents**; not verified directly |
 | `generateContent` | `gemini-2.5-flash` | 404 — no longer served |
 
 The daily one was the surprise, read from the API's own error rather than from a guide:
@@ -68,8 +69,15 @@ installing another: `-lite` — the default, and therefore the one used most —
 *minute* and has no daily ceiling anyone has hit. A tool-using goal costs 2 LLM calls, so 20/day
 is roughly **10 goals per day** on `flash`.
 
-The embedding limit counts *contents*, not requests: one batched call carrying 40 chunks spends
-40, which is why ingestion is paced rather than fired in a loop.
+The per-minute embedding limit counts *contents*, not requests: one batched call carrying 40
+chunks spends 40, which is why ingestion is paced rather than fired in a loop.
+
+The **daily** embedding limit was the fifth shape, found the hard way on 2026-09-14: a full
+corpus rebuild ran into it partway, and because the API still attaches a short `retryDelay`, the
+retry loop waited out a limit that could not reset before the next day. Ingestion commits per
+document since that date, so a rebuild that hits it keeps what it finished and resumes tomorrow.
+The planning consequence: the corpus is now ~1070 chunks, more than one day of this limit if it
+counts contents, so **a full rebuild on the free tier takes two days**.
 
 Three consequences that shaped the code:
 

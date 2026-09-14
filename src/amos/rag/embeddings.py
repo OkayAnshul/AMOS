@@ -149,9 +149,16 @@ class GeminiEmbeddings:
     async def _embed(self, texts: list[str], task_type: str) -> list[list[float]]:
         """One request, waiting out rate limits.
 
-        Unlike generateContent's daily quota — where waiting is pointless — the
-        embedding limit resets every minute, and the API tells us how long to
-        wait. Honouring that turns a failed ingest into a slower one.
+        There are **two** embedding limits, and this only handles one of them.
+        The per-minute limit (100 contents) resets quickly, and honouring the
+        API's `retryDelay` turns a failed ingest into a slower one. The **daily**
+        limit (1000 a day, hit on 2026-09-14) does not reset until tomorrow —
+        but the API attaches a `retryDelay` to that too, so this loop sleeps
+        through every retry and then raises anyway.
+
+        An earlier version of this docstring said the embedding limit "resets
+        every minute". It was generalised from one measured shape. Failing fast
+        on a `PerDay` quotaId is the real fix, and is not built.
         """
         for attempt in range(self._max_rate_limit_retries + 1):
             try:

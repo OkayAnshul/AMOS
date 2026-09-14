@@ -194,7 +194,7 @@ skipped transitively while unrelated branches still complete, and the run report
 Index AMOS's own documentation and ask it about itself:
 
 ```bash
-.venv/bin/python -m amos.rag.cli ingest docs        # ~48 docs -> ~906 chunks today
+.venv/bin/python -m amos.rag.cli ingest docs        # ~51 docs -> ~1070 chunks; over one free-tier day — rerun tomorrow, it resumes
 .venv/bin/python -m amos.rag.cli evaluate 5
 
 curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \

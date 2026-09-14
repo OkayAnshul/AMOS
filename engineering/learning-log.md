@@ -697,3 +697,16 @@ Nothing about "422 on a request with no auth header" points at scoping of a type
 **Rule adopted:** when a framework's behaviour is inexplicable, check what it can actually *see*
 at runtime — deferred annotations mean the name you wrote is not the object it resolves.
 **Status:** ⬜ Recognise
+
+### Exit codes and monitors both lie by omission (Session 15)
+`python -m amos.rag.cli ingest docs | tail -15` finished with **exit 0** while Python had crashed on
+a quota error — a pipeline reports its *last* command's status. Separately, a monitor counting rows
+from its own connection saw zero for a quarter of an hour, because the ingest's rows were
+uncommitted; it called a stall that was really a missing transaction boundary.
+**Read:** <https://www.gnu.org/software/bash/manual/html_node/Pipelines.html> ·
+<https://www.postgresql.org/docs/current/transaction-iso.html>
+**Answer:**
+- What does `set -o pipefail` change, and why would `tail` hide a failure without it?
+- Why can a second connection not see rows inserted by an open transaction, and what does that imply
+  for monitoring a long-running job by counting rows?
+**Status:** ⬜ Recognise
