@@ -97,6 +97,8 @@ between, and the call would be pure cost.
 
 **100% (10/10)** on the labelled set, after a fix the measurement itself surfaced.
 
+> **Re-measured 2026-09-14 on the 15-case set V1.2 enlarged it to: 13/15 (86.7%).** Both misses are the new lookup-then-compute cases, labelled `analyst` and routed to `researcher`. Since V1.3 the researcher can finish those by delegating the arithmetic, so the labels may now be wrong rather than the router — but changing labels after seeing results is how a metric gets massaged, so they stand until that is decided on its own merits. See `engineering/experiments-log.md`.
+
 The first run scored 90%. The miss — *"Check whether previous runs solved a similar goal"*, which
 I labelled `analyst` and the router sent to `researcher` — was **my error, not the router's**:
 recalling a past run is a lookup, structurally identical to searching documents. The tool moved to

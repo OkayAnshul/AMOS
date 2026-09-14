@@ -42,7 +42,7 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 |---|---|---|
 | End-to-end goals | `make eval` | **9/9** deterministic, refusal 2/2; groundedness 1.00 (judged, 1 failure excluded). 40852 tokens |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 — **measured on 12 questions; the set is now 16 and unre-run** |
-| Routing | `make routing` | 10/10 — **measured on 10 cases; the set is now 15 and unre-run** |
+| Routing | `make routing` | **13/15 (86.7%)**, 2026-09-14. Both misses are lookup-then-compute cases labelled `analyst` and routed to `researcher` — which V1.3 delegation may have made the better answer. Labels deliberately not changed |
 | Memory storage | `make memory-trials` | store 100% (8/8), false claims 0% |
 
 **All three sets are small and self-authored.** V1.2 made them larger (goals 6→9, retrieval

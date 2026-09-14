@@ -352,3 +352,35 @@ the `_finalise` rule applies — **if it still has not fired by a future milesto
 
 **Not shown:** 8 trials per configuration is a small sample, and all phrasings were written by the
 same person who wrote the fix. The 0% and 100% figures are unambiguous; the 83% is within noise.
+
+---
+
+## 2026-09-14 — Does routing hold up on cases written to be hard?
+**Hypothesis:** 10/10 on the original set is consistent with a router that is excellent *and* with
+one that has never met a hard case. V1.2 added five cases where the surface topic points one way
+and the deliverable points the other; if routing is keyword-shaped, those are where it breaks.
+**Method:** `make routing` on the 15-case set, `gemini-3.5-flash-lite`, one run.
+**Result:** **13/15 (86.7%).** Both misses:
+
+| Instruction | Labelled | Routed |
+|---|---|---|
+| Sum the retry attempt counts described in the failure-recovery document | analyst | researcher |
+| Work out 15 percent of the daily quota documented in the baseline | analyst | researcher |
+
+The three other hard cases — "how many milestones" (reads like arithmetic, is a lookup), "remember
+that I prefer concise answers", and "add up 3, 4 and 5 then check the docs" — all routed as
+labelled.
+**Conclusion:** the router is not keyword-shaped: it got the cases designed to catch that. What it
+does consistently is send **lookup-then-compute** to the researcher. When the labels were written,
+that was wrong, because the researcher had no way to do arithmetic. **V1.3 changed that** — the
+researcher can now delegate the computation to the analyst, while the analyst still cannot read a
+document at all. So "routed to researcher" may now be the *better* answer, and the labels the thing
+that is out of date.
+
+The labels are **deliberately left as they are.** Relabelling right after a result is how a metric
+gets massaged — the concern the golden set's own docstring names, and the same one raised when the
+V0.7 `recall_past_runs` case was relabelled. If they change, it should be a decision about what
+the correct routing is *given delegation*, argued without looking at this number, and recorded
+with its own date.
+**Decision affected:** none yet. Candidate for a small ADR on how routing should be labelled once
+delegation exists. One run on a non-deterministic model; not repeated, because quota.

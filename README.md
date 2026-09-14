@@ -305,7 +305,7 @@ something enforced.
 |---|---|---|
 | End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
-| Agent routing | `make routing` | 10/10 |
+| Agent routing | `make routing` | 13/15 (86.7%) on 15 cases — was 10/10 on the original 10 |
 | Tests | `make test` | 616 passing, 2 live tests skipped |
 
 Every one of those sets is small and was written by the person who built the system. They are a

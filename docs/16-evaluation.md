@@ -30,7 +30,7 @@ Alongside the component measurements that already existed:
 |---|---|---|
 | End-to-end goals | `make eval` | **9/9 deterministic**, refusal 2/2, groundedness 1.00 (measured 2026-09-13) |
 | Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 — *measured at V0.5 on 12 questions; the set is now 16 and has not been re-run* |
-| Routing | `make routing` | 10/10 — *measured at V0.7 on 10 cases; the set is now 15 and has not been re-run* |
+| Routing | `make routing` | **13/15 (86.7%)** — re-measured 2026-09-14 on the enlarged set. Both misses are V1.2's lookup-then-compute cases; see `engineering/experiments-log.md` |
 | Tests | `make test` | 567 passing (569 collected; 2 live, opt-in) |
 
 > **Only the first row has been re-measured against the enlarged set.** V1.2 grew all three —
