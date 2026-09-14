@@ -179,6 +179,9 @@ The failure is invisible precisely because the output looks the same.
 *Why:* one transaction around 300 chunks reads as "atomic ingestion" and is really "lose
 everything on any error" — which is exactly what a 429 partway through did.
 *Consequence:* recorded in `bugs-log.md`; transaction boundaries follow units of *useful work*.
+*Correction, 2026-09-14:* **decided here and not implemented until 2026-09-14.** The code kept a
+single transaction for the whole directory for nine milestones; the pacing half of the fix hid it.
+See `bugs-log.md`, 2026-09-14. A decision in this log is not evidence that the code agrees.
 
 **Ground truth is multi-source; strict and lenient recall are both reported, permanently.**
 *Why:* reporting one number invites picking the flattering one later.

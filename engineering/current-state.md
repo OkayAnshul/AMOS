@@ -80,12 +80,13 @@ regression against it. Only deterministic rates gate; the judged score is contex
 - `Tool` has no output schema, no retry policy and no audit metadata (`docs/08`)
 - Kubernetes, Kafka, Celery, microservices: **never built, never claimed**
 
-## ⚠️ Four quota shapes, all measured
+## ⚠️ Five quota shapes, all measured
 | | Limit |
 |---|---|
 | `generateContent`, `gemini-3.5-flash` | **20 / day** |
 | `generateContent`, `gemini-3.5-flash-lite` | **15 / minute** |
 | `embed_content` | **100 / minute**, counts *contents* not requests |
+| `embed_content` | **1000 / day** — hit 2026-09-14 by a corpus rebuild. Named *requests*; almost certainly counts contents, since that run made under 100 requests |
 | `gemini-2.5-flash` | 404 — no longer served |
 
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
@@ -117,6 +118,9 @@ were false.
 - **Delegation quality is unmeasured.** The bounds are tested; whether models delegate *well*
   has no number, unlike routing accuracy.
 - `steps` still one per run: V1.1 made *tasks* incremental, not steps.
+- **The embedding retry cannot tell a daily limit from a per-minute one.** The API attaches a short
+  `retryDelay` to both, so on daily exhaustion it sleeps through every retry and then raises. Fail
+  fast on a `PerDay` quotaId. See `bugs-log.md`, 2026-09-14.
 - **`db_factory` tests commit for real and clean up at the end of the test body**, not in a
   fixture teardown — so a failing assertion leaks rows into the developer's database. Seen
   for real this session: a dead-lettered run from a failed test showed up in
@@ -145,7 +149,7 @@ were false.
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
 | Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` → `835121ee2bd2` |
 | Users | `alembic upgrade head` creates `default` and **prints its key once**. `AMOS_BOOTSTRAP_API_KEY` sets it instead |
-| Corpus | **EMPTY — destroyed 2026-09-13, see bugs-log.md.** Re-ingest with `make ingest` (~10 min of embedding quota, ~48 docs / ~906 chunks). Every retrieval number in the docs predates this and is marked accordingly |
+| Corpus | **EMPTY.** Destroyed 2026-09-13. A rebuild on 2026-09-14 hit the daily embedding quota partway and — running pre-fix code in one transaction — rolled back everything. Now 51 docs / ~1070 chunks, likely more than one free-tier day. Since the per-document-commit fix, `make ingest` keeps what it finishes and resumes: **run it on two consecutive days** |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
 
@@ -158,6 +162,10 @@ make worker                               # optional: async execution
 `make help` lists everything.
 
 ## Exact Next Step
+
+**Immediate: rebuild the corpus, then re-measure.** `make ingest` today and again tomorrow (the
+second run resumes, skipping finished documents), then `make retrieval` and `make eval-baseline`,
+and update the retrieval and eval figures. `make routing` was re-measured 2026-09-14: 13/15.
 
 **Nothing is committed to.** The four milestones chosen on 2026-09-13 (V1.1–V1.4) are all
 shipped. `docs/19-roadmap.md`'s "Beyond V1.4" lists candidates, each needing an ADR;
@@ -173,8 +181,8 @@ Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/intervie
 order. Building further before closing this is a deliberate choice against `CLAUDE.md`'s own rule,
 made on 2026-09-13, and worth revisiting.
 
-**Also worth re-running when convenient:** `make retrieval` and `make routing` still report numbers
-measured on the older, smaller sets.
+**Blocked until the corpus is rebuilt:** `make retrieval` and `make eval-baseline` both need it, and
+both spend the same daily embedding quota the rebuild does.
 
 **Worth re-running when convenient:** `make retrieval` and `make routing` still report numbers
 measured on the older, smaller sets.

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from amos.agents.tool_agent import ToolUsingAgent
 from amos.api.app import create_app
 from amos.api.persistence import RunService
+from amos.database.engine import session_scope
+from amos.database.models import User
 from amos.llm.fake import FakeProvider
 from amos.tools.base import ToolCall
 from amos.tools.builtin import CalculatorTool
@@ -144,16 +148,34 @@ def test_a_malformed_header_is_rejected_the_same_way(client_with_db: TestClient)
     assert missing.json() == malformed.json()
 
 
+@pytest.fixture
+def created_users(db_factory: async_sessionmaker[AsyncSession]):  # type: ignore[no-untyped-def]
+    """Users a test creates through the committing factory, deleted afterwards.
+
+    Teardown, not a line at the end of the test body: an assertion that fails
+    would skip that line, and every failed run would leave an account behind.
+    Before this existed the intruder test below leaked one user per suite run
+    into the developer's database.
+    """
+    ids: list[uuid.UUID] = []
+    yield ids
+    if ids:
+
+        async def drop() -> None:
+            async with session_scope(db_factory) as session:
+                await session.execute(delete(User).where(User.id.in_(ids)))
+
+        asyncio.run(drop())
+
+
 def test_one_user_cannot_fetch_anothers_trace_over_http(
     client_with_db: TestClient,
     db_factory: async_sessionmaker[AsyncSession],
     auth: dict[str, str],
+    created_users: list[uuid.UUID],
 ) -> None:
     """End to end, through the API a client actually uses."""
-    import asyncio
-
     from amos.auth import create_user
-    from amos.database.engine import session_scope
 
     with client_with_db as client:
         submitted = client.post("/v1/goals", json={"goal": "What is 17% of 2340?"}, headers=auth)
@@ -161,7 +183,8 @@ def test_one_user_cannot_fetch_anothers_trace_over_http(
 
         async def other_key() -> str:
             async with session_scope(db_factory) as session:
-                _actor, key = await create_user(session, f"intruder-{uuid.uuid4().hex[:6]}")
+                intruder_actor, key = await create_user(session, f"intruder-{uuid.uuid4().hex[:6]}")
+                created_users.append(intruder_actor.id)
                 return key
 
         intruder = asyncio.run(other_key())

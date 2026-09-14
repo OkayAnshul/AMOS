@@ -111,6 +111,8 @@ Because embedding 300 chunks under a per-minute quota takes minutes. A single tr
 mean a failure at chunk 290 discards all prior work, and would hold a pooled connection open for
 the entire run.
 
+> **Worth knowing before an interviewer finds it:** this answer describes the design, and the code did not match it until 2026-09-14 — ingestion used one transaction for the whole run. The honest version of the answer includes that, and what it taught: a bugs-log "Fix:" line is a claim that needs a test, and the rollback test fixture cannot test a transaction boundary.
+
 This was a real change made mid-milestone: the first ingest hit a rate limit and rolled back
 everything.
 

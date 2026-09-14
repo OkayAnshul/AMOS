@@ -384,3 +384,23 @@ the correct routing is *given delegation*, argued without looking at this number
 with its own date.
 **Decision affected:** none yet. Candidate for a small ADR on how routing should be labelled once
 delegation exists. One run on a non-deterministic model; not repeated, because quota.
+
+---
+
+## 2026-09-14 — Why did the pgvector similarity test fail once during an ingest?
+**Hypothesis:** `test_pgvector_stores_and_retrieves_by_similarity` asked for 2 hits and got 1 while
+a corpus rebuild held hundreds of *uncommitted* chunks in the same HNSW index. HNSW is approximate:
+if the index handed back its nearest candidates and the uncommitted ones were then discarded as
+invisible, a distant second vector could fall outside the candidate list and the query would
+return fewer rows than `LIMIT`.
+**Method:** once the rebuild had ended, (1) rerun the test alone; (2) reproduce deliberately — one
+connection inserts 300 uncommitted vectors right next to the query vector, another runs the test's
+exact search three ways: HNSW as configured (`ef_search=40`), exact scan with index scans disabled,
+and HNSW with `hnsw.iterative_scan = relaxed_order`. pgvector 0.8.6.
+**Result:** (1) passes. (2) **2 hits in all three modes.** The hypothesis did not reproduce.
+**Conclusion:** **unexplained.** One failure, during a concurrent ingest, not reproduced by the
+obvious mechanism. Possible differences from the reproduction: the real uncommitted rows were
+diverse rather than clustered, and made up nearly the whole index rather than a fraction of it. Not
+claimed as a known pgvector behaviour, because it was not shown to be one.
+**Decision affected:** none. If it recurs, capture `EXPLAIN ANALYZE` and the index's visible and
+dead tuple counts at the moment of failure, rather than theorising afterwards.

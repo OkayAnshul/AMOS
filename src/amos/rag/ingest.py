@@ -116,7 +116,19 @@ class Ingestor:
         return document_id, len(chunks)
 
     async def ingest_directory(self, directory: Path, *, pattern: str = "*.md") -> IngestReport:
-        """Ingest every matching file, sorted for reproducibility."""
+        """Ingest every matching file, sorted for reproducibility.
+
+        **Commits after every document.** A failure then costs the document in
+        progress, not the run, and re-running skips everything already committed
+        through the content hash — so an interrupted ingest resumes.
+
+        This was recorded as the V0.5 fix for "rate-limited ingest discarded all
+        its work" (`engineering/bugs-log.md`, 2026-09-05) and **was never
+        implemented**: until 2026-09-14 the whole directory ran in the caller's
+        single transaction. It went unnoticed because the other half of that fix
+        — pacing and honouring `retryDelay` — stopped the 429s, so nothing ever
+        failed partway again to expose the missing boundary.
+        """
         report = IngestReport()
         root = Path(directory).resolve()
 
@@ -131,6 +143,10 @@ class Ingestor:
             if document_id is None:
                 report.documents_skipped += 1
             else:
+                # The transaction boundary follows the unit of useful work: one
+                # embedded document. The caller's session_scope still commits at
+                # the end and rolls back the document in progress on failure.
+                await self._session.commit()
                 report.documents_ingested += 1
                 report.chunks_created += chunks
         return report

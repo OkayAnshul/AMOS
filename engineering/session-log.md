@@ -1184,3 +1184,67 @@ met. That is the second of the project's two equal objectives and the only one s
 
 ## Recommended Commit
 Committed in two parts on `feat/v1.4-auth`.
+
+---
+
+# Session 15
+
+**Date:** 2026-09-14
+**Module:** Housekeeping after V1.4 — attribution, corpus rebuild, and what the rebuild exposed
+**Objective:** Strip Claude attribution from history as the working agreement requires; rebuild the
+destroyed corpus and re-measure retrieval, routing and evaluation.
+
+## What We Changed
+- **History:** `Co-Authored-By: Claude` and `Claude-Session:` lines removed from all 75 commits
+  carrying them, across 14 branches and tags `v0.6`–`v1.4.0`, then force-pushed. Every ref's tree and
+  commit count was verified identical before and after, so only messages changed. A bundle of the
+  pre-rewrite repository was taken first.
+- **`rag/ingest.py`:** commits after every document — the V0.5 fix that was recorded and never built.
+- **`tests/integration/test_ingest_transactions.py`** (new): two tests, verified to fail without it.
+- **`tests/integration/test_trace_api.py`:** a `created_users` fixture; the V1.4 intruder test had
+  leaked one user per suite run.
+- **Docs:** fifth quota shape; corrections on the never-built fix in `10-rag-architecture.md`, the
+  build-along guide and `interview/rag.md`; routing re-measured; `current-state.md` rebuilt around
+  an empty corpus.
+
+## Problems Encountered
+1. The rebuild's monitor reported a stall after 8 minutes.
+2. The rebuild failed — reported as exit 0.
+3. A retrieval test failed once during the rebuild.
+4. Three stray `intruder-*` users in the database.
+5. Two of my own monitoring scripts were wrong.
+
+## How We Solved Them
+1. **Not a stall.** The ingest ran in one transaction, invisible to the monitor's connection. That
+   led to the real finding: `cli.py` and `ingest.py` each have exactly one version in history, and
+   the per-document commit recorded as the 2026-09-05 fix was never written.
+2. **`exit 0` was `tail`'s exit code, not Python's.** The traceback showed a *daily* embedding quota
+   (1000) the repo had never recorded — and because the process ran pre-fix code, the rollback took
+   every document. The 2026-09-05 bug, reproduced live beside its own uncommitted fix.
+3. Hypothesised as HNSW losing candidates to uncommitted rows. A deliberate reproduction returned 2
+   hits in every mode. Recorded as **unexplained**, not as a known pgvector behaviour.
+4. My V1.4 test created a user through the committing factory and never deleted it. Cleanup moved to
+   fixture teardown, verified to hold even when the test's assertion fails.
+5. One used `&&`/`||` chains that evaluated false while a counter was negative, so it could never
+   report progress; another could not see uncommitted rows. Both replaced.
+
+## Tests Performed
+**618 passed**, 2 live skipped; ruff, format, mypy clean. User count unchanged across a full suite run.
+The ingest tests fail with the fix removed (documents rolled back; nothing skipped on rerun).
+`make routing`: **13/15**. `make retrieval` and `make eval-baseline` **not run** — the corpus is
+empty and the daily embedding quota is spent.
+
+## Things I Learned
+- **A bugs-log "Fix:" line is a claim** and needs a file, a test and a commit like any resume claim.
+  This one had none, and propagated into four documents.
+- **The rollback test fixture cannot test a transaction boundary** — committed and uncommitted work
+  look the same inside it.
+- **A pipeline reports its last command's exit status.** `python … | tail` said success while
+  Python had crashed. `set -o pipefail`, or read the output, before trusting a zero.
+- **A monitor watching a database sees only committed state.** A long transaction is
+  indistinguishable from no progress — which here was the bug rather than noise.
+- Arithmetic caught a wrong quota claim: under 100 requests cannot exhaust a 1000-request limit.
+
+## Next Exact Step
+`make ingest` now and again after the embedding quota resets — the second run resumes. Then
+`make retrieval` and `make eval-baseline`, and update the figures they feed.
