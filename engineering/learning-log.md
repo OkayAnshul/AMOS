@@ -710,3 +710,14 @@ uncommitted; it called a stall that was really a missing transaction boundary.
 - Why can a second connection not see rows inserted by an open transaction, and what does that imply
   for monitoring a long-running job by counting rows?
 **Status:** ⬜ Recognise
+
+### A security setting that changed process isolation (Session 16)
+The account switcher set the assistant CLI's subprocess-environment scrub (`…_SUBPROCESS_ENV_SCRUB=1`) to keep a token out of child
+processes. On Linux that also runs every child in its own PID and user namespace with nested user
+namespaces disabled — so `podman` failed with "cannot clone: No space left on device", an error
+that says nothing about namespaces. `ps` showing a handful of processes was the first clue.
+**Read:** <https://man7.org/linux/man-pages/man7/user_namespaces.7.html>
+**Answer:**
+- Why does a rootless container runtime need to create a user namespace?
+- Why would `clone()` report `ENOSPC` when the disk has 240 GB free?
+**Status:** ⬜ Recognise

@@ -1,5 +1,5 @@
 # Common commands. `make help` lists them.
-.PHONY: help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker release
+.PHONY: help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker release attribution-check
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -65,3 +65,15 @@ release:  ## Tag a release: make release VERSION=1.3.0
 	@git diff --cached --quiet || git commit -m "chore: version $(VERSION)"
 	@git tag -a "v$(VERSION)" -m "v$(VERSION)"
 	@echo "tagged v$(VERSION) — push with: git push origin main --tags"
+
+# --- attribution. Everything pushed is authored by OkayAnshul, with no assistant name or trailer. ---
+# The pattern is spelled with a bracket so this file does not match itself.
+
+attribution-check:  ## Fail if tracked files or unpushed commits name the assistant or carry a co-author trailer
+	@if git grep -I -n -i -E '[c]laude' -- . ; then echo "attribution-check: the tracked files above name the assistant"; exit 1; fi
+	@base=$$(git rev-parse --verify -q origin/main || git rev-list --max-parents=0 HEAD); \
+	 bad=$$(git log --format='%an%n%ae%n%cn%n%ce%n%B' $$base..HEAD | grep -i -E '[c]laude|^[c]o-authored-by:'); \
+	 if [ -n "$$bad" ]; then echo "$$bad"; echo "attribution-check: unpushed commits carry the lines above"; exit 1; fi; \
+	 others=$$(git log --format='%an' $$base..HEAD | sort -u | grep -v -x 'OkayAnshul'); \
+	 if [ -n "$$others" ]; then echo "attribution-check: unexpected author(s): $$others"; exit 1; fi
+	@echo "attribution-check: clean"

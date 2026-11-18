@@ -23,3 +23,19 @@ htmlcov/
 *.db
 *.sqlite3
 data/
+
+# The coding assistant's local files: its instruction file imports docs/working-agreement.md
+/[C]LAUDE.md
+/.[c]laude/
+
+# Zero-byte mount points the coding sandbox leaves in the repo root
+/.bash_profile
+/.bashrc
+/.gitconfig
+/.mcp.json
+/.profile
+/.ripgreprc
+/.zprofile
+/.zshrc
+/.idea
+/.vscode

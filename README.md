@@ -351,7 +351,7 @@ tests/              unit, integration, live (opt-in)
 docs/               architecture and decisions (21 written, 3 stubs)
                     + 24-study-plan, 25-build-journal
 engineering/        current-state, session log, learning log, decisions, bugs, experiments
-CLAUDE.md           working agreement and session protocol
+docs/working-agreement.md   working agreement and session protocol
 ```
 
 ## A note on authorship

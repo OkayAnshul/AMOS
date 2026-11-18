@@ -1,4 +1,4 @@
-# CLAUDE.md — AMOS working agreement
+# AMOS working agreement
 
 Read this first, every session. Then `engineering/current-state.md`.
 
@@ -25,14 +25,27 @@ Objective 2 is not decoration. A milestone is not done if only objective 1 is me
 
 ## Working agreement
 
-- **Anshul does not type the code.** Claude implements; Anshul follows along. This is the
-  fastest path and the weakest for retention, so retention is mechanised — see the gate below.
+- **Anshul does not type the code.** An AI coding assistant implements; Anshul designs, reviews
+  and follows along. This is the fastest path and the weakest for retention, so retention is
+  mechanised — see the gate below.
 - **Links over prose.** Name a concept in a line or two, say what problem it solves, then link
   official documentation. No long explanatory paragraphs. Never fabricate a URL — verify it
   resolves before writing it down.
 - **Challenge bad designs.** Anshul asked for this explicitly. Do not agree by default. Say
   when something is over- or under-engineered.
-- **Commit and push continuously**, not batched at the end. **No `Co-Authored-By` trailer.**
+- **Commit and push continuously**, not batched at the end.
+
+## Attribution (2026-11-19)
+
+Everything pushed to GitHub is authored as `OkayAnshul`:
+- no `Co-Authored-By` or session trailers, and no assistant or vendor name in commit messages,
+  branch names or tracked files;
+- the assistant's own instruction file stays local and untracked (`.gitignore`);
+- **`make attribution-check` runs before every push** and fails on any of the above in unpushed
+  commits or tracked files.
+
+That AMOS was built with an AI pair-programmer is stated in `README.md` and stays stated: the
+rule removes a product name, not the fact.
 
 ## The advance gate
 
@@ -43,13 +56,14 @@ module's questions in `docs/interview/<module>.md` unaided.
 
 ## Session protocol
 
-**Start**: read `CLAUDE.md` → `engineering/current-state.md` → latest `session-log.md` entry →
+**Start**: read this file → `engineering/current-state.md` → latest `session-log.md` entry →
 relevant docs → `git status` and `git log` → identify the exact next step → verify the current
 system actually runs before trusting that it does.
 
 **End**: run tests → run lint/typecheck → verify the app starts → review the diff → update
 `current-state.md`, `session-log.md`, `learning-log.md`, `decisions-log.md` if needed → record
-resume evidence → state what changed, what to learn, and the exact next step → commit and push.
+resume evidence → state what changed, what to learn, and the exact next step →
+`make attribution-check` → commit and push.
 **Never end a session with the project knowingly broken.**
 
 ---
@@ -92,4 +106,4 @@ Model IDs and free-tier terms change. Check
 ## Layout
 
 `docs/` decisions · `engineering/` running logs and recovery state · `src/` code, created
-milestone by milestone · `tests/` unit, integration, contract, evaluation.
+milestone by milestone · `tests/` unit, integration, live (opt-in).
