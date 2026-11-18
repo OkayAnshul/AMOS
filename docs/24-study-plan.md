@@ -259,7 +259,7 @@ arguments before execution.
 | Concept | Read |
 |---|---|
 | Function calling | **[core]** <https://ai.google.dev/gemini-api/docs/function-calling> |
-| The same idea, other vendors — the shape is portable | **[deep]** <https://docs.claude.com/en/docs/agents-and-tools/tool-use/overview> · <https://platform.openai.com/docs/guides/function-calling> |
+| The same idea, other vendors — the shape is portable | **[deep]** <https://platform.openai.com/docs/guides/function-calling> |
 | ReAct — reason + act interleaved, the loop's ancestor | **[core]** <https://arxiv.org/abs/2210.03629> |
 | Toolformer — models learning to call tools | **[ref]** <https://arxiv.org/abs/2302.04761> |
 | Prompt injection — read the whole series eventually | **[core]** <https://simonwillison.net/series/prompt-injection/> |
@@ -447,7 +447,7 @@ The strongest distributed-systems content in the project. **[core] throughout.**
 | LLM-as-judge: the paper, including agreement rates and biases | **[core]** <https://arxiv.org/abs/2306.05685> |
 | G-Eval | **[deep]** <https://arxiv.org/abs/2303.16634> |
 | RAG-specific metrics (faithfulness, the groundedness gap AMOS admits to) | **[core]** <https://docs.ragas.io/en/stable/> |
-| Writing tests against a model | **[deep]** <https://docs.claude.com/en/docs/test-and-evaluate/develop-tests> |
+| Writing tests against a model | **[deep]** <https://developers.openai.com/api/docs/guides/evals> |
 | A harness to compare against before building one | **[ref]** <https://www.promptfoo.dev/docs/intro/> |
 
 ---

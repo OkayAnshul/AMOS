@@ -8,7 +8,7 @@ This exists because the project set two equal objectives on day one and only one
 > 1. Build AMOS.
 > 2. Understand it well enough to modify, debug, explain, extend and defend it.
 >
-> *"Objective 2 is not decoration. A milestone is not done if only objective 1 is met."* — `CLAUDE.md`
+> *"Objective 2 is not decoration. A milestone is not done if only objective 1 is met."* — `docs/working-agreement.md`
 
 ---
 

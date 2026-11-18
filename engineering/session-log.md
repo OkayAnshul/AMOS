@@ -17,7 +17,7 @@ engineering logs, git history and a private GitHub remote.
 
 ## Files Changed
 All files — the repository did not exist at the start of the session.
-`CLAUDE.md`, `README.md`, `.gitignore`, `.env.example`, `docs/00`–`docs/23`,
+the working agreement, `README.md`, `.gitignore`, `.env.example`, `docs/00`–`docs/23`,
 `engineering/*.md`.
 
 ## Architecture Decisions
@@ -154,7 +154,7 @@ V0.1 shipped and tagged. `main` runs and its tests pass.
 
 ## Next Exact Step
 **The advance gate is unmet** — the V0.1 pre-read has not been done, so `docs/interview/foundation.md`
-cannot yet be answered unaided. Per `CLAUDE.md`, V0.2 waits on that. If deliberately deferred,
+cannot yet be answered unaided. Per the working agreement, V0.2 waits on that. If deliberately deferred,
 V0.2 (Tool Registry) is specified in `engineering/current-state.md`.
 
 ## Recommended Commit
@@ -800,7 +800,7 @@ never met. Start with `docs/25-build-journal.md`.
 **Objective:** Make `remember_fact` actually work, and write the guide for building AMOS by hand.
 
 > **Backfilled 2026-09-13.** This session produced **21 commits** (`v1.0..main`) and was never
-> written up. `CLAUDE.md` makes updating this file part of the end-of-session protocol, so the
+> written up. The working agreement makes updating this file part of the end-of-session protocol, so the
 > omission is a protocol violation visible in `git log` — which is the argument for the protocol.
 > Reconstructed from the commits, `bugs-log.md` and `experiments-log.md`, all of which *were*
 > kept current.
@@ -1191,11 +1191,11 @@ Committed in two parts on `feat/v1.4-auth`.
 
 **Date:** 2026-09-14
 **Module:** Housekeeping after V1.4 — attribution, corpus rebuild, and what the rebuild exposed
-**Objective:** Strip Claude attribution from history as the working agreement requires; rebuild the
+**Objective:** Strip AI-assistant attribution from history as the working agreement requires; rebuild the
 destroyed corpus and re-measure retrieval, routing and evaluation.
 
 ## What We Changed
-- **History:** `Co-Authored-By: Claude` and `Claude-Session:` lines removed from all 75 commits
+- **History:** co-author and session-id trailer lines removed from all 75 commits
   carrying them, across 14 branches and tags `v0.6`–`v1.4.0`, then force-pushed. Every ref's tree and
   commit count was verified identical before and after, so only messages changed. A bundle of the
   pre-rewrite repository was taken first.
@@ -1248,3 +1248,50 @@ empty and the daily embedding quota is spent.
 ## Next Exact Step
 `make ingest` now and again after the embedding quota resets — the second run resumes. Then
 `make retrieval` and `make eval-baseline`, and update the figures they feed.
+
+---
+
+# Session 16
+
+**Date:** 2026-11-18 → 2026-11-19
+**Module:** Planning — the demo track, the project explainer, and why containers stopped starting
+**Objective:** Explain AMOS end to end for a teacher; scope what a convincing demo still needs;
+find why `podman` failed inside sessions; make attribution a checked rule.
+
+## What We Changed
+- `docs/26-project-explainer.md` (new): what AMOS is, the invariant, architecture, where AI is
+  involved, what is measured and not, demo queries, a six-point talk track.
+- `docs/19-roadmap.md`: "Beyond V1.4" replaced by **V1.5–V2.0, the demo track**, with effort, ADRs,
+  acceptance and interview docs per milestone.
+- `engineering/next-session-prompt.md` (new): the prompt that starts every demo-track session.
+- `docs/working-agreement.md` (new): the working agreement, brand-neutral, with an attribution
+  section. The assistant's instruction file is now untracked and imports it.
+- `Makefile`: `attribution-check`. `.gitignore`: the instruction file and the sandbox's zero-byte
+  mount points. Two study-plan links replaced, references updated.
+- Outside this repository: a config-folder account switcher in
+  the Studio project's account-switcher folder (`config-dirs/`), tested against a stub binary, not installed.
+
+## Problems Encountered
+1. `podman` failed inside the session with "cannot clone: No space left on device", even with the
+   sandbox nominally off.
+2. The full suite hung without a database, then ran 617/618 once Postgres was up.
+
+## How We Solved Them
+1. Not the disk (240 GB free) and not a sandbox setting (none configured). Every command ran under
+   bubblewrap with `--disable-userns`, because the terminal account switcher installed 2026-11-17
+   sets the assistant CLI's subprocess-environment scrub (`…_SUBPROCESS_ENV_SCRUB=1`), which on Linux isolates child processes. Fix: one
+   config folder per account, so no token is in the environment and no scrub is needed.
+2. The failing test is logged as unexplained (`bugs-log.md`, 2026-11-19); `VACUUM` clears it.
+
+## Tests Performed
+`pytest`: unit 474/474; full suite **617 passed, 1 failed** (the pgvector test), 2 live skipped;
+after `VACUUM`, the failing test passes. `make attribution-check`: clean. No code changed.
+
+## Things I Learned
+- An environment variable chosen for secrecy changed process isolation; read what a security
+  setting does beyond its name.
+- A workaround that works is not a cause that is known.
+
+## Next Exact Step
+V1.5 per `engineering/next-session-prompt.md`. Before it: `make up`, and `make ingest` on two
+consecutive days.

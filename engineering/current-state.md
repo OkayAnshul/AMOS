@@ -3,7 +3,7 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-09-13 (Session 14 — V1.4 auth and isolation)
+**Last updated:** 2026-11-19 (Session 16 — the demo track chosen; no code changed)
 
 ## Current Version
 **V1.4 — Authentication and multi-user isolation.** The V0.1–V1.0 roadmap is complete; V1.1–V1.4
@@ -92,8 +92,8 @@ regression against it. Only deterministic rates gate; the judged score is contex
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`feat/v1.4-auth`. Merge to `main` when reviewed. Last known good commit on `main`: the `v1.3.0`
-tag.
+`main`, at `v1.4.0` plus the Session 15 fixes. No open feature branch. The next one is
+`feat/v1.5-foundation` (`docs/19-roadmap.md`, the demo track).
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -104,7 +104,10 @@ are three-part, because the target derives the tag from `__version__` and that i
 `major.minor.patch`. Not retagged — that would be the third tag rewrite in a day, for cosmetics.
 
 ## Known Bugs
-None open. Twenty fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson
+**One open:** `test_pgvector_stores_and_retrieves_by_similarity` returned 1 hit instead of 2 on
+2026-11-18, on an empty table with an 8.4 MB HNSW index. `VACUUM chunks` fixed it; a deliberate
+reproduction (230 rolled-back inserts) did not bring it back. Cause unproven — `bugs-log.md`,
+2026-11-19. Scheduled in V1.5. Otherwise none open. Twenty fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson
 each taught. The corrections table in `docs/25-build-journal.md` lists twenty-two things believed that
 were false.
 
@@ -152,6 +155,8 @@ were false.
 | Corpus | **EMPTY.** Destroyed 2026-09-13. A rebuild on 2026-09-14 hit the daily embedding quota partway and — running pre-fix code in one transaction — rolled back everything. Now 51 docs / ~1070 chunks, likely more than one free-tier day. Since the per-document-commit fix, `make ingest` keeps what it finishes and resumes: **run it on two consecutive days** |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
+| Coding sessions | Since 2026-11-17 the terminal account switcher set the assistant CLI's subprocess-environment scrub (`…_SUBPROCESS_ENV_SCRUB=1`), which on Linux also puts every session command in a PID/user namespace with nested namespaces disabled — **podman cannot start inside a session**. Run `make up` in your own terminal. A config-folder switcher that needs no scrub was written 2026-11-19 (the Studio project's account-switcher folder (`config-dirs/`)), not yet installed |
+| Attribution | The assistant's instruction file is untracked and imports `docs/working-agreement.md`. `make attribution-check` before every push |
 
 ## How To Run
 ```bash
@@ -163,14 +168,20 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
+**The demo track, V1.5–V2.0, chosen 2026-11-19** (`docs/19-roadmap.md`): foundation → second LLM
+provider → web research → complex goals → demo web page → demo package. ≈ 5½ sessions. Start each
+session with `engineering/next-session-prompt.md`. The teacher-facing summary is
+`docs/26-project-explainer.md`.
+
+**V1.5 starts with the corpus rebuild below**, which needs two calendar days of embedding quota.
+
 **Immediate: rebuild the corpus, then re-measure.** `make ingest` today and again tomorrow (the
 second run resumes, skipping finished documents), then `make retrieval` and `make eval-baseline`,
 and update the retrieval and eval figures. `make routing` was re-measured 2026-09-14: 13/15.
 
-**Nothing is committed to.** The four milestones chosen on 2026-09-13 (V1.1–V1.4) are all
-shipped. `docs/19-roadmap.md`'s "Beyond V1.4" lists candidates, each needing an ADR;
-**authorization** is the strongest, because it is the gap most likely to be assumed already
-solved once a system "has auth".
+Authorization stays out of the demo track: localhost, one presenter. It remains the strongest
+candidate after V2.0, because it is the gap most likely to be assumed solved once a system "has
+auth".
 
 ### The advance gate — now twelve documents, and never met
 
@@ -178,7 +189,7 @@ solved once a system "has auth".
 still outstanding; V1.1–V1.4 added four more modules to a backlog that was already ten deep.
 
 Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/interview/*.md` in milestone
-order. Building further before closing this is a deliberate choice against `CLAUDE.md`'s own rule,
+order. Building further before closing this is a deliberate choice against the working agreement's own rule,
 made on 2026-09-13, and worth revisiting.
 
 **Blocked until the corpus is rebuilt:** `make retrieval` and `make eval-baseline` both need it, and

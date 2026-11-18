@@ -661,3 +661,26 @@ it goes stale silently. This one was written after measuring the per-minute limi
 to "the" embedding limit — the same mistake as the four quota shapes before it, where each document
 learned one shape and wrote it down as *the* shape.
 **Test added:** none, since nothing was fixed.
+
+---
+
+## 2026-11-19 — The pgvector similarity test finds one of two fresh rows
+**Milestone:** V0.5 test, found at the start of Session 16
+**Symptom:** `test_pgvector_stores_and_retrieves_by_similarity` failed on two consecutive suite
+runs: `assert len(hits) == 2` got 1. The `chunks` table was empty apart from the test's own two
+uncommitted rows; the HNSW index on `chunks.embedding` was 8.4 MB.
+**Expected:** two rows in, two hits out (`LIMIT 2`).
+**Root cause:** **not established.** Hypothesis: dead index entries from months of rolled-back
+test inserts crowd the search's candidate list (`hnsw.ef_search = 40`), so the live second row
+falls outside it. Consistent with the evidence — `VACUUM chunks` made the test pass at once — but a
+deliberate reproduction (80 identical, then 150 distinct near-duplicate rolled-back vectors) did
+**not** bring the failure back. Identical vectors share one graph element in pgvector, which
+explains the first attempt and not the second. Same test as the "unexplained" failure of Session 15.
+**Fix:** none in code. `VACUUM chunks` cleared it. V1.5 must reproduce it before choosing between
+`hnsw.iterative_scan` (pgvector ≥ 0.8, the production-relevant fix, since re-ingesting also leaves
+dead entries) and a test-side `VACUUM`.
+**How it was found:** the session protocol's "verify it runs before trusting it" — the full suite,
+once Postgres was up.
+**Lesson:** a fix that works is not a cause that is known. Writing "VACUUM fixed it, reproduction
+failed" is less satisfying than a story and more useful than a wrong one.
+**Test added:** none yet.

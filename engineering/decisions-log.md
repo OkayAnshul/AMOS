@@ -473,3 +473,36 @@ to miss, and an operator assuming V1.4's auth applies would expose an open API.
 **404, not 403, for another user's run.**
 *Why:* confirming a run exists but is not yours is itself a leak. Falls out of the scoped query
 rather than being special-cased.
+
+---
+
+## 2026-11-19 — The demo track, V1.5–V2.0
+
+**Chosen:** foundation → second LLM provider → web research → complex goals → demo web page →
+demo package, for a localhost demo to a teacher (`docs/19-roadmap.md`).
+*Why:* the backend is complete; what is missing is a way to show it, and goals a non-engineer
+recognises as real. "Plan a trip" is refused today, honestly, because the researcher has no web
+access — the right fix is web research with citations, not letting the model answer from memory.
+*Rejected:* turning AMOS into a general chat assistant. That is what everyone already has; the
+differentiator is checked, cited, traceable answers.
+*Rejected for now:* authorization, TLS, rate limiting — localhost, one presenter.
+*Reconsider if:* the demo audience changes to anyone who would use it over a network.
+
+**A `writer` agent may add unsourced suggestions, only in a section labelled as such** (ADR-017,
+to be written in V1.8).
+*Why:* a trip plan with only sourced facts is thin; one that mixes in model knowledge silently
+breaks the grounding rule. Labelling makes the rule visible instead of breaking it.
+
+**No frontend framework or build step for the demo page** (ADR-018, to be written in V1.9).
+*Why:* one page, one presenter, no state worth a framework; a build toolchain is a second project.
+*Reconsider if:* the page grows past one screen of independent state.
+
+## 2026-11-19 — Attribution: no assistant name in anything pushed
+
+**Chosen:** the working agreement moves to `docs/working-agreement.md` with brand-neutral wording;
+the assistant's instruction file becomes a local, untracked import of it; `make attribution-check`
+gates every push. `README.md` keeps saying AMOS was built with an AI pair-programmer.
+*Why:* Anshul's call on what his public repository shows; the check makes it a guarantee instead of
+a habit, which is the project's own rule for anything that matters.
+*Open:* commits before 2026-11-19 still contain the old instruction file and three messages that
+name it. Removing them means another history rewrite and force-push — Anshul's decision, not made.

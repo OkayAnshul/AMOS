@@ -514,16 +514,111 @@ deliberately shared · why 404 rather than 403.
 
 ---
 
-## Beyond V1.4
+## V1.5–V2.0 — The demo track (chosen 2026-11-19)
 
-Nothing is chosen. Candidates, each needing an ADR: **authorization** (the gap most likely to be
-mistaken for solved, because "we have auth" is routinely used to mean both) · key rotation and an
-audit of authentication attempts · TLS and inbound rate limiting · row-level security · a web UI ·
-independently authored golden sets · hybrid search and reranking · a per-run cost budget ·
-re-planning on failure.
+**Why this scope.** The backend is complete; what is missing is a way to *show* it and goals a
+non-engineer recognises as real. The target is a localhost demo for a teacher: research and
+planning goals answered with citations, watched live on a web page, and explained by Anshul
+unaided. Authorization, TLS and rate limiting stay out — localhost, one presenter.
 
-Unscheduled, and only with a real driver: MCP tool transport · human-approval workflows · a web
-UI · Temporal for durable workflows · Kubernetes · hybrid search and reranking · a per-run cost
-budget · re-planning on failure.
+```
+V1.5 foundation ─→ V1.6 provider ─→ V1.7 web research ─→ V1.8 complex goals ─→ V1.9 web page ─→ V2.0 demo
+   (corpus rebuild runs across two days in the background of V1.6)
+```
 
-None of these are promised, and none may appear on a resume until built.
+| Milestone | Effort | ADR | Interview doc |
+|---|---|---|---|
+| V1.5 Demo-ready foundation | 1 session + 2 calendar days (embedding quota) | — | `operations.md` |
+| V1.6 Second LLM provider | ½ session | ADR-014 | `providers.md` |
+| V1.7 Web research | 1 session | ADR-015, ADR-016 | `web-research.md` |
+| V1.8 Complex goals | 1 session | ADR-017 | `synthesis.md` |
+| V1.9 Demo web page | 1½ sessions | ADR-018 | `demo-surface.md` |
+| V2.0 Demo package and release | ½ session + two rehearsals | — | — |
+| **Total** | **≈ 5½ sessions** | | |
+
+Every milestone: feature branch → ADR committed before code → tests on `FakeProvider` and
+recorded fixtures (no network) → `make check` → `make attribution-check` → merge → `make release`
+→ push.
+
+### V1.5 — Demo-ready foundation
+**Objective** Nothing in the demo fails for a reason already known.
+- The embedding retry fails fast on a `PerDay` `quotaId` instead of sleeping through it
+  (`bugs-log.md`, 2026-09-14).
+- `make backup` and `make restore`, and **one restore drill actually run** and recorded.
+- The pgvector similarity test that fails until `VACUUM` (`bugs-log.md`, 2026-11-19): reproduce
+  deliberately, then fix at the cause — `hnsw.iterative_scan` (pgvector ≥ 0.8) is the candidate —
+  or record a test-side workaround as exactly that.
+- Corpus rebuilt (`make ingest` on two consecutive days), then `make retrieval` and
+  `make eval-baseline` re-run and every figure that cites them updated.
+**Accept** suite green twice in a row · restore drill in `experiments-log.md` · figures current.
+
+### V1.6 — A second LLM provider
+**Objective** Enough daily model calls for a multi-query demo. `gemini-3.5-flash` allows 20 a day
+and one goal costs 3–8.
+- A Groq provider behind `LLMProvider`, over `httpx` (already a dependency) — no new SDK.
+  Groq's rate-limit page listed `openai/gpt-oss-120b` at 30 requests/min and 1K/day on
+  2026-11-18, without saying clearly which plan; **verify on the account's own limits page** at
+  ADR time, and verify structured-output support for the chosen model.
+- `AMOS_LLM_PROVIDER=gemini|groq`; embeddings stay on Gemini (one call per query once ingested).
+- One contract-test suite that both providers pass, on recorded fixtures.
+- `make eval` and `make routing` re-run on the new provider and recorded **separately** — numbers
+  from different models are not one series.
+**Reconsider if** the free tier changes, or eval accuracy drops below Gemini's on the same set.
+
+### V1.7 — Web research
+**Objective** Goals about the world, not only about this repository, answered with web
+citations — without giving the model an open network.
+- `web_search` tool. Provider chosen **by measurement**: 10 fixed queries through two or three
+  candidates (Tavily, Brave Search API, self-hosted SearXNG), scored on relevance, free quota
+  (from the provider's own pricing page, that day) and key handling. No unofficial scrapers.
+- `fetch_page` tool: any `https` URL **returned by `web_search` earlier in the same run** —
+  a provenance allowlist enforced by code — plus the existing DNS/SSRF checks, a size cap and
+  HTML-to-text. Page text is untrusted data, never instructions (N-12); a prompt-injection fixture
+  page is part of the tests.
+- A **per-run budget** of model and tool calls, enforced by the orchestrator (ADR-016). Exceeding
+  it ends the run with a partial answer and the reason, not a crash. Complex goals fan out; the
+  quota is finite.
+**Accept** recorded-fixture tests for both tools, the injection fixture, the budget cutoff; one
+live opt-in test.
+
+### V1.8 — Complex goals: plans, itineraries, comparisons
+**Objective** "Plan a trip", "compare X and Y", "make a study plan" produce a structured,
+cited deliverable — with the grounding rule made explicit rather than broken.
+- A `writer` agent with **no tools**: composes the deliverable (itinerary, comparison table,
+  report) from evidence gathered by earlier tasks. Every fact cites a source; general-knowledge
+  suggestions are allowed only in a separate section labelled *not sourced* (ADR-017).
+- The planner learns the research → compute → write pattern; the critic checks the
+  sourced/unsourced split.
+- 4–6 complex golden goals with deterministic checks: tools used, citations present, arithmetic
+  correct, sections present. Routing set extended to the new agent.
+**Accept** golden goals pass on fixtures; demo queries 8 and 9 of `docs/26-project-explainer.md`
+pass live.
+
+### V1.9 — Demo web page
+**Objective** Show the system working, not just its answer.
+- Backend: `GET /` serves the page (Starlette static files — no new dependency) · `GET /v1/runs`
+  (recent, owner-scoped) · `GET /v1/corpus` · `GET /v1/memories` · `POST /v1/documents` (upload
+  `.md`/`.txt`; PDF only with its own ADR) · `GET /v1/system` (provider, model, enabled features).
+  Every list endpoint gets an owner-isolation test, as in V1.4.
+- Live progress by polling `GET /v1/runs/{id}` on async runs — tasks are persisted as they
+  happen since V1.1. Server-sent events only if polling proves inadequate.
+- Frontend: plain HTML, CSS and JavaScript, no framework and no build step (ADR-018). A
+  "mission control" layout: goal composer with preset demo queries · live task DAG with agent
+  lanes · tool-call feed · answer with citation cards that open the source chunk or URL · critic
+  verdict · run history · memory panel · corpus and upload · dead-letter panel · settings (API
+  key, sync/async). Light and dark, keyboard-usable, legible on a projector.
+- Verified in a real browser with screenshots, not only by tests.
+**Accept** every demo query runs from the page; a browser smoke test; isolation tests.
+
+### V2.0 — Demo package and release
+- `make demo`: checks database, corpus, keys and quota headroom; seeds memory; prints the URL.
+- `docs/27-demo-script.md`: the queries in order, what each proves, expected output, and the
+  fallback when a quota is spent.
+- A screen recording of a full successful run, as the fallback.
+- Two rehearsals; fix what breaks; `make release VERSION=2.0.0`.
+
+### Still not chosen
+Authorization · key rotation and auth audit · TLS and inbound rate limiting · row-level security ·
+independently authored golden sets · hybrid search and reranking · re-planning on failure ·
+MCP tool transport · human-approval workflows · Kubernetes. None promised, none on a resume until
+built.
