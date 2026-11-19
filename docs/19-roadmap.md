@@ -571,6 +571,12 @@ and one goal costs 3–8.
 - `make eval` and `make routing` re-run on the new provider and recorded **separately** — numbers
   from different models are not one series.
 **Reconsider if** the free tier changes, or eval accuracy drops below Gemini's on the same set.
+**Re-examine before building (2026-11-19).** The account page shows the code default,
+`gemini-3.5-flash-lite`, has **500 calls a day** — this milestone's stated reason ("20 a day") was
+about `gemini-3.5-flash`, which is now absent from the page. What is left to justify a second provider:
+the **15/minute** ceiling (the eval suite peaked at 16), model quality beyond flash-lite, and a
+fallback when Gemini returns `503`. Gemma 4 on the same API (30/min, 14.4K/day, but 16K tokens/min)
+is a no-new-code alternative if it handles tools and structured output — measure, don't assume.
 
 ### V1.7 — Web research
 **Objective** Goals about the world, not only about this repository, answered with web
@@ -578,6 +584,8 @@ citations — without giving the model an open network.
 - `web_search` tool. Provider chosen **by measurement**: 10 fixed queries through two or three
   candidates (Tavily, Brave Search API, self-hosted SearXNG), scored on relevance, free quota
   (from the provider's own pricing page, that day) and key handling. No unofficial scrapers.
+  Gemini's built-in Search grounding is **not** a free candidate for AMOS's models: 1.5K/day on
+  Gemini 2 / 2.5, **0 on Gemini 3 and newer** (account page, 2026-11-19).
 - `fetch_page` tool: any `https` URL **returned by `web_search` earlier in the same run** —
   a provenance allowlist enforced by code — plus the existing DNS/SSRF checks, a size cap and
   HTML-to-text. Page text is untrusted data, never instructions (N-12); a prompt-injection fixture

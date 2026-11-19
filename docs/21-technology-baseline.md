@@ -40,12 +40,36 @@ could exhaust the entire day's quota in one run.
 | `gemini-embedding-001` | Embeddings, V0.5 | 2048 token input, 3072 dims default, MRL-truncatable, `task_type` |
 | `gemini-embedding-2` | Alternative | 8192 token input, no `task_type` |
 
-### Five quota shapes, all measured — this table is canonical
+### Quota shapes — this section is canonical
 
 The single most operationally important fact in this document, and not what the published guides
 say. **Every other document that quotes a quota figure should link here rather than restate it**;
 three of them drifted into contradicting each other and each other's corrections, because each
 had learned one shape and written it down as *the* shape.
+
+**Read off the account's AI Studio rate-limit page on 2026-11-19** (<https://aistudio.google.com/rate-limit>;
+the public docs page no longer lists per-model numbers). Per project, per model. RPD resets at
+midnight Pacific. The "peak" column is the account's highest usage in the last 28 days.
+
+| Model (page name → API id) | RPM | TPM | RPD | Peak seen | Earlier measurement |
+|---|---|---|---|---|---|
+| Gemini 3.5 Flash Lite → `gemini-3.5-flash-lite` | **15** | 250K | **500** | 16 RPM · 141 RPD | 15/min matched; the daily 500 was never recorded |
+| Gemini Embedding 1 → `gemini-embedding-001` | **100** | **30K** | **1K** | 99 RPM · 18.4K TPM · 903 RPD | 100/min and 1000/day matched; **TPM is a sixth shape**, not recorded before |
+| `gemini-3.5-flash` | — | — | — | — | 20/day (2026-09-03). **Absent from the page**; `models.list` still lists it. Free-tier quota now **unknown** |
+| Gemini 3.8 Flash / 3.6 Flash / 3 Flash | 5 | 250K | 20 | 1 RPD (3.8) | — |
+| Gemma 4 31B, Gemma 4 26B → `gemma-4-31b-it`, `gemma-4-26b-a4b-it` | 30 | **16K** | **14.4K** | 0 | — not yet tried with tools or structured output |
+| Gemini 2.5 Flash → `gemini-2.5-flash` | 5 | 250K | 20 | 0 | returned 404 on 2026-09-03; now listed again — untested |
+| Search grounding, Gemini 2 / 2.5 / default | — | — | 1.5K | 0 | — **0 for Gemini 3 and newer** |
+
+What this changes:
+- **The default model has 500 calls a day, not "15 a minute and no daily problem".** The demo track
+  assumed the binding limit was flash's 20/day (V1.6's stated reason). On the free tier the code
+  default is bounded by **15 per minute** — the eval suite peaked at 16 — far more than by the day.
+- **Embedding has a token-per-minute limit too: 30K.** The ingest's batches of 25 chunks peaked at
+  18.4K; larger chunks or batches would hit it before the 100-contents limit.
+- **`gemini-3.5-flash` is no longer a known quantity.** Verify before it is used for a demo.
+
+### The five shapes as first measured (2026-09-03 – 09-14), kept for the record
 
 | Call | Model | Measured limit |
 |---|---|---|
