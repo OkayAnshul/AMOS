@@ -86,14 +86,16 @@ regression against it. Only deterministic rates gate; the judged score is contex
 - `Tool` has no output schema, no retry policy and no audit metadata (`docs/08`)
 - Kubernetes, Kafka, Celery, microservices: **never built, never claimed**
 
-## ⚠️ Five quota shapes, all measured (per-model free-tier numbers are no longer on the public docs page — read them off the account's AI Studio page)
+## ⚠️ Quota shapes — from the account's AI Studio page, 2026-11-19 (`docs/21-technology-baseline.md`)
 | | Limit |
 |---|---|
-| `generateContent`, `gemini-3.5-flash` | **20 / day** |
-| `generateContent`, `gemini-3.5-flash-lite` | **15 / minute** |
-| `embed_content` | **100 / minute**, counts *contents* not requests |
-| `embed_content` | **1000 / day** — hit 2026-09-14 by a corpus rebuild. Named *requests*; almost certainly counts contents. Since V1.5 it fails fast. Resets midnight Pacific |
-| `gemini-2.5-flash` | 404 — no longer served |
+| `gemini-3.5-flash-lite` (the default) | **15 / minute**, **500 / day**, 250K tokens/min. The eval suite peaked at 16/min |
+| `gemini-embedding-001` | **100 contents / minute**, **30K tokens / minute** (new), **1000 / day**. 903 used on 2026-11-19 |
+| `gemini-3.5-flash` | **unknown** — absent from the page, still in `models.list`. Was 20/day |
+| `gemma-4-31b-it`, `gemma-4-26b-a4b-it` | 30 / minute, 16K tokens/min, **14.4K / day** — untried with tools |
+| Search grounding (Gemini 2 / 2.5) | 1.5K / day; **0 for Gemini 3+** |
+
+Daily limits reset at midnight Pacific. Since V1.5 a daily 429 fails fast.
 
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
