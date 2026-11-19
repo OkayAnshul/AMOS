@@ -205,9 +205,10 @@ AMOS_GOLDEN_SET: list[GoldenQuestion] = [
     # a topic the corpus discusses only in order to *reject* it, and a question
     # whose obvious keyword appears in several documents that do not answer it.
     #
-    # Every source named here is one that is actually **indexed** — the corpus is
-    # a V0.5 snapshot, so a question about docs added later would score as a
-    # retrieval failure when it is really a corpus gap.
+    # Every source named here must be one that is actually **indexed**, or a
+    # corpus gap scores as a retrieval failure. Until V1.5 the corpus was a V0.5
+    # snapshot; since the 2026-11-19 rebuild it is `docs/` minus
+    # `amos.rag.cli.CORPUS_EXCLUDE` (`build-along/`, which no question cites).
     GoldenQuestion.of(
         "What keeps two workers from picking up the same piece of work?",
         "12-event-system.md",

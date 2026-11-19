@@ -114,3 +114,31 @@ async def test_a_rerun_after_a_failure_resumes_instead_of_repeating(
         assert await sources_present(db_factory, names) == names
     finally:
         await remove(db_factory, names)
+
+
+async def test_excluded_directories_are_not_ingested_at_any_depth(
+    tmp_path: Path, db_session: AsyncSession
+) -> None:
+    tag = uuid.uuid4().hex[:10]
+    files = {
+        "top.md": "kept",
+        "interview/q.md": "kept",
+        "build-along/v1.md": "excluded",
+        "nested/build-along/v2.md": "excluded",
+    }
+    for relative, kind in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = f"{kind} passage {tag} {relative} about corpus scope " * 30
+        path.write_text(f"# {kind}\n\n## Section\n\n{body}\n")
+
+    report = await Ingestor(
+        db_session, PgVectorStore(db_session), FakeEmbeddings(dimensions=1536)
+    ).ingest_directory(tmp_path, exclude=("build-along",))
+
+    assert report.documents_ingested == 2
+    assert report.documents_excluded == 2
+    sources = await db_session.execute(
+        select(Document.source).where(Document.source.in_(list(files))).order_by(Document.source)
+    )
+    assert list(sources.scalars()) == ["interview/q.md", "top.md"]

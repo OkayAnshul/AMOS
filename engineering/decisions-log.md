@@ -541,10 +541,14 @@ docstring actually feared (a wrong operator silently falls back to a sequential 
 *Rejected:* `VACUUM` before the test — hides the symptom, keeps the wrong assertion.
 *Reconsider if:* CI and local diverge — CI already gets a fresh database per run.
 
-**The corpus is top-level `docs/` only; `docs/interview/` and `docs/build-along/` are excluded.**
-*Why:* 677 chunks fit one day's embedding quota (1000); 1108 do not. The excluded documents are
-study material that restates the canonical docs, so they compete for the top-5 against the
-sources the golden sets expect — and their arrival is what made re-ingesting incomparable with the
-measured retrieval numbers.
-*Rejected:* ingesting everything across two days — two days for a worse-targeted corpus.
-*Reconsider if:* a demo question needs the interview material, or the golden sets start citing it.
+**The corpus is `docs/` without `docs/build-along/`.** 850 chunks (677 top-level + 173 interview),
+which fits one day's embedding quota (1000); all 1108 do not.
+*Why build-along goes:* it is a build-it-yourself guide that restates each milestone's contract, and
+no golden question names it as a source.
+*Why interview stays — a correction made the same day:* the first version of this entry excluded
+`docs/interview/` too, claiming it competed with the sources the golden sets expect. Reading the set
+showed the opposite: six retrieval questions **accept** an interview document as a correct answer,
+and the V0.5 corpus the numbers were measured on included them.
+*Not claimed:* comparability with the old figures. The top-level docs alone grew from the old corpus's
+300 chunks to 677, so the re-measured numbers start a new series whatever is excluded.
+*Reconsider if:* a demo question needs the build-along material.

@@ -18,6 +18,12 @@ from amos.rag.evaluation import AMOS_GOLDEN_SET, evaluate_retrieval
 from amos.rag.ingest import Ingestor
 from amos.rag.store import PgVectorStore
 
+#: Directories under `docs/` that are not part of the corpus (decisions-log,
+#: 2026-11-19). `docs/build-along/` restates each milestone's contract and no
+#: golden question cites it; leaving it out keeps a full ingest inside one
+#: day's embedding quota (850 chunks of 1000, not 1108).
+CORPUS_EXCLUDE: tuple[str, ...] = ("build-along",)
+
 
 async def ingest(directory: str) -> None:
     settings = get_settings()
@@ -30,11 +36,12 @@ async def ingest(directory: str) -> None:
     try:
         async with session_scope(factory) as session:
             report = await Ingestor(session, PgVectorStore(session), embeddings).ingest_directory(
-                Path(directory)
+                Path(directory), exclude=CORPUS_EXCLUDE
             )
         print(
             f"ingested {report.documents_ingested} documents "
-            f"({report.documents_skipped} unchanged), {report.chunks_created} chunks"
+            f"({report.documents_skipped} unchanged, {report.documents_excluded} excluded: "
+            f"{', '.join(CORPUS_EXCLUDE)}), {report.chunks_created} chunks"
         )
     finally:
         await engine.dispose()
