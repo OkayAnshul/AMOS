@@ -29,7 +29,7 @@ Alongside the component measurements that already existed:
 | What | Command | Result |
 |---|---|---|
 | End-to-end goals | `make eval` | **9/9 deterministic**, refusal 2/2, groundedness 1.00 (measured 2026-09-13) |
-| Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 — *measured at V0.5 on 12 questions; the set is now 16 and has not been re-run* |
+| Retrieval | `make retrieval` | **recall@5 100% (16/16), recall@1 62.5%, MRR 0.771 — 850 chunks, re-measured 2026-11-19** on the 16-question set. V0.5: recall@1 91.7%, MRR 0.958 on 12 questions / 300 chunks — not one series. Labels deliberately not widened; see `docs/10-rag-architecture.md` |
 | Routing | `make routing` | **13/15 (86.7%)** — re-measured 2026-09-14 on the enlarged set. Both misses are V1.2's lookup-then-compute cases; see `engineering/experiments-log.md` |
 | Tests | `make test` | 567 passing (569 collected; 2 live, opt-in) |
 

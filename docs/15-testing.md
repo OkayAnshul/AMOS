@@ -85,6 +85,15 @@ present**, which enforces N-14 rather than documenting it. Evaluation tests ship
 but deliberately do **not** run in CI: they cost real Gemini calls against a 20-per-day quota,
 so per-push runs would exhaust the day's budget on the first few commits.
 
+**Tests got their own database at V1.5** — `amos_test`, created and migrated (`alembic upgrade
+head`) by `tests/integration/conftest.py` on first use; `AMOS_TEST_DATABASE_URL` overrides it. They
+used to share `amos` with the demo, and rollback isolation is not free: every rolled-back insert
+leaves a dead index entry, which is how an empty `chunks` table came to carry a 78 MB vector index
+and how one test came to pass or fail depending on the planner (`engineering/experiments-log.md`,
+2026-11-19). **A test that asserts exact results must not run on an approximate index** — the
+pgvector similarity test now disables index scans, and a separate test asserts the index serves
+the store's query.
+
 ## Not yet
 
 Coverage measurement, property-based testing, load testing. No contract-test or API-snapshot

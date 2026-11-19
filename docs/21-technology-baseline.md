@@ -76,8 +76,10 @@ The **daily** embedding limit was the fifth shape, found the hard way on 2026-09
 corpus rebuild ran into it partway, and because the API still attaches a short `retryDelay`, the
 retry loop waited out a limit that could not reset before the next day. Ingestion commits per
 document since that date, so a rebuild that hits it keeps what it finished and resumes tomorrow.
-The planning consequence: the corpus is now ~1070 chunks, more than one day of this limit if it
-counts contents, so **a full rebuild on the free tier takes two days**.
+The planning consequence, decided at V1.5: the corpus excludes `docs/build-along/` so that a full
+rebuild is 850 chunks and fits one day (all of `docs/` is 1108); a unit test fails if it outgrows the
+day. And since V1.5 a 429 whose `quotaId` says `PerDay` fails at once rather than sleeping through
+its retries (`amos.llm.quota`).
 
 Three consequences that shaped the code:
 

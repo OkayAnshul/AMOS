@@ -96,14 +96,30 @@ pass with nothing running**, the other 72 skipping themselves.
 
 Optional infrastructure is what keeps "every milestone is runnable" true after V0.3.
 
-## Backups
+## Backups (V1.5)
 
 ```bash
-podman exec amos-postgres pg_dump -U amos amos > backup.sql
+make backup          # backups/amos-<timestamp>.dump — pg_dump -Fc, run inside the container
+make restore-drill   # newest dump -> scratch DB amos_drill; vector probe; row counts vs amos; drop
+make restore FILE=backups/amos-<timestamp>.dump   # DESTRUCTIVE, typed confirmation
 ```
 
-Not automated, and no restore drill has been performed — so this is a documented command, not a
-backup strategy, and should not be described as one.
+`pg_dump` runs **inside** the container (`podman exec`): the host has no Postgres client, and a
+client inside the image always matches the server's version. Custom format (`-Fc`) so `pg_restore`
+can restore into a database other than the one dumped
+([pg_restore](https://www.postgresql.org/docs/18/app-pgrestore.html)).
+
+**The drill never touches `amos`.** It restores into `amos_drill`, runs a vector search there,
+prints every table's row count beside the live one, and drops the copy. This project destroyed its
+own database once with a reversibility check (`alembic downgrade base`, 2026-09-13); a drill that
+can only damage a scratch copy is one that actually gets run.
+
+What it is worth: the corpus costs a day of embedding quota to rebuild and seconds to restore. Back
+up after every ingest.
+
+**Still not a backup strategy:** manual, no schedule, no retention, no off-machine copy, and the
+drill restores the newest dump into the same schema minutes after taking it. `backups/` is
+gitignored — the dumps hold API key hashes and memories.
 
 ## Not done, and not claimed
 

@@ -83,8 +83,10 @@ Three guards:
 3. **MRR was the honest signal throughout** — 0.917 at k=1, i.e. the right document was almost
    always rank 1, while single-label recall said 50%.
 
-If pressed: the defensible claim is "recall@5 = 100% on a 12-question set, MRR 0.958", with the
-caveats that the set is small and was written by the same person as the corpus.
+If pressed: the defensible claim is "recall@5 = 100% on a 16-question set over 850 chunks, recall@1
+62.5%, MRR 0.771" (re-measured at V1.5; V0.5's 0.958 was a smaller corpus and set), with the
+caveats that the set is small, was written by the same person as the corpus, and has labels older
+than half the documents it is scored against.
 
 ### Why recall@k first rather than an answer-quality metric?
 

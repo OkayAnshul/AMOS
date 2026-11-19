@@ -38,7 +38,7 @@ demo does not go on a resume.**
 | Word | Requires | Currently |
 |---|---|---|
 | "multi-agent" | ≥2 genuinely specialised agents collaborating | ✅ **earned at V0.7** — disjoint tool allowlists, enforced structurally |
-| "RAG" | a real pipeline with measured retrieval quality | ✅ **earned at V0.5** — recall@5 100%, recall@1 91.7%, MRR 0.958 on a 12-question golden set |
+| "RAG" | a real pipeline with measured retrieval quality | ✅ **earned at V0.5** — recall@5 100%, recall@1 91.7%, MRR 0.958 on a 12-question golden set; **re-measured at V1.5**: recall@5 100%, recall@1 62.5%, MRR 0.771 on 16 questions / 850 chunks |
 | "autonomous" | the system decides, not a human | ✅ **earned at V0.2** — the model selects tools and the loop executes them without a human in it |
 | "distributed system" | actually distributed — AMOS is a modular monolith | ❌ never, per ADR-004 |
 | "production" | deployed, monitored, used by someone | ❌ not deployed |
@@ -316,7 +316,11 @@ measures recall@k and MRR against a golden set.
 - `src/amos/rag/retrieval.py` — retrieval as a Tool; refusal instruction on empty results
 - `src/amos/rag/evaluation.py` — recall@k, strict recall, MRR, golden set
 
-**Measured (28 documents, 300 chunks, 12 questions):**
+**Re-measured at V1.5 (2026-11-19; 41 documents, 850 chunks, 16 questions):** recall@5 100% (16/16),
+strict 87.5%, recall@1 62.5% (10/16), MRR 0.771. Not comparable with the table below — a larger,
+rewritten corpus and four new questions; the misses are read one by one in `docs/10-rag-architecture.md`.
+
+**Measured at V0.5 (28 documents, 300 chunks, 12 questions):**
 
 | k | recall (any valid source) | strict (primary only) | MRR |
 |---|---|---|---|
@@ -350,14 +354,14 @@ the model could ignore before answering from memory.
 > Built a retrieval pipeline over PostgreSQL/pgvector with heading-aware chunking, dimension-
 > truncated re-normalised embeddings, content-hash deduplication and citation-grounded answers;
 > measured retrieval quality with a golden-set harness reporting recall@k and MRR (recall@5 100%,
-> MRR 0.958 on a 12-question set).
+> recall@1 62.5%, MRR 0.771 on a 16-question set over 850 chunks).
 
 **What this does NOT demonstrate:** vector-only — **no hybrid search, no reranking, no query
 rewriting**. No groundedness metric: recall@k measures whether the right passage was retrieved,
 not whether the answer was faithful to it. Chunk size was reasoned, not swept. The golden set is
 **12 questions written by the same person as the corpus**, and ground truth was widened after
 seeing initial results — both the strict and lenient figures are reported for that reason. Corpus
-is 300 chunks; nothing here is evidence of behaviour at scale.
+is 850 chunks; nothing here is evidence of behaviour at scale.
 
 
 ---
