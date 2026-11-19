@@ -7,8 +7,9 @@ help:
 test:  ## Run the test suite (database tests skip if none is running)
 	.venv/bin/python -m pytest -q
 
-lint:  ## Ruff
+lint:  ## Ruff: lint and format check, as CI runs them
 	.venv/bin/ruff check src tests
+	.venv/bin/ruff format --check src tests
 
 fmt:  ## Format
 	.venv/bin/ruff format src tests

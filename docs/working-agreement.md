@@ -57,8 +57,8 @@ module's questions in `docs/interview/<module>.md` unaided.
 ## Session protocol
 
 **Start**: read this file → `engineering/current-state.md` → latest `session-log.md` entry →
-relevant docs → `git status` and `git log` → identify the exact next step → verify the current
-system actually runs before trusting that it does.
+relevant docs → `git status` and `git log` → `gh run list` (is `main`'s CI green?) → identify the
+exact next step → verify the current system actually runs before trusting that it does.
 
 **End**: run tests → run lint/typecheck → verify the app starts → review the diff → update
 `current-state.md`, `session-log.md`, `learning-log.md`, `decisions-log.md` if needed → record

@@ -121,8 +121,7 @@ class Ingestor:
         # Scoped to the system corpus (user_id NULL), never a user's upload.
         replaced = await self._session.execute(
             sql_text(
-                "DELETE FROM documents"
-                " WHERE source = :source AND user_id IS NULL AND id <> :id"
+                "DELETE FROM documents WHERE source = :source AND user_id IS NULL AND id <> :id"
             ),
             {"source": source, "id": str(document_id)},
         )

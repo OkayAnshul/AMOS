@@ -98,7 +98,7 @@ regression against it. Only deterministic rates gate; the judged score is contex
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`main`, at `v1.5.0`. No open feature branch. The next one is `feat/v1.6-provider`.
+`main`, at `v1.5.1` (v1.5.0 plus a CI fix: `bugs-log.md`, 2026-11-19). No open feature branch. The next one is `feat/v1.6-provider`.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -115,6 +115,10 @@ choosing between an exact scan and the HNSW index — and the test fixed (`bugs-
 the lesson it taught.
 
 ## Technical Debt
+- **SQLAlchemy is capped below 2.1.** 2.1 changed `Select`'s typing (four errors in
+  `database/repository.py`); the upgrade is unrun and the database tests have never run on it.
+  Other dependencies are still floor-only, so CI can drift from `.venv` again — check the last CI run
+  at session start (`gh run list`).
 - `steps` is one row per run; the schema supports one per task attempt.
 - `compose.yaml` **verified on podman only**; the Docker path is untested and labelled as such.
 - **Backups are manual** (V1.5): `make backup` and a passing drill, but no schedule, no retention,
