@@ -712,3 +712,25 @@ version. Uploads (`user_id` set) are never touched.
 **Lesson:** a uniqueness constraint states what the schema thinks a document *is*. `content_hash`
 says "a document is its text"; the ingest needed "a document is its path".
 **Test added:** `test_a_changed_file_replaces_its_old_version` (verified to fail without the fix).
+
+---
+
+## 2026-11-19 — `main`'s CI was red for a day, and `make check` was not what CI runs
+**Milestone:** found closing V1.5
+**Symptom:** the CI run for Session 16's merge failed at **Types**; nobody looked. V1.5's own push
+would then have failed at **Format**.
+**Expected:** `make check` ("Everything CI runs") green locally means CI green.
+**Root cause (two):**
+1. `pyproject.toml` floors dependencies and never caps them, so CI resolved **SQLAlchemy 2.1.9**
+   while the local `.venv` has 2.0.52. 2.1 changed `Select`'s generic parameters, and four
+   annotations in `database/repository.py` stopped type-checking. The database tests never ran on
+   2.1 — the job stopped at Types.
+2. CI runs `ruff format --check`; `make lint` did not. A line V1.5 added was unformatted.
+**Fix:** `sqlalchemy[asyncio]>=2.0.36,<2.1` — the tested version, with the upgrade recorded as debt;
+`make lint` now runs the format check. Verified with CI's own tool versions (ruff 0.17.5, mypy 2.4.1).
+Released as v1.5.1 rather than re-tagging v1.5.0.
+**How it was found:** `gh run list` after the V1.5 push, which showed the previous run's ✗.
+**Lesson:** a floor-only dependency spec means CI and the laptop run different software, and the
+difference shows up on someone else's schedule. And "CI exists" is not "CI is watched": checking the
+last run belongs in the session protocol's start, beside `make check`.
+**Test added:** none — the gate is CI itself; `make lint` now matches it.
