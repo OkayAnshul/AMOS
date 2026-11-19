@@ -39,3 +39,6 @@ data/
 /.zshrc
 /.idea
 /.vscode
+
+# Database dumps (make backup). Local only: they hold API key hashes and memories.
+backups/

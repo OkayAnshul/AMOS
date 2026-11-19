@@ -40,6 +40,7 @@ from amos.errors import (
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
+from amos.llm.quota import quota_scope
 from amos.observability import log_event
 
 logger = logging.getLogger(__name__)
@@ -54,11 +55,11 @@ MAX_INPUT_TOKENS = 2048
 TASK_DOCUMENT = "RETRIEVAL_DOCUMENT"
 TASK_QUERY = "RETRIEVAL_QUERY"
 
-#: The embedding free tier is a PER-MINUTE quota (measured: 100), unlike
-#: generateContent's per-day one — and it counts *contents*, not HTTP requests.
-#: A batch of 50 texts consumes 50 units, so batching reduces round trips but not
-#: quota. Because the window is a minute rather than a day, waiting is a real
-#: strategy here: a rate-limited ingest finishes late instead of failing.
+#: The embedding free tier has TWO limits, both counting *contents*, not HTTP
+#: requests: 100 per minute and 1000 per day (both measured). A batch of 50 texts
+#: consumes 50 units, so batching reduces round trips but not quota. Waiting is a
+#: real strategy for the per-minute limit only; `_embed` tells them apart by the
+#: violated quota's id (`amos.llm.quota`).
 _RETRY_DELAY_PATTERN = re.compile(r"retry in (\d+(?:\.\d+)?)s")
 DEFAULT_MAX_RATE_LIMIT_RETRIES = 5
 #: ~25 contents per 16s stays under 100/min with headroom.
@@ -147,23 +148,22 @@ class GeminiEmbeddings:
         return (await self._embed([text], TASK_QUERY))[0]
 
     async def _embed(self, texts: list[str], task_type: str) -> list[list[float]]:
-        """One request, waiting out rate limits.
+        """One request, waiting out the per-minute limit and only that one.
 
-        There are **two** embedding limits, and this only handles one of them.
-        The per-minute limit (100 contents) resets quickly, and honouring the
-        API's `retryDelay` turns a failed ingest into a slower one. The **daily**
-        limit (1000 a day, hit on 2026-09-14) does not reset until tomorrow —
-        but the API attaches a `retryDelay` to that too, so this loop sleeps
-        through every retry and then raises anyway.
-
-        An earlier version of this docstring said the embedding limit "resets
-        every minute". It was generalised from one measured shape. Failing fast
-        on a `PerDay` quotaId is the real fix, and is not built.
+        There are **two** embedding limits. The per-minute one (100 contents)
+        resets quickly, and honouring the API's `retryDelay` turns a failed
+        ingest into a slower one. The daily one (1000) resets at midnight
+        Pacific — but the API attaches a `retryDelay` to it too, so a retry
+        loop that trusts the delay sleeps through every attempt and then fails
+        anyway (2026-09-14). A 429 whose quota id says `PerDay` is re-raised at
+        once.
         """
         for attempt in range(self._max_rate_limit_retries + 1):
             try:
                 return await self._embed_once(texts, task_type)
             except ProviderRateLimitError as exc:
+                if exc.details.get("quota_scope") == "day":
+                    raise
                 if attempt == self._max_rate_limit_retries:
                     raise
                 delay = _retry_delay_from(str(exc))
@@ -194,7 +194,11 @@ class GeminiEmbeddings:
         except genai_errors.ClientError as exc:
             status = getattr(exc, "code", None)
             if status == 429:
-                raise ProviderRateLimitError(f"Embedding quota exceeded. {exc}") from exc
+                scope = quota_scope(exc.details)
+                raise ProviderRateLimitError(
+                    f"Embedding quota exceeded ({scope or 'unknown'} limit). {exc}",
+                    details={"status": status, "quota_scope": scope},
+                ) from exc
             if status in (401, 403):
                 raise ProviderAuthError("Embedding API rejected the key") from exc
             raise ProviderError(f"Embedding client error: {exc}") from exc

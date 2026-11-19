@@ -506,3 +506,49 @@ gates every push. `README.md` keeps saying AMOS was built with an AI pair-progra
 a habit, which is the project's own rule for anything that matters.
 *Open:* commits before 2026-11-19 still contain the old instruction file and three messages that
 name it. Removing them means another history rewrite and force-push — Anshul's decision, not made.
+
+---
+
+## 2026-11-19 — V1.5: three decisions, made before the code
+
+**A quota error carries its scope, read from `quotaId`.** A 429 from Gemini is classified `day` or
+`minute` from `error.details[].violations[].quotaId` (Google's `QuotaFailure`), and the embedding
+retry re-raises at once on `day`.
+*Why:* the API attaches a `retryDelay` to both limits, so the delay cannot tell them apart; the
+quota's name can. Waiting out a daily limit cost the 2026-09-14 rebuild its last minutes for nothing.
+*Rejected:* parsing the human-readable message — it is prose, and the structured field exists.
+*Reconsider if:* Google renames quota ids without `PerDay` / `PerMinute` in them; the classifier
+returns `None` then, which keeps today's behaviour (wait and retry) rather than guessing.
+
+**~~Vector searches run with `hnsw.iterative_scan = strict_order`~~ — rejected the same day, by
+measurement.** Logged before the code as the planned fix for the intermittent similarity test; the
+reproduction then showed it fixes nothing here (`experiments-log.md`, 2026-11-19). On a **fresh**
+HNSW index, dead rows near the query made a `LIMIT 2` search return 1 of 2 live rows in every
+mode — off, `relaxed_order`, `strict_order`. The intermittency was the planner: a small table with
+fresh statistics gets an exact sequential scan; stale statistics get the approximate index.
+*Kept as a record because* a decision written down and then disproved is worth more than one quietly
+dropped.
+
+**Local tests get their own database, `amos_test`, created and migrated on first use.**
+*Why:* the tests and the demo shared `amos`. Months of rolled-back test inserts left the demo's
+vector index at 78 MB with zero rows, and `db_factory` tests that commit for real leak rows into it
+— a dead-lettered run from a failed test has already shown up in `GET /v1/runs/dead-letter`, which
+V1.9 puts on a panel in front of an audience.
+*And the test itself is corrected:* it asserted exact results from an approximate index. The
+semantic checks (operator, score, ordering, source join) now run on an exact scan; a second test
+asserts the planner uses `idx_chunks_embedding` for the store's query — the regression the original
+docstring actually feared (a wrong operator silently falls back to a sequential scan).
+*Rejected:* `VACUUM` before the test — hides the symptom, keeps the wrong assertion.
+*Reconsider if:* CI and local diverge — CI already gets a fresh database per run.
+
+**The corpus is `docs/` without `docs/build-along/`.** 850 chunks (677 top-level + 173 interview),
+which fits one day's embedding quota (1000); all 1108 do not.
+*Why build-along goes:* it is a build-it-yourself guide that restates each milestone's contract, and
+no golden question names it as a source.
+*Why interview stays — a correction made the same day:* the first version of this entry excluded
+`docs/interview/` too, claiming it competed with the sources the golden sets expect. Reading the set
+showed the opposite: six retrieval questions **accept** an interview document as a correct answer,
+and the V0.5 corpus the numbers were measured on included them.
+*Not claimed:* comparability with the old figures. The top-level docs alone grew from the old corpus's
+300 chunks to 677, so the re-measured numbers start a new series whatever is excluded.
+*Reconsider if:* a demo question needs the build-along material.

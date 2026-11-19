@@ -363,7 +363,14 @@ async def test_partially_completed_run_is_not_recorded_as_success(
 async def test_pgvector_stores_and_retrieves_by_similarity(
     db_session: AsyncSession,
 ) -> None:
-    """The real index path: 1536-dim vectors through pgvector's cosine operator."""
+    """1536-dim vectors through pgvector's cosine operator, on an **exact** scan.
+
+    This asserts exact results — both rows, in order, with exact scores — so it
+    must not run on the approximate HNSW index. It used to, whenever the
+    planner's statistics said the table was large, and then failed whenever the
+    index's graph could not reach the second row (bugs-log, 2026-11-19). That
+    the index serves this query is a separate test, below.
+    """
     import uuid as _uuid
 
     from sqlalchemy import text as _text
@@ -392,12 +399,40 @@ async def test_pgvector_stores_and_retrieves_by_similarity(
         ]
     )
 
+    await db_session.execute(_text("SET LOCAL enable_indexscan = off"))
     hits = await store.search(a, limit=2)
     assert len(hits) == 2
     assert hits[0].content == "about vectors"
     assert hits[0].score > hits[1].score
     assert hits[0].score == pytest.approx(1.0, abs=1e-4)
     assert hits[0].source == "test.md"
+
+
+async def test_the_store_search_is_served_by_the_hnsw_index(db_session: AsyncSession) -> None:
+    """The regression the HNSW index invites: a query it cannot serve.
+
+    An index built with `vector_cosine_ops` serves only `<=>`. Any other
+    operator still returns correct rows — through a sequential scan, silently,
+    at a cost that only shows on a large corpus. Disabling sequential scans and
+    sorts stands in for "the table is large", since the test's table is not: the
+    HNSW index is then the only way left to produce the ordering, so the plan
+    names it if and only if the index can serve the query.
+    """
+    import json
+
+    from sqlalchemy import text as _text
+
+    from amos.rag.embeddings import normalise
+    from amos.rag.store import SEARCH_SQL, _to_pgvector
+
+    await db_session.execute(_text("SET LOCAL enable_seqscan = off"))
+    await db_session.execute(_text("SET LOCAL enable_sort = off"))
+    result = await db_session.execute(
+        _text("EXPLAIN (FORMAT JSON) " + SEARCH_SQL),
+        {"embedding": _to_pgvector(normalise([1.0] + [0.0] * 1535)), "limit": 5},
+    )
+    plan = result.scalar_one()
+    assert "idx_chunks_embedding" in (plan if isinstance(plan, str) else json.dumps(plan))
 
 
 async def test_pgvector_min_score_filters(db_session: AsyncSession) -> None:

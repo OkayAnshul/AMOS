@@ -523,12 +523,11 @@ unaided. Authorization, TLS and rate limiting stay out — localhost, one presen
 
 ```
 V1.5 foundation ─→ V1.6 provider ─→ V1.7 web research ─→ V1.8 complex goals ─→ V1.9 web page ─→ V2.0 demo
-   (corpus rebuild runs across two days in the background of V1.6)
 ```
 
 | Milestone | Effort | ADR | Interview doc |
 |---|---|---|---|
-| V1.5 Demo-ready foundation | 1 session + 2 calendar days (embedding quota) | — | `operations.md` |
+| V1.5 Demo-ready foundation ✅ | 1 session (was: + 2 calendar days) | — | `operations.md` |
 | V1.6 Second LLM provider | ½ session | ADR-014 | `providers.md` |
 | V1.7 Web research | 1 session | ADR-015, ADR-016 | `web-research.md` |
 | V1.8 Complex goals | 1 session | ADR-017 | `synthesis.md` |
@@ -540,17 +539,21 @@ Every milestone: feature branch → ADR committed before code → tests on `Fake
 recorded fixtures (no network) → `make check` → `make attribution-check` → merge → `make release`
 → push.
 
-### V1.5 — Demo-ready foundation
+### V1.5 — Demo-ready foundation ✅ (2026-11-19)
 **Objective** Nothing in the demo fails for a reason already known.
-- The embedding retry fails fast on a `PerDay` `quotaId` instead of sleeping through it
-  (`bugs-log.md`, 2026-09-14).
-- `make backup` and `make restore`, and **one restore drill actually run** and recorded.
-- The pgvector similarity test that fails until `VACUUM` (`bugs-log.md`, 2026-11-19): reproduce
-  deliberately, then fix at the cause — `hnsw.iterative_scan` (pgvector ≥ 0.8) is the candidate —
-  or record a test-side workaround as exactly that.
-- Corpus rebuilt (`make ingest` on two consecutive days), then `make retrieval` and
-  `make eval-baseline` re-run and every figure that cites them updated.
-**Accept** suite green twice in a row · restore drill in `experiments-log.md` · figures current.
+- ✅ A 429 is classified `day` / `minute` from its `quotaId`; the embedding retry fails fast on a
+  daily limit; generation errors carry the scope for V1.9 to show.
+- ✅ `make backup`, `make restore-drill` (scratch database, never `amos`), `make restore`.
+- ✅ The pgvector test: **reproduced and explained** — the planner switching between an exact scan
+  and the HNSW index. `hnsw.iterative_scan`, the planned fix, was **measured and rejected**. The test
+  now asserts exact results on an exact scan, a new test asserts the index serves the query, and
+  tests run in their own database (`amos_test`).
+- ✅ Corpus rebuilt in **one** day, not two: `docs/build-along/` excluded (850 chunks of a 1000/day
+  quota). `make retrieval` and `make eval-baseline` re-run; figures updated.
+- ✅ Found on the way: an edited document was indexed twice on re-ingest. Fixed.
+**Accept** suite green twice in a row ✅ · restore drill in `experiments-log.md` · figures current ✅.
+**Changed from the plan, and why:** the two-day rebuild became one day, by scoping the corpus;
+`iterative_scan` became a separate test database, by measurement. Both in `decisions-log.md`.
 
 ### V1.6 — A second LLM provider
 **Objective** Enough daily model calls for a multi-query demo. `gemini-3.5-flash` allows 20 a day
@@ -561,6 +564,10 @@ and one goal costs 3–8.
   ADR time, and verify structured-output support for the chosen model.
 - `AMOS_LLM_PROVIDER=gemini|groq`; embeddings stay on Gemini (one call per query once ingested).
 - One contract-test suite that both providers pass, on recorded fixtures.
+- **Transient provider errors are retried, once, in one place** (found at V1.5): two of nine eval goals
+  failed on a Gemini `503 UNAVAILABLE — high demand`, raised from a call outside the task executor,
+  so no retry ever saw it and the whole run failed. A bounded retry with jitter for 5xx only (never a
+  429), as a wrapper over `LLMProvider` so Gemini and Groq share it, covered by the contract suite.
 - `make eval` and `make routing` re-run on the new provider and recorded **separately** — numbers
   from different models are not one series.
 **Reconsider if** the free tier changes, or eval accuracy drops below Gemini's on the same set.

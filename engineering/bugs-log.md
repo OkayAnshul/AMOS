@@ -652,15 +652,18 @@ embedding limits**: 100 contents per minute, which waiting fixes, and a **daily 
 so it almost certainly counts contents — which it does not. The API attaches a `retryDelay` (here `57s`) to *both*, and `_retry_delay_from`
 honours whatever it is given — so on daily exhaustion the loop sleeps through every retry and then
 raises anyway.
-**Fix:** **not built.** The docstring is corrected so it no longer asserts something false. The
-real fix is to read `quotaId` from the error and fail fast on a `PerDay` limit; recorded as
-technical debt in `current-state.md`.
+**Fix:** **built in V1.5 (2026-11-19).** `amos.llm.quota.quota_scope` reads
+`error.details[].violations[].quotaId` and classifies a 429 as `day` or `minute`; `GeminiEmbeddings._embed`
+re-raises at once on `day`. Generation errors carry the same scope. (Until then: docstring corrected
+only, recorded as technical debt.)
 **How it was found:** reading the traceback of the failed rebuild against the docstring above it.
 **Lesson:** a comment that explains *why* a retry is safe is a claim about someone else's API, and
 it goes stale silently. This one was written after measuring the per-minute limit and generalised
 to "the" embedding limit — the same mistake as the four quota shapes before it, where each document
 learned one shape and wrote it down as *the* shape.
-**Test added:** none, since nothing was fixed.
+**Test added (V1.5):** `tests/unit/test_quota.py` — on recorded 429 bodies,
+`test_a_daily_limit_fails_on_the_first_attempt_without_sleeping` (verified to fail with the fix
+removed) and `test_a_per_minute_limit_is_still_waited_out`.
 
 ---
 
@@ -670,17 +673,42 @@ learned one shape and wrote it down as *the* shape.
 runs: `assert len(hits) == 2` got 1. The `chunks` table was empty apart from the test's own two
 uncommitted rows; the HNSW index on `chunks.embedding` was 8.4 MB.
 **Expected:** two rows in, two hits out (`LIMIT 2`).
-**Root cause:** **not established.** Hypothesis: dead index entries from months of rolled-back
+**Root cause (established 2026-11-19, V1.5 — `experiments-log.md`):** the test asserted exact
+results from an approximate index, and the planner chose between the two. With fresh statistics a
+small table gets an exact sequential scan and the test passes; with stale ones it gets the HNSW index,
+whose graph — bloated by months of rolled-back test inserts into the *demo's* database — could not
+reach the second row. `iterative_scan`, the candidate fix, was measured and recovers nothing.
+`VACUUM` "fixed" it by repairing the graph *and* refreshing statistics.
+
+*The original entry's hypothesis, kept:* dead index entries from months of rolled-back
 test inserts crowd the search's candidate list (`hnsw.ef_search = 40`), so the live second row
 falls outside it. Consistent with the evidence — `VACUUM chunks` made the test pass at once — but a
 deliberate reproduction (80 identical, then 150 distinct near-duplicate rolled-back vectors) did
 **not** bring the failure back. Identical vectors share one graph element in pgvector, which
 explains the first attempt and not the second. Same test as the "unexplained" failure of Session 15.
-**Fix:** none in code. `VACUUM chunks` cleared it. V1.5 must reproduce it before choosing between
-`hnsw.iterative_scan` (pgvector ≥ 0.8, the production-relevant fix, since re-ingesting also leaves
-dead entries) and a test-side `VACUUM`.
+**Fix (V1.5):** the exact-result test runs with index scans disabled; a new test asserts the HNSW
+index serves the store's query (it fails if the operator is changed to `<->`); and tests use their
+own database, `amos_test`, created and migrated on first use.
 **How it was found:** the session protocol's "verify it runs before trusting it" — the full suite,
 once Postgres was up.
 **Lesson:** a fix that works is not a cause that is known. Writing "VACUUM fixed it, reproduction
 failed" is less satisfying than a story and more useful than a wrong one.
-**Test added:** none yet.
+**Test added:** `test_the_store_search_is_served_by_the_hnsw_index`; the suite ran green twice in a
+row afterwards.
+
+---
+
+## 2026-11-19 — Re-ingesting an edited document indexed it twice
+**Milestone:** V0.5, found while planning V1.5's corpus rebuild
+**Symptom:** none seen yet — found by reading, before it could show up in front of an audience.
+**Expected:** editing `docs/x.md` and running `make ingest` replaces what the corpus knows about it.
+**Root cause:** `documents` is unique on `content_hash`, not on `source`. An edited file has a new
+hash, so it was inserted as a *new* document, and the old version's chunks stayed retrievable beside
+it — the corpus would answer with both the old and new text of the same file.
+**Fix:** `Ingestor.ingest_text` deletes earlier system-corpus versions of the same `source` in the
+same transaction as the new insert (chunks follow by FK cascade), so a failed embed keeps the old
+version. Uploads (`user_id` set) are never touched.
+**How it was found:** asking what happens to this session's own doc edits on the next ingest.
+**Lesson:** a uniqueness constraint states what the schema thinks a document *is*. `content_hash`
+says "a document is its text"; the ingest needed "a document is its path".
+**Test added:** `test_a_changed_file_replaces_its_old_version` (verified to fail without the fix).

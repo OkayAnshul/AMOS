@@ -14,22 +14,40 @@ Markdown → heading-aware chunking → content hash → embed (1536d, re-normal
 
 ## Measured results
 
-Corpus: AMOS's own `docs/` — **28 documents, 300 chunks**.
+### Current: the V1.5 rebuild (2026-11-19)
 
-**The corpus is a snapshot, and `make ingest` no longer reproduces it.** What is indexed is the
-24 numbered documents plus the four interview documents that existed at V0.5 — `agents`,
-`foundation`, `orchestration`, `persistence`. `docs/` now holds **48** markdown files, because six
-more interview documents and twelve build-along documents were added afterwards and ingestion
-recurses, so a fresh run would index **48 documents, ~906 chunks**.
+Corpus: `docs/` **minus `docs/build-along/`** (`amos.rag.cli.CORPUS_EXCLUDE`) — **41 documents, 850
+chunks**, ingested in one run of 9m39s. The exclusion keeps a full rebuild inside one day's embedding
+quota (1000 contents); all of `docs/` is 1108 chunks. A unit test fails if `docs/` outgrows the day.
+Golden set: **16 questions** (12 from V0.5, 4 harder ones from V1.2), labels unchanged.
 
-Two things are stale, not one. The *count* is stale, and so is the **content**: several indexed
-documents have been substantially rewritten since (`05-data-model.md` and `06-api-specification.md`
-in the 2026-09-13 audit, and `23-glossary.md` was a nine-line stub when it was embedded).
+| k | recall@k (any valid source) | strict (primary source only) | MRR |
+|---|---|---|---|
+| 1 | **62.5%** (10/16) | — | — |
+| 5 | **100%** (16/16) | 87.5% (14/16) | **0.771** |
 
-The corpus has deliberately **not** been rebuilt. Every retrieval number below was measured against
-these 300 chunks, and re-ingesting would invalidate all of them while spending roughly ten minutes
-of embedding quota. Re-measure and re-record together, or not at all — and when you do, the
-baseline in `engineering/eval-baseline.json` becomes incomparable too, which it will say.
+**Not comparable with the V0.5 table below**, and not presented as a regression or an improvement:
+the corpus is 2.8× larger, most of its documents were rewritten or added since, and four of the
+questions are new. What the six rank-1 misses retrieved first, read by hand:
+
+| Question | First hit | Answers it? |
+|---|---|---|
+| What happens to remaining work when a step fails permanently? | `interview/reliability.md` | yes — not labelled |
+| How is a duplicate submission handled? | `23-glossary.md` | yes — a stub when labelled |
+| Why is there no authentication yet? | `06-api-specification.md` | **the question is false since V1.4** |
+| What kinds of memory does the system distinguish? | `09-memory-architecture.md` | yes — not labelled |
+| What keeps two workers from picking up the same work? | `25-build-journal.md` | partly — added after V0.5 |
+| How large are the pieces a document is split into? | `interview/rag.md` | yes — not labelled |
+
+The labels are **deliberately not widened** after seeing these results — the rule this document
+states below. Most misses are documents that answer the question and did not exist, or were stubs,
+when the labels were written; one question is out of date. Both are arguments for an
+independently authored set, not for editing this one until the number recovers.
+
+### Historical: V0.5 (2026-09-05)
+
+Corpus: AMOS's own `docs/` at the time — **28 documents, 300 chunks**: the 24 numbered documents
+plus the four interview documents that existed then. Destroyed with the database on 2026-09-13.
 Golden set: **12 questions**, phrased as a user would ask, not copied from the target passages.
 
 | k | recall@k (any valid source) | strict (primary source only) | MRR |
@@ -123,12 +141,25 @@ CREATE INDEX idx_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_
 ```
 
 The query **must** use the matching `<=>` operator, or Postgres silently falls back to a
-sequential scan — fast enough at 300 chunks to hide the mistake entirely.
+sequential scan — fast enough at a few hundred chunks to hide the mistake entirely. Since V1.5 a
+test asserts the index serves the store's query (`test_the_store_search_is_served_by_the_hnsw_index`).
+
+**HNSW is approximate, and whether a query uses it is the planner's call.** On a small table with
+fresh statistics Postgres picks an exact sequential scan; otherwise the index. A test that asserted
+exact results passed or failed depending on which — for two months (`engineering/experiments-log.md`,
+2026-11-19). `hnsw.iterative_scan` was measured and did not help; exact-result tests now disable
+index scans, and tests run in their own database so the demo's index does not collect their dead
+entries.
 
 `documents.content_hash` is UNIQUE, so re-ingesting unchanged content is a no-op. Verified:
 a second `ingest docs` reports `0 documents (28 unchanged)`. Without it, ingesting twice doubles
 the corpus and retrieval starts returning duplicates — which presents as a relevance problem and
 is a bookkeeping one.
+
+**A changed file replaces its old version** (V1.5). Uniqueness on the hash alone meant an edited
+document was inserted as a *new* one, with the old version's chunks still retrievable beside it. The
+new version now deletes earlier system-corpus versions of the same `source` in the same transaction
+as its insert, so a failed embed keeps the old one.
 
 **Index timing:** at this corpus size it does not matter, but on a large corpus build the HNSW
 index *after* loading. Inserting into an existing HNSW index is markedly slower than building one
@@ -158,13 +189,13 @@ the documentation does not define one, and grounded that in what the docs *do* s
 
 ## Operational limits
 
-The embedding free tier is a **per-minute** quota — measured at **100**, and it counts *contents*
-rather than HTTP requests, so a batch of 50 texts consumes 50 units. Unlike `generateContent`'s
-daily quota, waiting is a real strategy: ingestion paces batches and honours the API's own
-`retryDelay` on a 429, turning a failed ingest into a slower one.
+The embedding free tier has **two** limits, both counting *contents* rather than HTTP requests (a
+batch of 50 texts consumes 50 units): **100 a minute** and **1000 a day**, both measured. Waiting
+fixes only the first. Ingestion paces batches and honours the API's `retryDelay` on a per-minute
+429; since V1.5 a 429 whose `quotaId` says `PerDay` fails at once instead of sleeping through every
+retry (`amos.llm.quota`).
 
-Ingestion commits **per document**, so a rate-limited run keeps its progress rather than rolling
-back 300 chunks of work.
+Ingestion commits **per document**, so a rate-limited run keeps its progress and a rerun resumes.
 
 > **Correction, 2026-09-14:** the per-document transaction described here was **not in the code until 2026-09-14**. Ingestion ran the whole directory in one transaction for nine milestones; the pacing half of the fix hid it. A rebuild then failed and lost everything in exactly the way this section says cannot happen. See `engineering/bugs-log.md`.
 

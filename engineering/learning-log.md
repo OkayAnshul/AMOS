@@ -721,3 +721,35 @@ that says nothing about namespaces. `ps` showing a handful of processes was the 
 - Why does a rootless container runtime need to create a user namespace?
 - Why would `clone()` report `ENOSPC` when the disk has 240 GB free?
 **Status:** ⬜ Recognise
+
+### Same query, same rows, different answer: the planner and an approximate index (Session 17)
+The pgvector test passed or failed depending on whether Postgres chose a sequential scan (exact) or
+the HNSW index (approximate) — a choice made from table statistics that autovacuum refreshes. Then
+`hnsw.iterative_scan`, the documented fix for short results, was measured and recovered nothing,
+because the missing row was unreachable in the graph rather than filtered after the scan.
+**Read:** <https://www.postgresql.org/docs/18/using-explain.html> ·
+<https://github.com/pgvector/pgvector#iterative-index-scans>
+**Answer:**
+- Why would `ORDER BY embedding <=> :q LIMIT 2` use a sequential scan on one run and the HNSW index on
+  the next, with no code change?
+- What problem does iterative scan solve, and why didn't it solve this one?
+- Why does `EXPLAIN` with `enable_seqscan` *and* `enable_sort` off prove the index can serve a query?
+**Status:** ⬜ Recognise
+
+### Read the structured field, not the sentence (Session 17)
+A Gemini 429 carries a `retryDelay` whether the limit resets in a minute or tomorrow. What tells them
+apart is the violated quota's id in the `QuotaFailure` detail — `…PerDayPerProjectPerModel…`.
+**Read:** <https://github.com/googleapis/googleapis/blob/master/google/rpc/error_details.proto>
+**Answer:**
+- What are `QuotaFailure` and `RetryInfo`, and which one should decide whether to wait?
+- Why does `quota_scope` return `None` for an unknown id instead of guessing `minute`?
+**Status:** ⬜ Recognise
+
+### A unique constraint says what a thing *is* (Session 17)
+`documents` was unique on `content_hash`, so "a document is its text": an edited file became a second
+document, and the old text stayed retrievable. The ingest needed "a document is its path".
+**Read:** <https://www.postgresql.org/docs/18/ddl-constraints.html>
+**Answer:**
+- Why delete the old version in the *same* transaction as inserting the new one?
+- Why is the delete scoped to `user_id IS NULL`?
+**Status:** ⬜ Recognise

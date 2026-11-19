@@ -9,25 +9,38 @@ Isolation is by transaction rollback rather than truncation. Each test runs
 inside a transaction that is rolled back afterwards, so tests cannot see each
 other's rows and nothing needs cleaning up. It is also much faster than
 recreating a schema per test.
+
+**The tests have their own database, `amos_test`** (V1.5), created and migrated
+on first use. They used to share `amos` with the demo, and a rolled-back insert
+is not free: it leaves a dead entry in every index, which is how an empty
+`chunks` table came to carry a 78 MB vector index. Commit-for-real tests
+(`db_factory`) leaked rows into it as well.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import make_url
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 TEST_DATABASE_URL = os.getenv(
     "AMOS_TEST_DATABASE_URL",
-    "postgresql+asyncpg://amos:amos@localhost:5432/amos",
+    "postgresql+asyncpg://amos:amos@localhost:5432/amos_test",
 )
+#: The server's maintenance database: reachable before the test database exists.
+_ADMIN_URL = make_url(TEST_DATABASE_URL).set(database="postgres")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_prepared = False
 
 
 async def _database_reachable(attempts: int = 5, delay: float = 1.0) -> bool:
@@ -41,7 +54,7 @@ async def _database_reachable(attempts: int = 5, delay: float = 1.0) -> bool:
     as "no database".
     """
     for attempt in range(attempts):
-        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        engine = create_async_engine(_ADMIN_URL, poolclass=NullPool)
         try:
             async with engine.connect() as connection:
                 await connection.execute(sa_text("SELECT 1"))
@@ -53,6 +66,44 @@ async def _database_reachable(attempts: int = 5, delay: float = 1.0) -> bool:
         finally:
             await engine.dispose()
     return False
+
+
+async def _prepare_test_database() -> None:
+    """Create the test database if missing and migrate it to head, once per run.
+
+    Migrating through `alembic upgrade head` rather than `create_all` keeps the
+    schema-drift test honest: the tests run against what the migrations build.
+    """
+    global _prepared
+    if _prepared:
+        return
+    name = make_url(TEST_DATABASE_URL).database
+    admin = create_async_engine(_ADMIN_URL, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+    try:
+        async with admin.connect() as connection:
+            exists = await connection.scalar(
+                sa_text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": name}
+            )
+            if not exists:
+                await connection.execute(sa_text(f'CREATE DATABASE "{name}"'))
+    finally:
+        await admin.dispose()
+
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "alembic",
+        "upgrade",
+        "head",
+        cwd=_REPO_ROOT,
+        env={**os.environ, "AMOS_DATABASE_URL": TEST_DATABASE_URL},
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    output, _ = await process.communicate()
+    if process.returncode != 0:
+        raise RuntimeError(f"migrating {name} failed:\n{output.decode()}")
+    _prepared = True
 
 
 @pytest_asyncio.fixture
@@ -69,6 +120,7 @@ async def db_engine() -> AsyncIterator[object]:
             "No database at "
             f"{TEST_DATABASE_URL.split('@')[-1]} — start it with `podman-compose up -d`"
         )
+    await _prepare_test_database()
     engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     try:
         yield engine

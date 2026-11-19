@@ -194,7 +194,7 @@ skipped transitively while unrelated branches still complete, and the run report
 Index AMOS's own documentation and ask it about itself:
 
 ```bash
-.venv/bin/python -m amos.rag.cli ingest docs        # ~51 docs -> ~1070 chunks; over one free-tier day — rerun tomorrow, it resumes
+.venv/bin/python -m amos.rag.cli ingest docs        # 41 docs -> 850 chunks (build-along/ excluded), ~10 min, fits one free-tier day
 .venv/bin/python -m amos.rag.cli evaluate 5
 
 curl -s -X POST localhost:8000/v1/goals -H 'content-type: application/json' \
@@ -215,7 +215,9 @@ Q: what is AMOS's Kubernetes autoscaling policy?
     feature beyond V1.0 that is not promised."
 ```
 
-**Measured**, not claimed — against a 28-document, 300-chunk snapshot of `docs/`, 12-question golden set:
+**Measured**, not claimed. Current (V1.5, 2026-11-19, 41 documents / 850 chunks, 16 questions):
+recall@5 **100%**, recall@1 **62.5%**, MRR **0.771** — `docs/10-rag-architecture.md` reads each
+rank-1 miss by hand. Historical (V0.5, a 28-document, 300-chunk snapshot, 12 questions):
 
 | k | recall@k | MRR |
 |---|---|---|
@@ -303,8 +305,8 @@ something enforced.
 
 | What | Command | Result |
 |---|---|---|
-| End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
-| Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 |
+| End-to-end goals | `make eval` | 9/9 deterministic, refusal 2/2; groundedness 0.94 (LLM-judged) — 850 chunks, 2026-11-19 |
+| Retrieval | `make retrieval` | recall@5 100% (16/16), recall@1 62.5%, MRR 0.771 — 850 chunks, re-measured 2026-11-19 (V0.5: recall@1 91.7%, MRR 0.958 on 12 questions / 300 chunks) |
 | Agent routing | `make routing` | 13/15 (86.7%) on 15 cases — was 10/10 on the original 10 |
 | Tests | `make test` | 616 passing, 2 live tests skipped |
 

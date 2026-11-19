@@ -59,6 +59,20 @@ class VectorStore(Protocol):
     async def count(self) -> int: ...
 
 
+#: Module-level so a test can EXPLAIN exactly this query and assert the HNSW
+#: index serves it (`tests/integration/test_persistence.py`).
+SEARCH_SQL = """
+    SELECT c.id, c.document_id, c.content, c.heading,
+           d.source,
+           1 - (c.embedding <=> CAST(:embedding AS vector)) AS score
+    FROM chunks c
+    JOIN documents d ON d.id = c.document_id
+    WHERE c.embedding IS NOT NULL
+    ORDER BY c.embedding <=> CAST(:embedding AS vector)
+    LIMIT :limit
+"""
+
+
 class PgVectorStore:
     """pgvector-backed storage.
 
@@ -112,18 +126,7 @@ class PgVectorStore:
         operator here would silently fall back to a sequential scan.
         """
         result = await self._session.execute(
-            sql_text(
-                """
-                SELECT c.id, c.document_id, c.content, c.heading,
-                       d.source,
-                       1 - (c.embedding <=> CAST(:embedding AS vector)) AS score
-                FROM chunks c
-                JOIN documents d ON d.id = c.document_id
-                WHERE c.embedding IS NOT NULL
-                ORDER BY c.embedding <=> CAST(:embedding AS vector)
-                LIMIT :limit
-                """
-            ),
+            sql_text(SEARCH_SQL),
             {"embedding": _to_pgvector(embedding), "limit": limit},
         )
         return [

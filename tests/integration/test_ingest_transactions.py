@@ -114,3 +114,75 @@ async def test_a_rerun_after_a_failure_resumes_instead_of_repeating(
         assert await sources_present(db_factory, names) == names
     finally:
         await remove(db_factory, names)
+
+
+async def test_excluded_directories_are_not_ingested_at_any_depth(
+    tmp_path: Path, db_session: AsyncSession
+) -> None:
+    tag = uuid.uuid4().hex[:10]
+    files = {
+        "top.md": "kept",
+        "interview/q.md": "kept",
+        "build-along/v1.md": "excluded",
+        "nested/build-along/v2.md": "excluded",
+    }
+    for relative, kind in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = f"{kind} passage {tag} {relative} about corpus scope " * 30
+        path.write_text(f"# {kind}\n\n## Section\n\n{body}\n")
+
+    report = await Ingestor(
+        db_session, PgVectorStore(db_session), FakeEmbeddings(dimensions=1536)
+    ).ingest_directory(tmp_path, exclude=("build-along",))
+
+    assert report.documents_ingested == 2
+    assert report.documents_excluded == 2
+    sources = await db_session.execute(
+        select(Document.source).where(Document.source.in_(list(files))).order_by(Document.source)
+    )
+    assert list(sources.scalars()) == ["interview/q.md", "top.md"]
+
+
+async def test_a_changed_file_replaces_its_old_version(db_session: AsyncSession, actor) -> None:  # type: ignore[no-untyped-def]
+    """Re-ingesting an edited doc must not leave the old text retrievable beside the new.
+
+    A user's upload under the same name is a different document and survives.
+    """
+    from sqlalchemy import text as sa_text
+
+    source = f"edited-{uuid.uuid4().hex[:8]}.md"
+    ingestor = Ingestor(db_session, PgVectorStore(db_session), FakeEmbeddings(dimensions=1536))
+
+    def version(word: str) -> str:
+        return "# Doc\n\n## Section\n\n" + f"the {word} version of this passage " * 30
+
+    await db_session.execute(
+        sa_text(
+            "INSERT INTO documents"
+            " (id, source, title, content_hash, chunk_count, metadata, user_id)"
+            " VALUES (:id, :source, 'upload', :hash, 0, '{}'::jsonb, :user)"
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "source": source,
+            "hash": uuid.uuid4().hex,
+            "user": str(actor.id),
+        },
+    )
+    first, _ = await ingestor.ingest_text(source=source, text=version("old"))
+    second, _ = await ingestor.ingest_text(source=source, text=version("new"))
+
+    system = await db_session.execute(
+        sa_text("SELECT id FROM documents WHERE source = :s AND user_id IS NULL"), {"s": source}
+    )
+    assert list(system.scalars()) == [second]
+    stale = await db_session.execute(
+        sa_text("SELECT count(*) FROM chunks WHERE document_id = :d"), {"d": str(first)}
+    )
+    assert stale.scalar() == 0
+    uploads = await db_session.execute(
+        sa_text("SELECT count(*) FROM documents WHERE source = :s AND user_id = :u"),
+        {"s": source, "u": str(actor.id)},
+    )
+    assert uploads.scalar() == 1

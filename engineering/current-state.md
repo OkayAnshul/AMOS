@@ -3,11 +3,11 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-11-19 (Session 16 — the demo track chosen; no code changed)
+**Last updated:** 2026-11-19 (Session 17 — V1.5, the demo track's foundation)
 
 ## Current Version
-**V1.4 — Authentication and multi-user isolation.** The V0.1–V1.0 roadmap is complete; V1.1–V1.4
-are past it.
+**V1.5 — Demo-ready foundation**, the first milestone of the demo track (V1.5–V2.0,
+`docs/19-roadmap.md`). The V0.1–V1.0 roadmap is complete; V1.1–V1.4 are past it.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -18,7 +18,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
 V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
-V1.3 delegation · **V1.4 auth + isolation**
+V1.3 delegation · V1.4 auth + isolation · **V1.5 demo-ready foundation**
 
 ## What Works
 ```
@@ -34,14 +34,20 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 - Facts persist across process restarts; past runs findable by goal similarity
 - `GET /v1/runs/{id}` reconstructs any past run from stored rows
 - OpenTelemetry spans; goal text excluded by default, metric labels allowlisted
-- **616 tests** (618 collected, 2 live opt-in); `mypy --strict` and `ruff` clean; **CI runs
-  with and without a database**, migrations both directions, and with no API key
+- A 429 says whether its quota is **daily or per-minute** (`amos.llm.quota`); a daily embedding
+  limit fails at once instead of sleeping through retries (V1.5)
+- **`make backup` / `make restore-drill` / `make restore`** — the first drill passed 2026-11-19
+- The corpus rebuilds in **one** free-tier day (850 chunks; `docs/build-along/` excluded), and an
+  edited document **replaces** its old version on re-ingest
+- **638 tests** (640 collected, 2 live opt-in), in their own database `amos_test`; `mypy --strict`
+  and `ruff` clean; **CI runs with and without a database**, migrations both directions, and with
+  no API key
 
 ### Measured
 | What | Command | Result |
 |---|---|---|
-| End-to-end goals | `make eval` | **9/9** deterministic, refusal 2/2; groundedness 1.00 (judged, 1 failure excluded). 40852 tokens |
-| Retrieval | `make retrieval` | recall@5 100%, recall@1 91.7%, MRR 0.958 — **measured on 12 questions; the set is now 16 and unre-run** |
+| End-to-end goals | `make eval` | **9/9** deterministic, refusal 2/2; groundedness 0.94. 70905 tokens. 2026-11-19, 850 chunks. A first run that day lost 2 goals to Gemini `503` and was not stored |
+| Retrieval | `make retrieval` | **recall@5 100% (16/16), recall@1 62.5%, MRR 0.771** — 2026-11-19, 850 chunks. Not one series with V0.5's 0.958. Most rank-1 misses are unlabelled correct answers; one question is false since V1.4. Labels not widened |
 | Routing | `make routing` | **13/15 (86.7%)**, 2026-09-14. Both misses are lookup-then-compute cases labelled `analyst` and routed to `researcher` — which V1.3 delegation may have made the better answer. Labels deliberately not changed |
 | Memory storage | `make memory-trials` | store 100% (8/8), false claims 0% |
 
@@ -80,20 +86,19 @@ regression against it. Only deterministic rates gate; the judged score is contex
 - `Tool` has no output schema, no retry policy and no audit metadata (`docs/08`)
 - Kubernetes, Kafka, Celery, microservices: **never built, never claimed**
 
-## ⚠️ Five quota shapes, all measured
+## ⚠️ Five quota shapes, all measured (per-model free-tier numbers are no longer on the public docs page — read them off the account's AI Studio page)
 | | Limit |
 |---|---|
 | `generateContent`, `gemini-3.5-flash` | **20 / day** |
 | `generateContent`, `gemini-3.5-flash-lite` | **15 / minute** |
 | `embed_content` | **100 / minute**, counts *contents* not requests |
-| `embed_content` | **1000 / day** — hit 2026-09-14 by a corpus rebuild. Named *requests*; almost certainly counts contents, since that run made under 100 requests |
+| `embed_content` | **1000 / day** — hit 2026-09-14 by a corpus rebuild. Named *requests*; almost certainly counts contents. Since V1.5 it fails fast. Resets midnight Pacific |
 | `gemini-2.5-flash` | 404 — no longer served |
 
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`main`, at `v1.4.0` plus the Session 15 fixes. No open feature branch. The next one is
-`feat/v1.5-foundation` (`docs/19-roadmap.md`, the demo track).
+`main`, at `v1.5.0`. No open feature branch. The next one is `feat/v1.6-provider`.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -104,28 +109,25 @@ are three-part, because the target derives the tag from `__version__` and that i
 `major.minor.patch`. Not retagged — that would be the third tag rewrite in a day, for cosmetics.
 
 ## Known Bugs
-**One open:** `test_pgvector_stores_and_retrieves_by_similarity` returned 1 hit instead of 2 on
-2026-11-18, on an empty table with an 8.4 MB HNSW index. `VACUUM chunks` fixed it; a deliberate
-reproduction (230 rolled-back inserts) did not bring it back. Cause unproven — `bugs-log.md`,
-2026-11-19. Scheduled in V1.5. Otherwise none open. Twenty fixed across Phase 0–V1.0 and after, all in `engineering/bugs-log.md` with the lesson
-each taught. The corrections table in `docs/25-build-journal.md` lists twenty-two things believed that
-were false.
+**None open.** The pgvector similarity failure was reproduced and explained at V1.5 — the planner
+choosing between an exact scan and the HNSW index — and the test fixed (`bugs-log.md`,
+`experiments-log.md`, 2026-11-19). Twenty-three fixed in all, each in `engineering/bugs-log.md` with
+the lesson it taught.
 
 ## Technical Debt
 - `steps` is one row per run; the schema supports one per task attempt.
 - `compose.yaml` **verified on podman only**; the Docker path is untested and labelled as such.
-- **Backups: a documented `pg_dump` with no restore drill — and on 2026-09-13 this debt came
-  due.** An `alembic downgrade base` run as a reversibility check dropped every table and
-  destroyed the local corpus, with no backup to restore. See `bugs-log.md`. A `make backup`
-  target and an actual restore drill are still unbuilt.
+- **Backups are manual** (V1.5): `make backup` and a passing drill, but no schedule, no retention,
+  no off-machine copy, and the drill has only restored a fresh dump into the same schema.
 - **Delegation quality is unmeasured.** The bounds are tested; whether models delegate *well*
   has no number, unlike routing accuracy.
 - `steps` still one per run: V1.1 made *tasks* incremental, not steps.
-- **The embedding retry cannot tell a daily limit from a per-minute one.** The API attaches a short
-  `retryDelay` to both, so on daily exhaustion it sleeps through every retry and then raises. Fail
-  fast on a `PerDay` quotaId. See `bugs-log.md`, 2026-09-14.
+- **A transient provider error ends the run.** A Gemini `503` raised outside the task executor
+  (router, planner) is never retried — it cost two eval goals on 2026-11-19. Scheduled in V1.6 as a
+  provider wrapper both providers share.
 - **`db_factory` tests commit for real and clean up at the end of the test body**, not in a
-  fixture teardown — so a failing assertion leaks rows into the developer's database. Seen
+  fixture teardown — so a failing assertion leaks rows. Since V1.5 into `amos_test`, not the demo's
+  database. Seen
   for real this session: a dead-lettered run from a failed test showed up in
   `GET /v1/runs/dead-letter`. The `db_session` tests do not have this problem, because they
   roll back.
@@ -140,9 +142,13 @@ were false.
 - **Two Phase-0 experiments were never run** and are now assumptions: recall at 1536 vs 3072
   dimensions (ADR-008's central claim, taken on the model card's word) and poll interval vs
   latency. Scored in `engineering/experiments-log.md`.
-- The corpus figure is a snapshot: 300 chunks indexed, but `make ingest` would now index ~906,
-  because `docs/interview/` and `docs/build-along/` were added after V0.5. Re-ingesting would
-  invalidate every measured retrieval number, so re-measure and re-record together or not at all.
+- **The retrieval golden set's labels are older than the corpus.** Documents that answer its
+  questions now exist unlabelled, and "Why is there no authentication yet?" is false since V1.4.
+  Fixing it by relabelling after seeing results is the thing the set's docstring forbids; the real
+  fix is an independently authored set.
+- **The corpus lags `docs/` by this session's edits.** Edited documents re-embed on the next
+  `make ingest` (they now replace their old versions); today's embedding quota was mostly spent on
+  the rebuild, so run it tomorrow, then `make backup`.
 
 ## Environment
 | Thing | State |
@@ -152,7 +158,8 @@ were false.
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
 | Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` → `835121ee2bd2` |
 | Users | `alembic upgrade head` creates `default` and **prints its key once**. `AMOS_BOOTSTRAP_API_KEY` sets it instead |
-| Corpus | **EMPTY.** Destroyed 2026-09-13. A rebuild on 2026-09-14 hit the daily embedding quota partway and — running pre-fix code in one transaction — rolled back everything. Now 51 docs / ~1070 chunks, likely more than one free-tier day. Since the per-document-commit fix, `make ingest` keeps what it finishes and resumes: **run it on two consecutive days** |
+| Corpus | **41 docs / 850 chunks**, rebuilt 2026-11-19 in one run; backed up (`backups/amos-20261119-140511.dump`, 6.6 MB, drill passed). Before that: EMPTY, destroyed 2026-09-13. A rebuild on 2026-09-14 hit the daily embedding quota partway and — running pre-fix code in one transaction — rolled back everything. Now 51 docs / ~1070 chunks, likely more than one free-tier day. Since the per-document-commit fix, `make ingest` keeps what it finishes and resumes: **run it on two consecutive days** |
+| Test database | `amos_test`, created and migrated by the test suite on first use (`AMOS_TEST_DATABASE_URL` overrides) |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
 | Coding sessions | Since 2026-11-17 the terminal account switcher set the assistant CLI's subprocess-environment scrub (`…_SUBPROCESS_ENV_SCRUB=1`), which on Linux also puts every session command in a PID/user namespace with nested namespaces disabled — **podman cannot start inside a session**. Run `make up` in your own terminal. A config-folder switcher that needs no scrub was written 2026-11-19 (the Studio project's account-switcher folder (`config-dirs/`)), not yet installed |
@@ -160,7 +167,8 @@ were false.
 
 ## How To Run
 ```bash
-make up && make migrate && make ingest    # ~4 min, paced for the quota
+make up && make migrate && make ingest    # ~10 min, paced; fits one free-tier day
+make backup                               # after every ingest
 make run                                  # API
 make worker                               # optional: async execution
 ```
@@ -168,58 +176,26 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**The demo track, V1.5–V2.0, chosen 2026-11-19** (`docs/19-roadmap.md`): foundation → second LLM
-provider → web research → complex goals → demo web page → demo package. ≈ 5½ sessions. Start each
-session with `engineering/next-session-prompt.md`. The teacher-facing summary is
-`docs/26-project-explainer.md`.
+**V1.6 — a second LLM provider** (`docs/19-roadmap.md`), started with
+`engineering/next-session-prompt.md`. It now includes the transient-error retry found at V1.5.
 
-**V1.5 starts with the corpus rebuild below**, which needs two calendar days of embedding quota.
+Before it (Anshul):
+1. A free Groq API key in `.env` as `GROQ_API_KEY`.
+2. Read the Gemini free-tier numbers for `gemini-embedding-001` and `gemini-3.5-flash` off the AI
+   Studio rate-limit page — the public docs page stopped listing them on or before 2026-11-19 — and
+   paste them at the start of the session.
+3. `make ingest` (re-embeds this session's edited docs, replacing old versions), then `make backup`.
 
-**Immediate: rebuild the corpus, then re-measure.** `make ingest` today and again tomorrow (the
-second run resumes, skipping finished documents), then `make retrieval` and `make eval-baseline`,
-and update the retrieval and eval figures. `make routing` was re-measured 2026-09-14: 13/15.
+### The advance gate — thirteen documents, never met
 
-Authorization stays out of the demo track: localhost, one presenter. It remains the strongest
-candidate after V2.0, because it is the gap most likely to be assumed solved once a system "has
-auth".
-
-### The advance gate — now twelve documents, and never met
-
-`docs/interview/*.md`. This is the second of the project's two equal objectives and the only one
-still outstanding; V1.1–V1.4 added four more modules to a backlog that was already ten deep.
-
+`docs/interview/*.md`, now including `operations.md` (V1.5). This is the second of the project's
+two equal objectives, and the teacher demo is exactly its test: explaining the system unaided.
 Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/interview/*.md` in milestone
-order. Building further before closing this is a deliberate choice against the working agreement's own rule,
-made on 2026-09-13, and worth revisiting.
-
-**Blocked until the corpus is rebuilt:** `make retrieval` and `make eval-baseline` both need it, and
-both spend the same daily embedding quota the rebuild does.
-
-**Worth re-running when convenient:** `make retrieval` and `make routing` still report numbers
-measured on the older, smaller sets.
-
-### Still outstanding: the advance gate
-
-**Ten interview documents are unread** — `docs/interview/*.md`. This gate is the second of the
-project's two equal objectives, and V1.1–V1.4 will add four more modules to it:
-
-> A milestone is not complete until Anshul can answer that module's questions unaided.
-
-Recommended order:
-1. **`docs/25-build-journal.md`** — the narrative, thirteen chapters, how it was built and what was
-   wrong. Read this first; it is the only document written to be read start to finish.
-1b. **`docs/build-along/`** — if the answer is "build it myself". Twelve documents: what file to
-   write, when, why now, and the trap waiting in each milestone. Contracts, not code — the git tags
-   are the answer key.
-2. `docs/24-study-plan.md` — what to study, tier by tier, with the algorithms at file:line.
-3. `docs/interview/*.md` — ten documents, in milestone order.
-
-`docs/19-roadmap.md` promised nothing beyond V1.0; V1.1–V1.4 are the scope chosen on
-2026-09-13, and each still needs its ADR before any code.
+order. Building further before closing it is a deliberate choice against the working agreement's
+own rule, made on 2026-09-13 and still worth revisiting.
 
 **Unscheduled, and worth saying out loud:** the most valuable work left is arguably none of the
-four — it is **having someone else author the golden sets**. Every quality number in this repo
-rests on cases written by the person who built the system, and V1.2 enlarging them does not fix
-that. Nor do these have homes: hybrid search and reranking · a per-run cost budget · re-planning
-on failure · forgetting/TTL for memories · graceful worker shutdown · a restore drill for the
-documented backup.
+demo track — it is **having someone else author the golden sets**. V1.5's retrieval re-measure is
+the clearest evidence yet: most of its misses are labels that aged, not retrieval that failed.
+Authorization stays out of the demo track (localhost, one presenter) and remains the strongest
+candidate after V2.0.

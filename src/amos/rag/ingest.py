@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 class IngestReport:
     documents_ingested: int = 0
     documents_skipped: int = 0
+    documents_excluded: int = 0
     chunks_created: int = 0
 
     @property
@@ -112,11 +113,35 @@ class Ingestor:
                 for chunk, vector in zip(chunks, vectors, strict=True)
             ]
         )
-        log_event(logger, "ingest.completed", source=source, chunks=len(chunks))
+        # A changed file is a new version of the same source, not a second
+        # document. Until V1.5 the old version stayed indexed beside the new one,
+        # so an edited doc answered questions with both its old and new text.
+        # Deleted in the same transaction as the insert: if embedding the new
+        # version fails, the old one is still there. Chunks go by FK cascade.
+        # Scoped to the system corpus (user_id NULL), never a user's upload.
+        replaced = await self._session.execute(
+            sql_text(
+                "DELETE FROM documents"
+                " WHERE source = :source AND user_id IS NULL AND id <> :id"
+            ),
+            {"source": source, "id": str(document_id)},
+        )
+        log_event(
+            logger,
+            "ingest.completed",
+            source=source,
+            chunks=len(chunks),
+            replaced_versions=getattr(replaced, "rowcount", 0),
+        )
         return document_id, len(chunks)
 
-    async def ingest_directory(self, directory: Path, *, pattern: str = "*.md") -> IngestReport:
+    async def ingest_directory(
+        self, directory: Path, *, pattern: str = "*.md", exclude: tuple[str, ...] = ()
+    ) -> IngestReport:
         """Ingest every matching file, sorted for reproducibility.
+
+        `exclude` names directories, at any depth below `directory`, whose files
+        are not ingested — the corpus scope (`amos.rag.cli.CORPUS_EXCLUDE`).
 
         **Commits after every document.** A failure then costs the document in
         progress, not the run, and re-running skips everything already committed
@@ -134,6 +159,9 @@ class Ingestor:
 
         for path in sorted(root.rglob(pattern)):
             if not path.is_file():
+                continue
+            if set(path.relative_to(root).parts[:-1]) & set(exclude):
+                report.documents_excluded += 1
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             relative = str(path.relative_to(root))
