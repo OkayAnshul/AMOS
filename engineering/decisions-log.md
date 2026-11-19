@@ -506,3 +506,35 @@ gates every push. `README.md` keeps saying AMOS was built with an AI pair-progra
 a habit, which is the project's own rule for anything that matters.
 *Open:* commits before 2026-11-19 still contain the old instruction file and three messages that
 name it. Removing them means another history rewrite and force-push — Anshul's decision, not made.
+
+---
+
+## 2026-11-19 — V1.5: three decisions, made before the code
+
+**A quota error carries its scope, read from `quotaId`.** A 429 from Gemini is classified `day` or
+`minute` from `error.details[].violations[].quotaId` (Google's `QuotaFailure`), and the embedding
+retry re-raises at once on `day`.
+*Why:* the API attaches a `retryDelay` to both limits, so the delay cannot tell them apart; the
+quota's name can. Waiting out a daily limit cost the 2026-09-14 rebuild its last minutes for nothing.
+*Rejected:* parsing the human-readable message — it is prose, and the structured field exists.
+*Reconsider if:* Google renames quota ids without `PerDay` / `PerMinute` in them; the classifier
+returns `None` then, which keeps today's behaviour (wait and retry) rather than guessing.
+
+**Vector searches run with `hnsw.iterative_scan = strict_order`, set per query.**
+*Why:* an HNSW scan visits `ef_search` (40) candidates and filters invisible rows afterwards, so dead
+index entries can leave a `LIMIT k` query with fewer than k rows (pgvector README, "Iterative Index
+Scans", ≥ 0.8.0). Re-ingesting leaves dead entries in production too, not only in tests.
+`strict_order` keeps results in distance order, so callers need no re-sort.
+*Why per query (`SET LOCAL`) and not on the engine:* tests build their own engine, so an
+engine-level setting would be the one configuration the suite never exercises.
+*Rejected:* `VACUUM` before searches — treats the symptom, and only when someone remembers.
+*Reconsider if:* search latency matters more than completeness; `hnsw.max_scan_tuples` (20,000)
+bounds the extra work.
+
+**The corpus is top-level `docs/` only; `docs/interview/` and `docs/build-along/` are excluded.**
+*Why:* 677 chunks fit one day's embedding quota (1000); 1108 do not. The excluded documents are
+study material that restates the canonical docs, so they compete for the top-5 against the
+sources the golden sets expect — and their arrival is what made re-ingesting incomparable with the
+measured retrieval numbers.
+*Rejected:* ingesting everything across two days — two days for a worse-targeted corpus.
+*Reconsider if:* a demo question needs the interview material, or the golden sets start citing it.
