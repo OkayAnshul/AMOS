@@ -22,6 +22,7 @@ from amos.errors import (
     ProviderTimeoutError,
 )
 from amos.llm.base import LLMRequest, LLMResponse, Turn
+from amos.llm.quota import quota_scope
 from amos.telemetry.tracing import span
 from amos.tools.base import ToolCall
 
@@ -137,13 +138,15 @@ class GeminiProvider:
         status = getattr(exc, "code", None)
         message = str(exc)
         if status == 429:
-            # The free tier's binding limit is a DAILY per-model quota
-            # (20/day for gemini-3.5-flash), not a per-minute one. The
-            # message carries the provider's own text because it names the
-            # exact quota and retry delay.
+            # Two shapes: gemini-3.5-flash binds DAILY (20/day), flash-lite
+            # PER MINUTE (15/min). `quota_scope` says which, from the violated
+            # quota's id, so a caller can say "resets at midnight Pacific"
+            # rather than "try again". The provider's own text is kept because
+            # it names the exact quota.
+            scope = quota_scope(exc.details)
             return ProviderRateLimitError(
-                f"Gemini quota exceeded. Free-tier quotas are per-model and daily. {message}",
-                details={"status": status},
+                f"Gemini quota exceeded ({scope or 'unknown'} limit). {message}",
+                details={"status": status, "quota_scope": scope},
             )
         if status in (401, 403):
             return ProviderAuthError("Gemini rejected the API key", details={"status": status})
