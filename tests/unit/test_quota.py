@@ -45,8 +45,13 @@ def test_scope_is_read_from_the_quota_id(fixture: str, scope: str) -> None:
 
 
 def test_the_daily_fixture_carries_a_retry_delay_too() -> None:
-    """The reason the delay cannot be the signal: a daily limit has one as well."""
-    assert "retry in 57s" in str(_body("429_embed_per_day.json"))
+    """The reason the delay cannot be the signal: a daily limit has one as well.
+
+    The real capture says ~74000s; the 2026-09-14 log said 57s for the same limit.
+    """
+    details = _body("429_embed_per_day.json")["error"]["details"]  # type: ignore[index]
+    retry = [d for d in details if d["@type"].endswith("RetryInfo")]
+    assert retry and retry[0]["retryDelay"].endswith("s")
 
 
 def test_a_daily_violation_wins_over_a_per_minute_one() -> None:

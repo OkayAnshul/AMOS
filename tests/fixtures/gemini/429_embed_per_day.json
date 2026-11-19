@@ -1,7 +1,7 @@
 {
   "error": {
     "code": 429,
-    "message": "You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/embed_content_free_tier_requests, limit: 1000, model: gemini-embedding-001. Please retry in 57s.",
+    "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/embed_content_free_tier_requests, limit: 1000, model: gemini-embedding-1.0, description: Embed content requests per day limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.\nPlease retry in 20h34m32.672393304s.",
     "status": "RESOURCE_EXHAUSTED",
     "details": [
       {
@@ -9,7 +9,7 @@
         "links": [
           {
             "description": "Learn more about Gemini API quotas",
-            "url": "https://ai.google.dev/gemini-api/docs/rate-limits"
+            "url": "https://aistudio.google.com/docs/rate-limits"
           }
         ]
       },
@@ -17,11 +17,12 @@
         "@type": "type.googleapis.com/google.rpc.QuotaFailure",
         "violations": [
           {
+            "description": "Embed content requests per day limit exceeded on Free Tier. See https://aistudio.google.com/docs/rate-limits.",
             "quotaMetric": "generativelanguage.googleapis.com/embed_content_free_tier_requests",
             "quotaId": "EmbedContentRequestsPerDayPerProjectPerModel-FreeTier",
             "quotaDimensions": {
               "location": "global",
-              "model": "gemini-embedding-001"
+              "model": "gemini-embedding-1.0"
             },
             "quotaValue": "1000"
           }
@@ -29,7 +30,7 @@
       },
       {
         "@type": "type.googleapis.com/google.rpc.RetryInfo",
-        "retryDelay": "57s"
+        "retryDelay": "74072s"
       }
     ]
   }
