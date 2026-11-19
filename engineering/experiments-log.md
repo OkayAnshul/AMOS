@@ -438,3 +438,35 @@ now runs with index scans disabled; a separate test asserts the HNSW index serve
 Tests moved to their own database, so the demo's index no longer carries their dead entries.
 **Not established:** how much the demo corpus's recall depends on index health. `make retrieval`
 on the rebuilt corpus is the measurement that matters, not these synthetic trials.
+
+---
+
+## 2026-11-19 — The first restore drill
+**Hypothesis:** a `pg_dump -Fc` of the rebuilt database restores into a separate database with
+every row and a working vector index.
+**Method:** `make backup && make restore-drill`, run by Anshul in his own terminal (sessions cannot
+start containers), minutes after the V1.5 corpus rebuild. The drill restores the newest dump into a
+scratch database `amos_drill`, runs a 5-nearest-neighbour search there, compares `count(*)` for
+every public table against `amos`, and drops the copy.
+**Result:**
+```
+backup: backups/amos-20261119-140511.dump (6.6M)
+  vector search in the restored copy returned 5 of 5 rows
+  table                      amos amos_drill
+  alembic_version               1          1
+  chunks                      850        850
+  documents                    41         41
+  llm_calls                     0          0
+  memories                      0          0
+  runs                          0          0
+  steps                         0          0
+  tasks                         0          0
+  tool_calls                    0          0
+  users                         1          1
+restore-drill: PASSED, every table matches
+```
+**Conclusion:** the backup restores. A day of embedding quota is now a 6.6 MB file.
+**Not shown:** restoring an *old* dump into a *newer* schema (`make restore` then `make migrate`),
+restoring under pressure, or anything about memories and runs — both tables were empty. Row counts
+prove rows arrived, not that their contents match; the vector probe is the only content check.
+**Decision affected:** back up after every ingest (`docs/18-deployment.md`).
