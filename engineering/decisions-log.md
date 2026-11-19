@@ -520,16 +520,26 @@ quota's name can. Waiting out a daily limit cost the 2026-09-14 rebuild its last
 *Reconsider if:* Google renames quota ids without `PerDay` / `PerMinute` in them; the classifier
 returns `None` then, which keeps today's behaviour (wait and retry) rather than guessing.
 
-**Vector searches run with `hnsw.iterative_scan = strict_order`, set per query.**
-*Why:* an HNSW scan visits `ef_search` (40) candidates and filters invisible rows afterwards, so dead
-index entries can leave a `LIMIT k` query with fewer than k rows (pgvector README, "Iterative Index
-Scans", ≥ 0.8.0). Re-ingesting leaves dead entries in production too, not only in tests.
-`strict_order` keeps results in distance order, so callers need no re-sort.
-*Why per query (`SET LOCAL`) and not on the engine:* tests build their own engine, so an
-engine-level setting would be the one configuration the suite never exercises.
-*Rejected:* `VACUUM` before searches — treats the symptom, and only when someone remembers.
-*Reconsider if:* search latency matters more than completeness; `hnsw.max_scan_tuples` (20,000)
-bounds the extra work.
+**~~Vector searches run with `hnsw.iterative_scan = strict_order`~~ — rejected the same day, by
+measurement.** Logged before the code as the planned fix for the intermittent similarity test; the
+reproduction then showed it fixes nothing here (`experiments-log.md`, 2026-11-19). On a **fresh**
+HNSW index, dead rows near the query made a `LIMIT 2` search return 1 of 2 live rows in every
+mode — off, `relaxed_order`, `strict_order`. The intermittency was the planner: a small table with
+fresh statistics gets an exact sequential scan; stale statistics get the approximate index.
+*Kept as a record because* a decision written down and then disproved is worth more than one quietly
+dropped.
+
+**Local tests get their own database, `amos_test`, created and migrated on first use.**
+*Why:* the tests and the demo shared `amos`. Months of rolled-back test inserts left the demo's
+vector index at 78 MB with zero rows, and `db_factory` tests that commit for real leak rows into it
+— a dead-lettered run from a failed test has already shown up in `GET /v1/runs/dead-letter`, which
+V1.9 puts on a panel in front of an audience.
+*And the test itself is corrected:* it asserted exact results from an approximate index. The
+semantic checks (operator, score, ordering, source join) now run on an exact scan; a second test
+asserts the planner uses `idx_chunks_embedding` for the store's query — the regression the original
+docstring actually feared (a wrong operator silently falls back to a sequential scan).
+*Rejected:* `VACUUM` before the test — hides the symptom, keeps the wrong assertion.
+*Reconsider if:* CI and local diverge — CI already gets a fresh database per run.
 
 **The corpus is top-level `docs/` only; `docs/interview/` and `docs/build-along/` are excluded.**
 *Why:* 677 chunks fit one day's embedding quota (1000); 1108 do not. The excluded documents are
