@@ -69,6 +69,26 @@ What this changes:
   18.4K; larger chunks or batches would hit it before the 100-contents limit.
 - **`gemini-3.5-flash` is no longer a known quantity.** Verify before it is used for a demo.
 
+#### Groq free tier (account limits page, 2026-11-19 — candidate for V1.6, not yet used)
+
+Read off <https://console.groq.com/settings/limits>. Per model; the limits that matter for AMOS:
+
+| Model | RPM | RPD | TPM | TPD |
+|---|---|---|---|---|
+| `openai/gpt-oss-120b` | 30 | 1K | **8K** | **200K** |
+| `openai/gpt-oss-20b` | 30 | 1K | 8K | 200K |
+| `qwen/qwen3.8-27b` | 30 | 1K | 8K | 200K |
+| `meta-llama/llama-prompt-guard-2-86m` | 30 | 14.4K | 15K | 500K |
+
+**On Groq the token limits bind, not the request limits.** The V1.5 eval used 70,905 tokens for nine
+goals — about **7.9K tokens a goal**. So `gpt-oss-120b`'s 8K tokens/minute is roughly one goal a
+minute, and 200K tokens/day roughly **25 goals a day**; a single request carrying a lot of retrieved
+or fetched text could approach the per-minute cap on its own. Compare `gemini-3.5-flash-lite`: 250K
+tokens/minute and 500 requests/day. Groq is a candidate for **quality and fallback**, not volume.
+
+`llama-prompt-guard-2-86m` is a prompt-injection classifier — a possible extra layer for V1.7's
+untrusted page text, never a replacement for the provenance check enforced in code.
+
 ### The five shapes as first measured (2026-09-03 – 09-14), kept for the record
 
 | Call | Model | Measured limit |

@@ -577,6 +577,11 @@ about `gemini-3.5-flash`, which is now absent from the page. What is left to jus
 the **15/minute** ceiling (the eval suite peaked at 16), model quality beyond flash-lite, and a
 fallback when Gemini returns `503`. Gemma 4 on the same API (30/min, 14.4K/day, but 16K tokens/min)
 is a no-new-code alternative if it handles tools and structured output — measure, don't assume.
+Groq's limits, read the same day, sharpen this: `openai/gpt-oss-120b` allows 30 requests/minute but
+only **8K tokens/minute and 200K/day** — about one AMOS goal a minute and 25 a day. So Groq earns its
+place, if at all, as the higher-quality model and the `503` fallback, not as extra volume. Plan V1.6
+as a measurement first: the same few eval goals on flash-lite, Gemma 4 and `gpt-oss-120b` — pass
+rate, tokens, wall time, any 429 — then decide what to build.
 
 ### V1.7 — Web research
 **Objective** Goals about the world, not only about this repository, answered with web

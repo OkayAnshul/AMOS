@@ -94,6 +94,7 @@ regression against it. Only deterministic rates gate; the judged score is contex
 | `gemini-3.5-flash` | **unknown** — absent from the page, still in `models.list`. Was 20/day |
 | `gemma-4-31b-it`, `gemma-4-26b-a4b-it` | 30 / minute, 16K tokens/min, **14.4K / day** — untried with tools |
 | Search grounding (Gemini 2 / 2.5) | 1.5K / day; **0 for Gemini 3+** |
+| Groq `openai/gpt-oss-120b` (not yet used) | 30 / minute, 1K / day, but **8K tokens / minute, 200K / day** — ≈ 1 goal a minute, ≈ 25 a day at V1.5's 7.9K tokens per goal |
 
 Daily limits reset at midnight Pacific. Since V1.5 a daily 429 fails fast.
 
