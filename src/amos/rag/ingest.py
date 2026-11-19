@@ -113,7 +113,26 @@ class Ingestor:
                 for chunk, vector in zip(chunks, vectors, strict=True)
             ]
         )
-        log_event(logger, "ingest.completed", source=source, chunks=len(chunks))
+        # A changed file is a new version of the same source, not a second
+        # document. Until V1.5 the old version stayed indexed beside the new one,
+        # so an edited doc answered questions with both its old and new text.
+        # Deleted in the same transaction as the insert: if embedding the new
+        # version fails, the old one is still there. Chunks go by FK cascade.
+        # Scoped to the system corpus (user_id NULL), never a user's upload.
+        replaced = await self._session.execute(
+            sql_text(
+                "DELETE FROM documents"
+                " WHERE source = :source AND user_id IS NULL AND id <> :id"
+            ),
+            {"source": source, "id": str(document_id)},
+        )
+        log_event(
+            logger,
+            "ingest.completed",
+            source=source,
+            chunks=len(chunks),
+            replaced_versions=getattr(replaced, "rowcount", 0),
+        )
         return document_id, len(chunks)
 
     async def ingest_directory(
