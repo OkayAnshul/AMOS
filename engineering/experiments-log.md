@@ -404,3 +404,37 @@ diverse rather than clustered, and made up nearly the whole index rather than a 
 claimed as a known pgvector behaviour, because it was not shown to be one.
 **Decision affected:** none. If it recurs, capture `EXPLAIN ANALYZE` and the index's visible and
 dead tuple counts at the moment of failure, rather than theorising afterwards.
+
+---
+
+## 2026-11-19 — The pgvector similarity failure, reproduced: the planner, not the candidate list
+**Hypothesis (V1.5 plan):** dead index entries near the query fill HNSW's `ef_search` candidate list,
+so `LIMIT 2` returns 1 row; `hnsw.iterative_scan = strict_order` (pgvector ≥ 0.8) fixes it.
+**Method:** as the 2026-09-14 entry asked: `EXPLAIN ANALYZE` at the moment of failure, then
+controlled trials. pgvector 0.8.6, PostgreSQL 18.6, 1536-dim unit vectors: `A`, an orthogonal `B`,
+and 40–400 distinct vectors within cosine distance ~10⁻³ of `A`, each trial in one rolled-back
+transaction. Four setups: the shared `amos` database with its 78 MB index over zero rows; seqscan
+forced off; sort also forced off (so the plan *must* be the HNSW index); and a fresh `TEMP` table
+with its own new index.
+**Results:**
+| Setup | Result |
+|---|---|
+| `EXPLAIN ANALYZE`, first run | `Index Scan using idx_chunks_embedding … rows=1` — reproduced |
+| Same, after autovacuum ran (triggered by these trials' own inserts) | `Seq Scan` + top-N sort, `rows=2`: **0 of 60 trials short** |
+| Index forced, dead near-`A` rows, modes off / relaxed / strict | **1 row in every mode** |
+| Index forced, *no* dead rows of the test's own, bloated index | 1 row; after `VACUUM`, 2 |
+| Fresh index, 122 **live** rows, `LIMIT 200` | ~35 rows returned, every mode |
+**Conclusion:**
+1. **The intermittency is the planner.** On a small table with fresh statistics the plan is an exact
+   sequential scan; with stale statistics it is the approximate HNSW index. Same query, same data,
+   different answer — and autovacuum decides which.
+2. **The miss itself is graph reachability, and `iterative_scan` does not recover it** here: an
+   outlier inserted after its neighbours has no inbound edges, so no amount of further scanning
+   reaches it. The synthetic near-duplicate geometry makes that worse than real embeddings would;
+   the fresh-index row shows it is not only about dead entries.
+3. **The test was wrong, not pgvector:** it asserted exact results from an approximate index.
+**Decision affected:** `iterative_scan` rejected (decisions-log, 2026-11-19). The exact-result test
+now runs with index scans disabled; a separate test asserts the HNSW index serves the store's query.
+Tests moved to their own database, so the demo's index no longer carries their dead entries.
+**Not established:** how much the demo corpus's recall depends on index health. `make retrieval`
+on the rebuilt corpus is the measurement that matters, not these synthetic trials.
