@@ -564,6 +564,10 @@ and one goal costs 3–8.
   ADR time, and verify structured-output support for the chosen model.
 - `AMOS_LLM_PROVIDER=gemini|groq`; embeddings stay on Gemini (one call per query once ingested).
 - One contract-test suite that both providers pass, on recorded fixtures.
+- **Transient provider errors are retried, once, in one place** (found at V1.5): two of nine eval goals
+  failed on a Gemini `503 UNAVAILABLE — high demand`, raised from a call outside the task executor,
+  so no retry ever saw it and the whole run failed. A bounded retry with jitter for 5xx only (never a
+  429), as a wrapper over `LLMProvider` so Gemini and Groq share it, covered by the contract suite.
 - `make eval` and `make routing` re-run on the new provider and recorded **separately** — numbers
   from different models are not one series.
 **Reconsider if** the free tier changes, or eval accuracy drops below Gemini's on the same set.

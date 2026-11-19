@@ -95,7 +95,7 @@ the claim "I can explain and defend it" true.
 
 | What | Result | Caveat |
 |---|---|---|
-| End-to-end goals | 9/9, refusals 2/2 | on the old corpus; re-measure after the rebuild |
+| End-to-end goals | 9/9, refusals 2/2, groundedness 0.94 | rebuilt corpus, 2026-11-19; a first run lost 2 goals to Gemini 503s |
 | Retrieval | recall@5 100%, recall@1 62.5%, MRR 0.771 | 16 questions, 850 chunks, 2026-11-19; most rank-1 misses are unlabelled correct answers |
 | Routing | 13/15 | both misses arguably better answers since delegation |
 

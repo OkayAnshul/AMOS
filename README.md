@@ -305,7 +305,7 @@ something enforced.
 
 | What | Command | Result |
 |---|---|---|
-| End-to-end goals | `make eval` | 6/6 deterministic; groundedness 1.00 (LLM-judged) |
+| End-to-end goals | `make eval` | 9/9 deterministic, refusal 2/2; groundedness 0.94 (LLM-judged) — 850 chunks, 2026-11-19 |
 | Retrieval | `make retrieval` | recall@5 100% (16/16), recall@1 62.5%, MRR 0.771 — 850 chunks, re-measured 2026-11-19 (V0.5: recall@1 91.7%, MRR 0.958 on 12 questions / 300 chunks) |
 | Agent routing | `make routing` | 13/15 (86.7%) on 15 cases — was 10/10 on the original 10 |
 | Tests | `make test` | 616 passing, 2 live tests skipped |

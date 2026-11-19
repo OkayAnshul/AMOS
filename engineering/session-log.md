@@ -1295,3 +1295,69 @@ after `VACUUM`, the failing test passes. `make attribution-check`: clean. No cod
 ## Next Exact Step
 V1.5 per `engineering/next-session-prompt.md`. Before it: `make up`, and `make ingest` on two
 consecutive days.
+
+---
+
+# Session 17
+
+**Date:** 2026-11-19
+**Module:** V1.5 — Demo-ready foundation
+**Objective:** nothing in the demo fails for a reason already known: the daily-quota retry, the
+intermittent pgvector test, backups with a drill, and the corpus rebuilt and re-measured.
+
+## What We Changed
+- `src/amos/llm/quota.py` (new): a 429 classified `day` / `minute` from its `quotaId`.
+  `rag/embeddings.py` fails fast on `day`; `llm/gemini.py` carries the scope.
+- `tests/integration/conftest.py`: tests use their own database, `amos_test`, created and migrated
+  on first use. `test_persistence.py`: the similarity test runs on an exact scan; a new test asserts
+  the HNSW index serves the store's query (`rag/store.py` exposes `SEARCH_SQL`).
+- `rag/ingest.py` + `rag/cli.py`: `exclude`, with `CORPUS_EXCLUDE = ("build-along",)`; a changed file
+  replaces its old version in the same transaction.
+- `Makefile`: `backup`, `restore-drill`, `restore`. `.gitignore`: `backups/`.
+- Tests: `test_quota.py` (recorded 429 bodies), `test_corpus_scope.py`, two ingest tests.
+- Corpus rebuilt: 41 docs / 850 chunks. Retrieval and eval re-measured; baseline stored.
+- Docs: decisions-log (three entries, one rejected by measurement and one corrected),
+  bugs-log, experiments-log (the pgvector investigation, the first restore drill),
+  `10-rag-architecture`, `15-testing`, `16-evaluation`, `18-deployment`, `19-roadmap`,
+  `21-technology-baseline`, `22-resume-evidence`, `26-project-explainer`, README,
+  `docs/interview/operations.md` (new).
+
+## Problems Encountered
+1. The planned pgvector fix, `hnsw.iterative_scan`, did not fix anything.
+2. The first version of the corpus-scope decision was wrong about `docs/interview/`.
+3. The first eval run scored 7/9.
+4. The public Gemini rate-limit page no longer lists per-model free-tier numbers.
+5. A shell command writing the Makefile was refused by a safety check (it contained `rm`).
+
+## How We Solved Them
+1. Measured instead of argued: `EXPLAIN ANALYZE` at the failure, then trials with the index forced,
+   on the bloated index and on a fresh one. The intermittency was the planner; the miss was graph
+   reachability; iterative scan recovered 0 rows in every mode. Anshul chose a separate test
+   database over a test-only fix. The rejected decision stays in the log, struck through.
+2. Reading the golden set showed six questions accept interview documents. Only `build-along/` is
+   excluded (850 chunks — still one day). Corrected in the log the same day.
+3. Both failures were Gemini `503 UNAVAILABLE`, raised outside the task executor. The 7/9 baseline
+   was discarded and the suite re-run: 9/9. The missing transient retry is scheduled in V1.6.
+4. Recorded as such, with the reset time it does still state (midnight Pacific). Anshul to read the
+   numbers off the AI Studio account page.
+5. Rewritten with the Edit tool and without the `rm`; a failed dump now leaves a `.partial` file
+   the drill ignores.
+
+## Tests Performed
+`make check`: 638 passed, 2 live skipped — green on consecutive runs. Each new test verified to fail
+with its fix removed (daily-quota retry, wrong operator `<->`, exclusion, version replacement).
+Full suite left `amos`'s row counters unchanged. Live: `make ingest` 41 docs / 850 chunks in 9m39s;
+`make retrieval` recall@5 100%, recall@1 62.5%, MRR 0.771; `make eval-baseline` 9/9, refusal 2/2,
+groundedness 0.94, 70905 tokens. Restore drill (Anshul's terminal): PASSED, 10/10 tables.
+`make attribution-check`: clean.
+
+## Things I Learned
+- An exact assertion on an approximate index is a coin the planner flips.
+- The documented fix for a symptom is a hypothesis until measured on your case.
+- A uniqueness constraint is a statement of identity: `content_hash` said a document is its text.
+- A provider outage in an eval run measures the provider; storing it as a baseline would have
+  disarmed the gate.
+
+## Next Exact Step
+V1.6 per `engineering/next-session-prompt.md`. Before it: `GROQ_API_KEY` in `.env`; the AI Studio
+free-tier numbers; `make ingest` then `make backup` (re-embeds this session's edited docs).

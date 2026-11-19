@@ -28,7 +28,7 @@ Alongside the component measurements that already existed:
 
 | What | Command | Result |
 |---|---|---|
-| End-to-end goals | `make eval` | **9/9 deterministic**, refusal 2/2, groundedness 1.00 (measured 2026-09-13) |
+| End-to-end goals | `make eval` | **9/9 deterministic**, refusal 2/2, groundedness 0.94 — 850 chunks, 2026-11-19 (a first run the same day: 7/9, both failures Gemini `503 UNAVAILABLE`, not stored) |
 | Retrieval | `make retrieval` | **recall@5 100% (16/16), recall@1 62.5%, MRR 0.771 — 850 chunks, re-measured 2026-11-19** on the 16-question set. V0.5: recall@1 91.7%, MRR 0.958 on 12 questions / 300 chunks — not one series. Labels deliberately not widened; see `docs/10-rag-architecture.md` |
 | Routing | `make routing` | **13/15 (86.7%)** — re-measured 2026-09-14 on the enlarged set. Both misses are V1.2's lookup-then-compute cases; see `engineering/experiments-log.md` |
 | Tests | `make test` | 567 passing (569 collected; 2 live, opt-in) |
@@ -252,7 +252,32 @@ which is most of a day's budget on `gemini-3.5-flash` and the reason the suite c
 growing. And one judge call failed and was excluded; a groundedness mean over eight of nine cases
 is what 1.00 actually describes here.
 
-This run is now `engineering/eval-baseline.json`, and the next `make eval` compares against it.
+This run was the baseline until V1.5.
+
+## Re-measured on the rebuilt corpus (V1.5)
+
+`make eval-baseline`, 2026-11-19, `gemini-3.5-flash-lite`, **850** indexed chunks:
+
+```
+cases            9/9 passed (100%)
+  completion     100%      output valid   100%
+  tool selection 100%      answer content 100%
+  refusal        2/2
+groundedness     0.94
+cost             70905 tokens
+```
+
+**The first run that day is not the baseline, and why that is not cherry-picking:** it scored 7/9,
+and both failures were `503 UNAVAILABLE — This model is currently experiencing high demand`, raised
+before any task ran. A provider outage measures the provider. Storing 7/9 would have made a real
+regression to 78% pass the gate. Both runs are recorded here; the transient-error retry that would
+have saved those two goals is scheduled in V1.6.
+
+The cost nearly doubled (40852 → 70905) on a corpus 2.8× larger: more retrieved context per goal.
+Groundedness fell from 1.00 to 0.94 with no judge failures this time — a mean over nine judged cases
+rather than eight, from an uncalibrated judge, so read as context, not as a change in quality.
+
+This run is `engineering/eval-baseline.json`, and the next `make eval` compares against it.
 
 ## Still not fixed
 
@@ -262,6 +287,6 @@ This run is now `engineering/eval-baseline.json`, and the next `make eval` compa
   a human's verdict, so it remains the weakest evidence here.
 - **No per-case history**, only the latest scorecard. Enough to catch a regression, not enough to
   see a trend.
-- **The corpus is a V0.5 snapshot** (`docs/10-rag-architecture.md`) and several indexed documents
-  have been rewritten since. Retrieval numbers are measured against what is *indexed*, not against
-  `docs/` as it stands.
+- **The retrieval labels are older than the corpus.** Rebuilt at V1.5, the corpus has documents
+  that answer golden questions without being labelled, and one question ("Why is there no
+  authentication yet?") has been false since V1.4. Not relabelled after seeing results, by rule.

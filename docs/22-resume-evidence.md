@@ -677,6 +677,10 @@ committed-baseline regression gate, and larger, harder golden sets.
 - `src/amos/evaluation/cases.py`, `src/amos/rag/evaluation.py`, `src/amos/agents/router.py` —
   goals 6→9, retrieval 12→16, routing 10→15
 
+**Re-measured at V1.5 (`make eval-baseline`, 2026-11-19, 850 chunks):** cases 9/9, refusal 2/2,
+groundedness 0.94, 70905 tokens. A first run that day lost two goals to Gemini `503` and was not
+stored — `docs/16-evaluation.md` says why.
+
 **Measured (`make eval`, 2026-09-13, `gemini-3.5-flash-lite`, 300 chunks):**
 ```
 cases 9/9 (100%)   completion 100%   tool selection 100%   answer content 100%
