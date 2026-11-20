@@ -35,6 +35,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,6 +68,8 @@ class Fact:
     confidence: float
     superseded: bool = False
     score: float | None = None
+    created_at: datetime | None = None
+    source_run_id: uuid.UUID | None = None
 
 
 class SemanticMemory:
@@ -204,7 +207,7 @@ class SemanticMemory:
         """
         result = await self._session.execute(
             sql_text(
-                "SELECT id, subject, content, confidence, superseded_by "
+                "SELECT id, subject, content, confidence, superseded_by, created_at, source_run_id "
                 "FROM memories WHERE subject = :subject AND user_id = :user_id "
                 "ORDER BY created_at DESC"
             ),
@@ -217,6 +220,34 @@ class SemanticMemory:
                 content=row.content,
                 confidence=row.confidence,
                 superseded=row.superseded_by is not None,
+                created_at=row.created_at,
+                source_run_id=row.source_run_id,
+            )
+            for row in result
+        ]
+
+    async def list_current(self, limit: int = 100) -> list[Fact]:
+        """Every current fact, newest first — what the memory panel shows (V1.7).
+
+        Here rather than in the API layer so the source-scan guard over this
+        file covers it: a guard protects only the files it scans.
+        """
+        result = await self._session.execute(
+            sql_text(
+                "SELECT id, subject, content, confidence, created_at, source_run_id "
+                "FROM memories WHERE superseded_by IS NULL AND user_id = :user_id "
+                "ORDER BY created_at DESC LIMIT :limit"
+            ),
+            {"user_id": str(self._actor.id), "limit": limit},
+        )
+        return [
+            Fact(
+                id=row.id,
+                subject=row.subject,
+                content=row.content,
+                confidence=row.confidence,
+                created_at=row.created_at,
+                source_run_id=row.source_run_id,
             )
             for row in result
         ]

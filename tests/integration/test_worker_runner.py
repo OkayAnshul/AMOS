@@ -232,3 +232,37 @@ async def test_the_run_id_does_not_leak_into_the_next_claim(
 
     assert get_current_run_id() is None
     await cleanup(db_factory, run_id)
+
+
+async def test_the_worker_applies_the_runs_stored_options(
+    db_factory: async_sessionmaker[AsyncSession],
+    factory_actor: Actor,
+) -> None:
+    """ADR-016: options travel on the row, so a queued run gets them too."""
+    from amos.agents.schemas import RunOptions
+    from amos.api.persistence import RunService
+
+    await _drain_queue(db_factory)
+    run_id = await RunService(object(), db_factory).enqueue_only(
+        "a goal without its critic",
+        factory_actor,
+        request_id="r",
+        options=RunOptions(critic=False),
+    )
+    seen: list[RunOptions | None] = []
+
+    def factory(options: RunOptions | None) -> ScriptedAgent:
+        seen.append(options)
+        return ScriptedAgent()
+
+    assert await Worker(db_factory, factory).run_once() is True
+    assert seen == [RunOptions(critic=False)]
+    await cleanup(db_factory, run_id)
+
+
+async def _drain_queue(factory: async_sessionmaker[AsyncSession]) -> None:
+    """Earlier tests may leave QUEUED rows; claim order is oldest first."""
+    from sqlalchemy import text
+
+    async with session_scope(factory) as session:
+        await session.execute(text("UPDATE runs SET status = 'COMPLETED' WHERE status = 'QUEUED'"))

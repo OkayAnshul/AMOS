@@ -322,3 +322,48 @@ async def list_dead_letter(
         )
         for row in result
     ]
+
+
+async def queue_overview(session: AsyncSession) -> dict[str, object]:
+    """Queue health for the system panel (V1.7). Counts and worker ids only —
+    no goals — so it is not owner-scoped: the queue is the server's, not a user's.
+
+    There are no heartbeats, so "a worker is alive" is inferred from the last
+    claim, and the panel says so.
+    """
+    row = (
+        await session.execute(
+            sql_text(
+                "SELECT count(*) FILTER (WHERE status = :queued) AS queued, "
+                "count(*) FILTER (WHERE status = :running AND claimed_by IS NOT NULL) AS running, "
+                "max(claimed_at) AS last_claim, "
+                "min(claimed_at) FILTER (WHERE status = :running) AS oldest_running "
+                "FROM runs"
+            ),
+            {"queued": RunStatus.QUEUED, "running": RunStatus.RUNNING},
+        )
+    ).one()
+    workers = [
+        r.claimed_by
+        for r in await session.execute(
+            sql_text(
+                "SELECT DISTINCT claimed_by FROM runs WHERE claimed_at > now() - interval '1 hour' "
+                "AND claimed_by IS NOT NULL ORDER BY claimed_by"
+            )
+        )
+    ]
+    return {
+        "queued": row.queued,
+        "running": row.running,
+        "last_claim_at": row.last_claim.isoformat() if row.last_claim else None,
+        "oldest_running_since": row.oldest_running.isoformat() if row.oldest_running else None,
+        "workers_seen_last_hour": workers,
+    }
+
+
+async def count_dead_letter(session: AsyncSession, *, owner: uuid.UUID) -> int:
+    result = await session.execute(
+        sql_text("SELECT count(*) FROM runs WHERE status = :status AND user_id = :owner"),
+        {"status": RunStatus.DEAD_LETTER, "owner": str(owner)},
+    )
+    return int(result.scalar_one())

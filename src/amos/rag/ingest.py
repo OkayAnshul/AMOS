@@ -62,10 +62,23 @@ class Ingestor:
         self._overlap = overlap
 
     async def ingest_text(
-        self, *, source: str, text: str, title: str | None = None
+        self,
+        *,
+        source: str,
+        text: str,
+        title: str | None = None,
+        owner: uuid.UUID | None = None,
     ) -> tuple[uuid.UUID | None, int]:
-        """Ingest one document. Returns (document_id, chunks) or (None, 0) if unchanged."""
-        digest = content_hash(text)
+        """Ingest one document. Returns (document_id, chunks) or (None, 0) if unchanged.
+
+        `owner` makes it a user's upload (V1.7) rather than system corpus: owned,
+        retrievable only by that user (ADR-013), and replaced only among that
+        user's own documents — an upload named like a corpus file cannot delete
+        it. The content hash is namespaced by owner, because `content_hash` is
+        unique across the table and identical text uploaded by two users is two
+        documents, not one.
+        """
+        digest = content_hash(text if owner is None else f"{owner}\n{text}")
 
         existing = await self._session.execute(
             sql_text("SELECT id FROM documents WHERE content_hash = :hash"),
@@ -86,12 +99,14 @@ class Ingestor:
         await self._session.execute(
             sql_text(
                 """
-                INSERT INTO documents (id, source, title, content_hash, chunk_count, metadata)
-                VALUES (:id, :source, :title, :hash, :count, '{}'::jsonb)
+                INSERT INTO documents
+                    (id, user_id, source, title, content_hash, chunk_count, metadata)
+                VALUES (:id, CAST(:owner AS uuid), :source, :title, :hash, :count, '{}'::jsonb)
                 """
             ),
             {
                 "id": str(document_id),
+                "owner": str(owner) if owner is not None else None,
                 "source": source,
                 "title": title or source,
                 "hash": digest,
@@ -121,9 +136,14 @@ class Ingestor:
         # Scoped to the system corpus (user_id NULL), never a user's upload.
         replaced = await self._session.execute(
             sql_text(
-                "DELETE FROM documents WHERE source = :source AND user_id IS NULL AND id <> :id"
+                "DELETE FROM documents WHERE source = :source AND id <> :id "
+                "AND user_id IS NOT DISTINCT FROM CAST(:owner AS uuid)"
             ),
-            {"source": source, "id": str(document_id)},
+            {
+                "source": source,
+                "id": str(document_id),
+                "owner": str(owner) if owner is not None else None,
+            },
         )
         log_event(
             logger,

@@ -36,6 +36,18 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     llm_max_repair_attempts: int = Field(default=2, ge=0, le=5)
     llm_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    # The quota the page's meter is drawn against (V1.7). Read off the account's
+    # AI Studio rate-limit page on 2026-11-19 for flash-lite; change them with
+    # the model, because quotas are per model.
+    llm_daily_request_limit: int = Field(
+        default=500, ge=1, description="Free-tier requests per day for llm_model."
+    )
+    llm_minute_request_limit: int = Field(
+        default=15, ge=1, description="Free-tier requests per minute for llm_model."
+    )
+    embedding_daily_limit: int = Field(
+        default=1000, ge=1, description="Free-tier embedding requests per day."
+    )
 
     agent_max_iterations: int = Field(
         default=5, ge=1, le=15, description="Hard cap on tool-calling rounds per goal."

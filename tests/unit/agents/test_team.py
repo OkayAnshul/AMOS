@@ -196,3 +196,67 @@ def test_build_agent_passes_the_iteration_setting(tools: ToolRegistry) -> None:
     team = build_agent(settings, provider=FakeProvider([valid_response_json()]), registry=tools)
     assert isinstance(team, AgentTeam)
     assert team.agent_for(AgentRegistry().get("researcher"))._max_iterations == 3
+
+
+async def test_a_delegates_calls_are_counted_in_the_task_result(tools: ToolRegistry) -> None:
+    """Before V1.7 only the delegate's *answer* came back: its model calls and
+    tokens were discarded, so every delegated run under-counted its cost."""
+    from amos.tools.base import ToolCall
+
+    delegate = ToolCall(
+        id="d1",
+        name="delegate",
+        arguments={"target_agent": "analyst", "instruction": "compute 2+2", "context": []},
+    )
+    provider = FakeProvider(
+        [
+            route("researcher"),
+            [delegate],  # researcher delegates
+            valid_response_json(answer="4"),  # analyst answers
+            valid_response_json(answer="it is 4"),  # researcher finishes
+            review("accept"),
+        ]
+    )
+    result = await AgentTeam(provider, tools).run("look up and compute")
+
+    assert provider.call_count == 5
+    assert len(result.llm_calls) == 5, "router, researcher ×2, analyst (delegate), critic"
+    assert result.total_tokens == sum(c.prompt_tokens + c.output_tokens for c in result.llm_calls)
+
+
+def test_options_map_to_settings_and_memory_off_drops_memory_tools() -> None:
+    from amos.agents.schemas import RunOptions
+    from amos.api.dependencies import MEMORY_TOOLS, filter_registry, settings_for
+    from tests.conftest import isolated_settings
+
+    base = isolated_settings()
+    effective = settings_for(base, RunOptions(critic=False, memory=False))
+    assert (effective.critic_enabled, effective.memory_enabled) == (False, False)
+    assert effective.planning_enabled == base.planning_enabled, "untouched options keep defaults"
+    assert settings_for(base, RunOptions()) is base
+
+    from amos.memory.tools import RecallFactsTool, RecallPastRunsTool, RememberFactTool
+    from amos.rag.embeddings import FakeEmbeddings
+
+    embeddings = FakeEmbeddings(dimensions=1536)
+    full = ToolRegistry(
+        [
+            CalculatorTool(),
+            RememberFactTool(None, embeddings),
+            RecallFactsTool(None, embeddings),
+            RecallPastRunsTool(None, embeddings),
+        ]
+    )
+    assert set(full.names) - {"calculator"} == MEMORY_TOOLS
+    assert filter_registry(full, effective).names == ["calculator"]
+    assert filter_registry(full, base) is full
+
+
+def test_a_run_cannot_switch_on_what_the_server_switched_off() -> None:
+    from amos.agents.schemas import RunOptions
+    from tests.conftest import isolated_settings
+
+    server = isolated_settings(critic_enabled=False)
+    assert RunOptions(critic=True).enabling_disabled(server) == ["critic"]
+    assert RunOptions(critic=False).enabling_disabled(server) == []
+    assert RunOptions(planning=False).enabling_disabled(server) == []
