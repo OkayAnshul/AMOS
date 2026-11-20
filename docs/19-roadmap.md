@@ -533,7 +533,7 @@ because the page could not show what it was asked to show.
 | Milestone | Effort | ADR | Interview doc |
 |---|---|---|---|
 | V1.5 Demo-ready foundation ✅ | 1 session (was: + 2 calendar days) | — | `operations.md` |
-| V1.6 Reliability and isolation | 1 session | ADR-014 | `reliability.md`, `security.md` (added to) |
+| V1.6 Reliability and isolation ✅ | 1 session | ADR-014 | `reliability.md`, `security.md` (added to) |
 | V1.7 Live run record and read API | 1½ sessions | ADR-015, ADR-016 | `run-record.md` |
 | V1.8 Mission control web page | 2 sessions | ADR-017 | `demo-surface.md` |
 | V1.9 Web research (SearXNG) | 1 session | ADR-018, ADR-019 | `web-research.md` |
@@ -561,7 +561,7 @@ recorded fixtures (no network) → `make check` → `make attribution-check` →
 **Changed from the plan, and why:** the two-day rebuild became one day, by scoping the corpus;
 `iterative_scan` became a separate test database, by measurement. Both in `decisions-log.md`.
 
-### V1.6 — Reliability and isolation
+### V1.6 — Reliability and isolation ✅ (2026-11-20)
 **Objective** Nothing the page will show is wrong, leaked, or stuck — fixed before it is displayed.
 - A Gemini 5xx is `ProviderUnavailableError` (HTTP 503), retried **once inside the caller's
   deadline** by `RetryingProvider`, applied in `build_provider` — the only construction point
