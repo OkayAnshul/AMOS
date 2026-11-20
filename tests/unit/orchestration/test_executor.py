@@ -420,3 +420,40 @@ async def test_an_unknown_resume_ref_redoes_the_work_rather_than_crashing() -> N
 
     assert by_ref(report) == {"t1": TaskState.SUCCEEDED}
     assert any(g.startswith("do t1") for g in runner.goals)
+
+
+# ---------- V1.6: retrying what cannot succeed ----------
+
+
+async def test_a_daily_quota_error_is_not_retried() -> None:
+    """A daily 429 resets at midnight Pacific. Retrying it with backoff spent up
+    to two more calls against a quota that was already gone (ADR-014)."""
+    from amos.errors import ProviderRateLimitError
+
+    error = ProviderRateLimitError("quota", details={"quota_scope": "day"})
+    runner = ScriptedRunner({"do t1": error})
+    report = await Executor(runner, max_attempts=3, sleep=no_sleep).execute(make_plan(task("t1")))
+
+    assert by_ref(report) == {"t1": TaskState.PERMANENTLY_FAILED}
+    assert len(runner.goals) == 1, "a daily limit must fail at once"
+
+
+async def test_a_per_minute_quota_error_is_still_retried() -> None:
+    """The per-minute window does pass; backoff is the right response to it."""
+    from amos.errors import ProviderRateLimitError
+
+    error = ProviderRateLimitError("quota", details={"quota_scope": "minute"})
+    runner = ScriptedRunner({"do t1": error})
+    await Executor(runner, max_attempts=3, sleep=no_sleep).execute(make_plan(task("t1")))
+
+    assert len(runner.goals) == 3
+
+
+async def test_an_auth_error_is_not_retried() -> None:
+    """A rejected key is rejected on every attempt."""
+    from amos.errors import ProviderAuthError
+
+    runner = ScriptedRunner({"do t1": ProviderAuthError("bad key")})
+    await Executor(runner, max_attempts=3, sleep=no_sleep).execute(make_plan(task("t1")))
+
+    assert len(runner.goals) == 1

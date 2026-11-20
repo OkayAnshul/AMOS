@@ -161,7 +161,10 @@ async def claim_next_run(
 
 
 async def reclaim_abandoned_runs(
-    session: AsyncSession, *, visibility_timeout: int = DEFAULT_VISIBILITY_TIMEOUT
+    session: AsyncSession,
+    *,
+    visibility_timeout: int = DEFAULT_VISIBILITY_TIMEOUT,
+    max_attempts: int = 3,
 ) -> int:
     """Return runs whose worker died to the queue.
 
@@ -172,7 +175,44 @@ async def reclaim_abandoned_runs(
     admits: a worker that is merely *slow* rather than dead can have its run
     stolen and executed twice. That is at-least-once delivery, and the mitigation
     is idempotent work, not a cleverer timeout.
+
+    **A run abandoned on its final attempt is dead-lettered here** (V1.6). Before,
+    it went back to QUEUED — where the claim query, which only takes runs below
+    the attempt ceiling, could never pick it up, and `give_up` never ran because
+    it lives in the failure handler of the worker that had just died. The run sat
+    in QUEUED forever, counted in the queue depth and visible nowhere else.
     """
+    params = {"running": RunStatus.RUNNING, "timeout": visibility_timeout, "max": max_attempts}
+    exhausted = await session.execute(
+        sql_text(
+            """
+            UPDATE runs
+               SET status = :dead, completed_at = now(),
+                   error = CAST(:error AS jsonb)
+             WHERE status = :running
+               AND claimed_at < now() - make_interval(secs => :timeout)
+               AND attempt_count >= :max
+         RETURNING id
+            """
+        ),
+        {
+            **params,
+            "dead": RunStatus.DEAD_LETTER,
+            "error": json.dumps(
+                {
+                    "type": "AttemptsExhausted",
+                    "message": f"worker lost on the final attempt ({max_attempts} of "
+                    f"{max_attempts})",
+                }
+            ),
+        },
+    )
+    dead = [row.id for row in exhausted]
+    for run_id in dead:
+        log_event(
+            logger, "worker.dead_lettered", run_id=str(run_id), reason="lost on final attempt"
+        )
+
     result = await session.execute(
         sql_text(
             """
@@ -180,19 +220,16 @@ async def reclaim_abandoned_runs(
                SET status = :queued, claimed_at = NULL, claimed_by = NULL
              WHERE status = :running
                AND claimed_at < now() - make_interval(secs => :timeout)
+               AND attempt_count < :max
          RETURNING id
             """
         ),
-        {
-            "queued": RunStatus.QUEUED,
-            "running": RunStatus.RUNNING,
-            "timeout": visibility_timeout,
-        },
+        {**params, "queued": RunStatus.QUEUED},
     )
     reclaimed = [row.id for row in result]
     if reclaimed:
         log_event(logger, "worker.reclaimed", count=len(reclaimed))
-    return len(reclaimed)
+    return len(reclaimed) + len(dead)
 
 
 async def enqueue(session: AsyncSession, run_id: uuid.UUID) -> None:
@@ -251,18 +288,25 @@ async def give_up(session: AsyncSession, run_id: uuid.UUID, reason: str) -> None
     log_event(logger, "worker.dead_lettered", run_id=str(run_id), reason=reason)
 
 
-async def list_dead_letter(session: AsyncSession, limit: int = 50) -> list[DeadLetteredRun]:
-    """Runs the queue gave up on, newest first.
+async def list_dead_letter(
+    session: AsyncSession, *, owner: uuid.UUID, limit: int = 50
+) -> list[DeadLetteredRun]:
+    """One user's runs the queue gave up on, newest first.
 
     A dead-letter queue nobody can read is a status column. This is the read.
+
+    `owner` is required, not optional: until V1.6 this query had no owner filter
+    and the endpoint ignored its actor, so every user saw every user's failed
+    goals — the silent failure ADR-013 describes, in a query written as raw SQL
+    outside the scoped repository.
     """
     result = await session.execute(
         sql_text(
             "SELECT id, goal_text, attempt_count, claimed_by, error, completed_at "
-            "FROM runs WHERE status = :status "
+            "FROM runs WHERE status = :status AND user_id = :owner "
             "ORDER BY completed_at DESC NULLS LAST LIMIT :limit"
         ),
-        {"status": RunStatus.DEAD_LETTER, "limit": limit},
+        {"status": RunStatus.DEAD_LETTER, "owner": str(owner), "limit": limit},
     )
     return [
         DeadLetteredRun(

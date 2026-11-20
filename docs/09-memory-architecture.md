@@ -95,6 +95,10 @@ goal asks "have I done this before?", it is already in the table — and is triv
 similar past goal. Without `exclude_run_id`, episodic recall returns the question as its own
 answer.
 
+**Recall is one user's runs.** `EpisodicMemory` is constructed with its owner, like semantic
+memory. Until V1.6 it was not, and `recall_past_runs` searched every user's runs by similarity —
+returning someone else's goal and lesson, ranked highly (`bugs-log.md`, 2026-11-20).
+
 **The lesson is derived, not generated.** It is assembled from recorded facts — how many tasks
 succeeded, which failed and why, which tools ran. Asking the model to write a sentence summarising
 the run would cost an extra API call per run, roughly 5% of the daily quota, to restate what the

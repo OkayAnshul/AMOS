@@ -429,7 +429,7 @@ async def test_the_store_search_is_served_by_the_hnsw_index(db_session: AsyncSes
     await db_session.execute(_text("SET LOCAL enable_sort = off"))
     result = await db_session.execute(
         _text("EXPLAIN (FORMAT JSON) " + SEARCH_SQL),
-        {"embedding": _to_pgvector(normalise([1.0] + [0.0] * 1535)), "limit": 5},
+        {"embedding": _to_pgvector(normalise([1.0] + [0.0] * 1535)), "limit": 5, "owner": None},
     )
     plan = result.scalar_one()
     assert "idx_chunks_embedding" in (plan if isinstance(plan, str) else json.dumps(plan))

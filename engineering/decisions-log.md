@@ -552,3 +552,34 @@ and the V0.5 corpus the numbers were measured on included them.
 *Not claimed:* comparability with the old figures. The top-level docs alone grew from the old corpus's
 300 chunks to 677, so the re-measured numbers start a new series whatever is excluded.
 *Reconsider if:* a demo question needs the build-along material.
+
+---
+
+## 2026-11-20 — The demo track re-planned: everything visible, then the page
+
+**Anshul chose to build the whole track now, in one plan** — retry → live run record → web page →
+web research → complex goals → demo package — with a page that shows "everything, inside and out"
+and every feature switchable per run.
+
+**The order changed, and the numbering with it.** Versions follow build order so tags stay
+monotonic: V1.6 reliability and isolation · V1.7 live run record and read API · V1.8 web page ·
+V1.9 web research · V1.10 complex goals · V2.0 demo package.
+*Why the record before the page:* a survey of the read surface found the page could not show what
+was asked. Model and tool calls were batch-written at the end of a run with no task, agent or
+purpose; routing decisions and critic verdicts were never stored; delegates' calls were discarded.
+A page built first would have shown task states and an answer — the thing V1.9 was meant to go beyond.
+*Why the page before web research:* demo queries 1–7 already work; building the page early leaves a
+finished demo standing if the later milestones run long.
+
+**Groq is deferred** (ADR-014). The roadmap's reason — 20 calls a day — was about
+`gemini-3.5-flash`; the default `flash-lite` has 500. Groq's 8K tokens a minute makes it slower, not
+bigger. The 503 that motivated a fallback is handled by one retry.
+*Reconsider if:* flash-lite fails V1.10's complex goals on quality.
+
+**Web search is self-hosted SearXNG.** Anshul has no keyed search provider; SearXNG needs no key
+and runs beside Postgres. The roadmap's "measure two or three candidates" becomes "measure the one
+available, and keep the tool interface provider-neutral".
+
+**The gate, again.** The working agreement says a milestone is not complete until its interview
+document can be answered unaided, and the next does not start. Building on past it is Anshul's
+explicit choice, as on 2026-09-13; every milestone still writes its document.

@@ -522,18 +522,24 @@ planning goals answered with citations, watched live on a web page, and explaine
 unaided. Authorization, TLS and rate limiting stay out — localhost, one presenter.
 
 ```
-V1.5 foundation ─→ V1.6 provider ─→ V1.7 web research ─→ V1.8 complex goals ─→ V1.9 web page ─→ V2.0 demo
+V1.5 foundation ─→ V1.6 reliability ─→ V1.7 run record ─→ V1.8 web page ─→ V1.9 web research ─→ V1.10 complex goals ─→ V2.0 demo
 ```
+
+**Re-planned 2026-11-20** (`engineering/decisions-log.md`): the whole track built in one plan, the
+page made to show everything the system does, and milestones renumbered to build order so versions
+stay monotonic. The page moved ahead of web research; a live run record was inserted before it,
+because the page could not show what it was asked to show.
 
 | Milestone | Effort | ADR | Interview doc |
 |---|---|---|---|
 | V1.5 Demo-ready foundation ✅ | 1 session (was: + 2 calendar days) | — | `operations.md` |
-| V1.6 Second LLM provider | ½ session | ADR-014 | `providers.md` |
-| V1.7 Web research | 1 session | ADR-015, ADR-016 | `web-research.md` |
-| V1.8 Complex goals | 1 session | ADR-017 | `synthesis.md` |
-| V1.9 Demo web page | 1½ sessions | ADR-018 | `demo-surface.md` |
+| V1.6 Reliability and isolation ✅ | 1 session | ADR-014 | `reliability.md`, `security.md` (added to) |
+| V1.7 Live run record and read API | 1½ sessions | ADR-015, ADR-016 | `run-record.md` |
+| V1.8 Mission control web page | 2 sessions | ADR-017 | `demo-surface.md` |
+| V1.9 Web research (SearXNG) | 1 session | ADR-018, ADR-019 | `web-research.md` |
+| V1.10 Complex goals | 1 session | ADR-020 | `synthesis.md` |
 | V2.0 Demo package and release | ½ session + two rehearsals | — | — |
-| **Total** | **≈ 5½ sessions** | | |
+| **Total** | **≈ 8 sessions** | | |
 
 Every milestone: feature branch → ADR committed before code → tests on `FakeProvider` and
 recorded fixtures (no network) → `make check` → `make attribution-check` → merge → `make release`
@@ -555,86 +561,76 @@ recorded fixtures (no network) → `make check` → `make attribution-check` →
 **Changed from the plan, and why:** the two-day rebuild became one day, by scoping the corpus;
 `iterative_scan` became a separate test database, by measurement. Both in `decisions-log.md`.
 
-### V1.6 — A second LLM provider
-**Objective** Enough daily model calls for a multi-query demo. `gemini-3.5-flash` allows 20 a day
-and one goal costs 3–8.
-- A Groq provider behind `LLMProvider`, over `httpx` (already a dependency) — no new SDK.
-  Groq's rate-limit page listed `openai/gpt-oss-120b` at 30 requests/min and 1K/day on
-  2026-11-18, without saying clearly which plan; **verify on the account's own limits page** at
-  ADR time, and verify structured-output support for the chosen model.
-- `AMOS_LLM_PROVIDER=gemini|groq`; embeddings stay on Gemini (one call per query once ingested).
-- One contract-test suite that both providers pass, on recorded fixtures.
-- **Transient provider errors are retried, once, in one place** (found at V1.5): two of nine eval goals
-  failed on a Gemini `503 UNAVAILABLE — high demand`, raised from a call outside the task executor,
-  so no retry ever saw it and the whole run failed. A bounded retry with jitter for 5xx only (never a
-  429), as a wrapper over `LLMProvider` so Gemini and Groq share it, covered by the contract suite.
-- `make eval` and `make routing` re-run on the new provider and recorded **separately** — numbers
-  from different models are not one series.
-**Reconsider if** the free tier changes, or eval accuracy drops below Gemini's on the same set.
-**Re-examine before building (2026-11-19).** The account page shows the code default,
-`gemini-3.5-flash-lite`, has **500 calls a day** — this milestone's stated reason ("20 a day") was
-about `gemini-3.5-flash`, which is now absent from the page. What is left to justify a second provider:
-the **15/minute** ceiling (the eval suite peaked at 16), model quality beyond flash-lite, and a
-fallback when Gemini returns `503`. Gemma 4 on the same API (30/min, 14.4K/day, but 16K tokens/min)
-is a no-new-code alternative if it handles tools and structured output — measure, don't assume.
-Groq's limits, read the same day, sharpen this: `openai/gpt-oss-120b` allows 30 requests/minute but
-only **8K tokens/minute and 200K/day** — about one AMOS goal a minute and 25 a day. So Groq earns its
-place, if at all, as the higher-quality model and the `503` fallback, not as extra volume. Plan V1.6
-as a measurement first: the same few eval goals on flash-lite, Gemma 4 and `gpt-oss-120b` — pass
-rate, tokens, wall time, any 429 — then decide what to build.
+### V1.6 — Reliability and isolation ✅ (2026-11-20)
+**Objective** Nothing the page will show is wrong, leaked, or stuck — fixed before it is displayed.
+- A Gemini 5xx is `ProviderUnavailableError` (HTTP 503), retried **once inside the caller's
+  deadline** by `RetryingProvider`, applied in `build_provider` — the only construction point
+  (ADR-014). ADR-009's chain of bounds is unchanged.
+- The executor no longer retries a daily 429 or a rejected key.
+- Isolation: dead letters, episodic recall and retrieval scoped to their owner — three places the
+  V1.4 claim did not hold, found by surveying the read surface.
+- A worker lost on a run's final attempt dead-letters it instead of leaving it `QUEUED` forever.
+- `AMOS_AGENT_MAX_ITERATIONS` reaches the specialists.
+- **A second provider is deferred** (ADR-014): flash-lite allows 500 calls a day, not 20, and Groq's
+  8K tokens a minute make it slower, not bigger. `GROQ_API_KEY` stays in `.env`.
+**Accept** each fix's test fails without it · `make check` green · `make eval` against the baseline.
 
-### V1.7 — Web research
-**Objective** Goals about the world, not only about this repository, answered with web
-citations — without giving the model an open network.
-- `web_search` tool. Provider chosen **by measurement**: 10 fixed queries through two or three
-  candidates (Tavily, Brave Search API, self-hosted SearXNG), scored on relevance, free quota
-  (from the provider's own pricing page, that day) and key handling. No unofficial scrapers.
-  Gemini's built-in Search grounding is **not** a free candidate for AMOS's models: 1.5K/day on
-  Gemini 2 / 2.5, **0 on Gemini 3 and newer** (account page, 2026-11-19).
-- `fetch_page` tool: any `https` URL **returned by `web_search` earlier in the same run** —
-  a provenance allowlist enforced by code — plus the existing DNS/SSRF checks, a size cap and
-  HTML-to-text. Page text is untrusted data, never instructions (N-12); a prompt-injection fixture
-  page is part of the tests.
-- A **per-run budget** of model and tool calls, enforced by the orchestrator (ADR-016). Exceeding
-  it ends the run with a partial answer and the reason, not a crash. Complex goals fan out; the
-  quota is finite.
+### V1.7 — Live run record and read API
+**Objective** Everything a run does is stored as it happens — attributed to its task, agent and
+purpose, in order — and readable over HTTP.
+- Every model call and tool call written **as it finishes** (each real attempt, including a failed
+  503 or 429), tagged with task, agent and purpose (planner · router · agent · critic · synthesis ·
+  delegate · reconciler); `run_events` for routing decisions, critic verdicts, task starts, retries
+  and delegation; one sequence orders all of it (ADR-015).
+- Delegates' calls and tokens counted; totals summed from stored calls; citations carry the chunk id.
+- **Per-run options** — planning, multi-agent, critic, delegation, memory — each able to switch off
+  what the server enabled, stored on the run and honoured by the worker (ADR-016).
+- Read API: `GET /v1/runs` (list, idempotency-key lookup) · extended `GET /v1/runs/{id}` ·
+  `GET /v1/memories` and history · `GET /v1/corpus` · `GET /v1/chunks/{id}` · `POST /v1/documents`
+  (user-owned `.md`/`.txt`, JSON body — no new dependency) · `GET /v1/system` · `GET /v1/insights`.
+  Every personal list gets an owner-isolation test.
+**Accept** a run's stored record reconstructs its graph, calls and verdicts · isolation tests ·
+`make eval` unchanged.
+
+### V1.8 — Mission control web page
+**Objective** Show the system working, not just its answer.
+- Plain HTML, CSS and JavaScript served at `/`, no framework, no build step, no CDN, self-hosted
+  fonts and a strict CSP (ADR-017). Model output rendered as text, never as HTML.
+- A live lane graph — one lane per agent, a capsule per task, a tick per call — with an inspector
+  showing every request, response and timing; answer, citations and verdict; history, memory,
+  knowledge and upload, agents and tools, system health and quotas, insights, dead letters,
+  settings and per-run options. Light and dark, keyboard-usable, a presenter mode for a projector.
+- Verified in a real browser with screenshots (Playwright driving the installed Chrome).
+**Accept** demo queries 1–7 run from the page live · browser smoke test · screenshots reviewed.
+
+### V1.9 — Web research
+**Objective** Goals about the world answered with web citations, without an open network.
+- `web_search` over self-hosted **SearXNG** (no key; a pinned container beside Postgres), measured
+  on 10 fixed queries (ADR-018). No unofficial scrapers.
+- `fetch_page`: only URLs returned by `web_search` earlier in the same run — a provenance allowlist
+  in code — with the existing SSRF checks, a size cap and HTML-to-text. Page text is untrusted data
+  (N-12); a prompt-injection fixture page is part of the tests.
+- A **per-run budget** of model calls, tool calls and fetches, enforced in code; exceeding it ends
+  the run with a partial answer and the reason (ADR-019).
 **Accept** recorded-fixture tests for both tools, the injection fixture, the budget cutoff; one
 live opt-in test.
 
-### V1.8 — Complex goals: plans, itineraries, comparisons
-**Objective** "Plan a trip", "compare X and Y", "make a study plan" produce a structured,
-cited deliverable — with the grounding rule made explicit rather than broken.
-- A `writer` agent with **no tools**: composes the deliverable (itinerary, comparison table,
-  report) from evidence gathered by earlier tasks. Every fact cites a source; general-knowledge
-  suggestions are allowed only in a separate section labelled *not sourced* (ADR-017).
-- The planner learns the research → compute → write pattern; the critic checks the
-  sourced/unsourced split.
-- 4–6 complex golden goals with deterministic checks: tools used, citations present, arithmetic
-  correct, sections present. Routing set extended to the new agent.
+### V1.10 — Complex goals
+**Objective** "Plan a trip", "compare X and Y" produce a structured, cited deliverable.
+- A `writer` agent with **no tools** composes it from earlier tasks' evidence. Every sourced item
+  cites a source; suggestions without one go in a separate *not sourced* section (ADR-020). A code
+  check — not the model — verifies each cited source was seen in the run.
+- The planner learns research → compute → write; routing extended to the writer.
+- 4–6 complex golden goals with deterministic checks.
 **Accept** golden goals pass on fixtures; demo queries 8 and 9 of `docs/26-project-explainer.md`
 pass live.
 
-### V1.9 — Demo web page
-**Objective** Show the system working, not just its answer.
-- Backend: `GET /` serves the page (Starlette static files — no new dependency) · `GET /v1/runs`
-  (recent, owner-scoped) · `GET /v1/corpus` · `GET /v1/memories` · `POST /v1/documents` (upload
-  `.md`/`.txt`; PDF only with its own ADR) · `GET /v1/system` (provider, model, enabled features).
-  Every list endpoint gets an owner-isolation test, as in V1.4.
-- Live progress by polling `GET /v1/runs/{id}` on async runs — tasks are persisted as they
-  happen since V1.1. Server-sent events only if polling proves inadequate.
-- Frontend: plain HTML, CSS and JavaScript, no framework and no build step (ADR-018). A
-  "mission control" layout: goal composer with preset demo queries · live task DAG with agent
-  lanes · tool-call feed · answer with citation cards that open the source chunk or URL · critic
-  verdict · run history · memory panel · corpus and upload · dead-letter panel · settings (API
-  key, sync/async). Light and dark, keyboard-usable, legible on a projector.
-- Verified in a real browser with screenshots, not only by tests.
-**Accept** every demo query runs from the page; a browser smoke test; isolation tests.
-
 ### V2.0 — Demo package and release
-- `make demo`: checks database, corpus, keys and quota headroom; seeds memory; prints the URL.
+- `make demo`: checks database, migrations, corpus, keys, SearXNG and quota headroom; seeds memory;
+  prints the URL.
 - `docs/27-demo-script.md`: the queries in order, what each proves, expected output, and the
   fallback when a quota is spent.
-- A screen recording of a full successful run, as the fallback.
+- A recording of a full successful run, as the fallback.
 - Two rehearsals; fix what breaks; `make release VERSION=2.0.0`.
 
 ### Still not chosen

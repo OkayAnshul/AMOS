@@ -239,9 +239,13 @@ class RecallPastRunsTool(Tool):
     async def _run(self, args: PastRunsArgs) -> dict[str, Any]:
         from amos.database.engine import session_scope
 
+        run_id = current_run_uuid(self._run_id)
         async with session_scope(self._factory) as session:
-            episodes = await EpisodicMemory(session, self._embeddings).recall_similar(
-                args.goal, exclude_run_id=self._run_id
+            actor = await actor_for_run(session, run_id)
+            if actor is None:
+                return {"found": 0, "episodes": [], "reason": "No owning run for this call."}
+            episodes = await EpisodicMemory(session, self._embeddings, actor).recall_similar(
+                args.goal, exclude_run_id=run_id
             )
 
         return {

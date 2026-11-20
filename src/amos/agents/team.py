@@ -56,6 +56,7 @@ class AgentTeam:
         timeout: float = 60.0,
         temperature: float = 0.2,
         max_revisions: int = 1,
+        max_iterations: int | None = None,
         critic_enabled: bool = True,
         routing_enabled: bool = True,
         delegation_enabled: bool = True,
@@ -68,6 +69,10 @@ class AgentTeam:
         self._timeout = timeout
         self._temperature = temperature
         self._max_revisions = max_revisions
+        # `AMOS_AGENT_MAX_ITERATIONS` when given; otherwise each spec's own bound.
+        # Before V1.6 the setting never reached the team, so with multi-agent on
+        # (the default) it did nothing.
+        self._max_iterations = max_iterations
         self._critic_enabled = critic_enabled
         self._routing_enabled = routing_enabled
         self._delegation_enabled = delegation_enabled
@@ -132,7 +137,7 @@ class AgentTeam:
             self._provider,
             registry,
             timeout=self._timeout,
-            max_iterations=spec.max_iterations,
+            max_iterations=self._max_iterations or spec.max_iterations,
             temperature=self._temperature,
             system_instruction=instruction,
         )

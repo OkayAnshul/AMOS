@@ -21,15 +21,15 @@ from amos.rag.embeddings import FakeEmbeddings
 pytestmark = pytest.mark.asyncio
 
 
-def episodic(session: AsyncSession) -> EpisodicMemory:
-    return EpisodicMemory(session, FakeEmbeddings(dimensions=1536))
+def episodic(session: AsyncSession, actor: Actor) -> EpisodicMemory:
+    return EpisodicMemory(session, FakeEmbeddings(dimensions=1536), actor)
 
 
 async def seed(
     session: AsyncSession, actor: Actor, goal: str, lesson: str | None = None
 ) -> uuid.UUID:
     run = await RunRepository(session, actor).create_run(goal=goal, request_id="r")
-    await episodic(session).record(run.id, goal, lesson)
+    await episodic(session, actor).record(run.id, goal, lesson)
     return run.id
 
 
@@ -42,7 +42,7 @@ async def test_similar_past_goal_is_found(db_session: AsyncSession, actor: Actor
     )
     await seed(db_session, actor, "explain the security model for reading files")
 
-    hits = await episodic(db_session).recall_similar(
+    hits = await episodic(db_session, actor).recall_similar(
         "calculate a percentage of some number", min_score=0.0
     )
     assert hits
@@ -55,7 +55,7 @@ async def test_the_lesson_is_recalled_with_the_episode(
     """A past goal without what happened is not experience, just history."""
     await seed(db_session, actor, "index the documentation corpus", "3/3 tasks succeeded")
 
-    hits = await episodic(db_session).recall_similar(
+    hits = await episodic(db_session, actor).recall_similar(
         "index the documentation corpus", min_score=0.0
     )
     assert hits[0].lesson == "3/3 tasks succeeded"
@@ -67,8 +67,10 @@ async def test_the_current_run_is_excluded(db_session: AsyncSession, actor: Acto
     goal = "a goal that is being asked about right now"
     run_id = await seed(db_session, actor, goal)
 
-    included = await episodic(db_session).recall_similar(goal, min_score=0.0)
-    excluded = await episodic(db_session).recall_similar(goal, min_score=0.0, exclude_run_id=run_id)
+    included = await episodic(db_session, actor).recall_similar(goal, min_score=0.0)
+    excluded = await episodic(db_session, actor).recall_similar(
+        goal, min_score=0.0, exclude_run_id=run_id
+    )
 
     assert any(h.run_id == run_id for h in included)
     assert all(h.run_id != run_id for h in excluded)
@@ -80,7 +82,7 @@ async def test_runs_without_an_embedding_are_not_returned(
 ) -> None:
     """A run that was never recorded as an episode is not experience."""
     await RunRepository(db_session, actor).create_run(goal="never embedded", request_id="r")
-    hits = await episodic(db_session).recall_similar("never embedded", min_score=0.0)
+    hits = await episodic(db_session, actor).recall_similar("never embedded", min_score=0.0)
     assert all(h.goal != "never embedded" for h in hits)
 
 
@@ -88,7 +90,7 @@ async def test_min_score_excludes_unrelated_experience(
     db_session: AsyncSession, actor: Actor
 ) -> None:
     await seed(db_session, actor, "completely unrelated topic about cooking pasta")
-    hits = await episodic(db_session).recall_similar(
+    hits = await episodic(db_session, actor).recall_similar(
         "quantum chromodynamics lattice gauge theory", min_score=0.9
     )
     assert hits == []
@@ -96,7 +98,9 @@ async def test_min_score_excludes_unrelated_experience(
 
 async def test_episode_records_the_run_outcome(db_session: AsyncSession, actor: Actor) -> None:
     run_id = await seed(db_session, actor, "a goal with a known outcome")
-    hits = await episodic(db_session).recall_similar("a goal with a known outcome", min_score=0.0)
+    hits = await episodic(db_session, actor).recall_similar(
+        "a goal with a known outcome", min_score=0.0
+    )
     episode = next(h for h in hits if h.run_id == run_id)
     assert episode.status == "RECEIVED"
 

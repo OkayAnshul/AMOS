@@ -213,6 +213,32 @@ async def test_a_run_that_exhausts_its_attempts_stops_being_claimed(
     assert await claim_next_run(db_session, "w", max_attempts=3) is None
 
 
+async def test_a_worker_lost_on_the_final_attempt_dead_letters_the_run(
+    db_session: AsyncSession,
+    actor: Actor,
+) -> None:
+    """Reclaim used to return every abandoned run to QUEUED. A run whose worker
+    died on its *last* attempt then sat in QUEUED forever: the claim query only
+    takes runs below the ceiling, and `give_up` only runs from a live worker's
+    failure handler — which is exactly what had died. Found in the V1.6 survey."""
+    run_id = await queue_a_run(db_session, actor)
+    await db_session.execute(
+        text("UPDATE runs SET attempt_count = 2 WHERE id = :id"), {"id": str(run_id)}
+    )
+    claimed = await claim_next_run(db_session, "doomed-worker", max_attempts=3)
+    assert claimed is not None and claimed.run_id == run_id and claimed.attempt_count == 3
+    await db_session.execute(
+        text("UPDATE runs SET claimed_at = now() - interval '20 minutes' WHERE id = :id"),
+        {"id": str(run_id)},
+    )
+
+    await reclaim_abandoned_runs(db_session, visibility_timeout=600, max_attempts=3)
+
+    assert await status_of(db_session, run_id) == RunStatus.DEAD_LETTER
+    listed = await list_dead_letter(db_session, owner=actor.id)
+    assert "final attempt" in next(e for e in listed if e.run_id == str(run_id)).reason
+
+
 async def test_giving_up_records_why(db_session: AsyncSession, actor: Actor) -> None:
     run_id = await queue_a_run(db_session, actor)
     await give_up(db_session, run_id, "crashed three times")
@@ -276,7 +302,7 @@ async def test_dead_letter_listing_carries_what_a_reviewer_needs(
     )
     await give_up(db_session, run_id, "attempts exhausted after 3 tries")
 
-    listed = await list_dead_letter(db_session)
+    listed = await list_dead_letter(db_session, owner=actor.id)
 
     entry = next(e for e in listed if e.run_id == str(run_id))
     assert entry.goal == "compare two designs"
@@ -299,7 +325,7 @@ async def test_a_reason_containing_quotes_does_not_corrupt_the_error_json(
 
     await give_up(db_session, run_id, nasty)
 
-    listed = await list_dead_letter(db_session)
+    listed = await list_dead_letter(db_session, owner=actor.id)
     assert next(e for e in listed if e.run_id == str(run_id)).reason == nasty
 
 

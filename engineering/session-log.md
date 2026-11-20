@@ -1361,3 +1361,51 @@ groundedness 0.94, 70905 tokens. Restore drill (Anshul's terminal): PASSED, 10/1
 ## Next Exact Step
 V1.6 per `engineering/next-session-prompt.md`. Before it: `GROQ_API_KEY` in `.env`; the AI Studio
 free-tier numbers; `make ingest` then `make backup` (re-embeds this session's edited docs).
+
+---
+
+# Session 18
+
+**Date:** 2026-11-20
+**Module:** V1.6 — Reliability and isolation (the track re-planned)
+**Objective:** finish the demo track in one plan. First, make nothing the page will show wrong,
+leaked or stuck.
+
+## What We Changed
+- Plan: the whole track re-planned and approved — V1.6 reliability → V1.7 live run record → V1.8
+  web page → V1.9 web research (SearXNG) → V1.10 complex goals → V2.0 demo. `docs/19-roadmap.md`,
+  `decisions-log.md`.
+- ADR-014: `ProviderUnavailableError` (5xx → HTTP 503); `llm/retry.py` `RetryingProvider`, one retry
+  inside the caller's deadline; `build_provider` the only construction point (judge, routing CLI,
+  reconciler now share it). Groq deferred.
+- `orchestration/executor.py`: `is_retryable` — no retry for a daily 429 or an auth error.
+- Isolation: `worker/queue.py` dead letters need an owner; `memory/episodic.py` built with its actor;
+  `rag/store.py` filters to the system corpus plus the caller's documents.
+- `worker/queue.py`: a run lost on its final attempt is dead-lettered by reclaim.
+- `agents/team.py`: `max_iterations` from settings; `dependencies.py`: `is None`, not `or`.
+- Tests: `test_provider_retry.py` (13), three executor, two team, three isolation + a guard, one
+  queue. Docs: ADR-014, bugs-log (5 entries), experiments-log, `06`, `09`, `13`, `17`, `19`,
+  interview `reliability.md` and `security.md`, next-session prompt, current-state.
+
+## Problems Encountered
+1. The read-surface survey found the V1.4 isolation claim did not hold in three places.
+2. The first eval lost a run to a 503 that outlasted the new retry, and the gate refused to compare.
+3. A Gemini `ServerError` cannot be built by assigning `client.aio.models` (read-only property).
+
+## How We Solved Them
+1. Fixed each with a test that failed first, and widened the source-scan guard to `episodic.py`.
+2. Measured instead of tuning: a second, instrumented run — 20 retries, ≥16 cleared, 0 runs lost,
+   9/9. The baseline is re-stored at V1.7, not from a run inflated by retries.
+3. Replaced the whole client with a stub in the test.
+
+## Tests Performed
+`make check`: 661 passed, 2 skipped; ruff and `mypy --strict` clean. Every new bug test failed
+before its fix. `make eval` ×2 on live Gemini (above). `make attribution-check` clean.
+
+## Things I Learned
+- A guard protects the files it scans.
+- A retry needs a vocabulary — a typed error — before it needs a loop.
+- A poison-message guard in the failure handler cannot fire for the failure that kills it.
+
+## Next Exact Step
+V1.7 — live run record and read API, ADR-015 and ADR-016 first.

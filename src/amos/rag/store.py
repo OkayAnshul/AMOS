@@ -53,7 +53,12 @@ class VectorStore(Protocol):
     async def upsert(self, chunks: list[StoredChunk]) -> int: ...
 
     async def search(
-        self, embedding: list[float], *, limit: int = 5, min_score: float = 0.0
+        self,
+        embedding: list[float],
+        *,
+        limit: int = 5,
+        min_score: float = 0.0,
+        owner: uuid.UUID | None = None,
     ) -> list[Hit]: ...
 
     async def count(self) -> int: ...
@@ -68,6 +73,10 @@ SEARCH_SQL = """
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
     WHERE c.embedding IS NOT NULL
+      -- ADR-013: the system corpus (NULL) plus the caller's own documents. With
+      -- no owner, CAST(NULL) matches nothing and only the system corpus remains.
+      -- Missing until V1.6 — harmless only while ingestion never set user_id.
+      AND (d.user_id IS NULL OR d.user_id = CAST(:owner AS uuid))
     ORDER BY c.embedding <=> CAST(:embedding AS vector)
     LIMIT :limit
 """
@@ -117,9 +126,15 @@ class PgVectorStore:
         return len(chunks)
 
     async def search(
-        self, embedding: list[float], *, limit: int = 5, min_score: float = 0.0
+        self,
+        embedding: list[float],
+        *,
+        limit: int = 5,
+        min_score: float = 0.0,
+        owner: uuid.UUID | None = None,
     ) -> list[Hit]:
-        """Nearest neighbours by cosine distance.
+        """Nearest neighbours by cosine distance, over the system corpus and
+        `owner`'s documents (no owner: the system corpus only).
 
         `<=>` is pgvector's cosine distance operator, and the only one the HNSW
         index built with `vector_cosine_ops` can serve. Using a different
@@ -127,7 +142,11 @@ class PgVectorStore:
         """
         result = await self._session.execute(
             sql_text(SEARCH_SQL),
-            {"embedding": _to_pgvector(embedding), "limit": limit},
+            {
+                "embedding": _to_pgvector(embedding),
+                "limit": limit,
+                "owner": str(owner) if owner is not None else None,
+            },
         )
         return [
             Hit(
@@ -176,8 +195,15 @@ class InMemoryVectorStore:
         return len(chunks)
 
     async def search(
-        self, embedding: list[float], *, limit: int = 5, min_score: float = 0.0
+        self,
+        embedding: list[float],
+        *,
+        limit: int = 5,
+        min_score: float = 0.0,
+        owner: uuid.UUID | None = None,
     ) -> list[Hit]:
+        # No owners in memory: every chunk is "system corpus". `owner` is
+        # accepted so this satisfies the same protocol as PgVectorStore.
         scored = [
             (
                 _cosine_similarity(embedding, stored.embedding),
@@ -242,12 +268,30 @@ class SessionScopedVectorStore:
             return await PgVectorStore(session).upsert(chunks)
 
     async def search(
-        self, embedding: list[float], *, limit: int = 5, min_score: float = 0.0
+        self,
+        embedding: list[float],
+        *,
+        limit: int = 5,
+        min_score: float = 0.0,
+        owner: uuid.UUID | None = None,
     ) -> list[Hit]:
+        """Search as the owner of the current run, unless one is given.
+
+        The same derivation the memory tools use (`amos.auth.actor_for_run`):
+        the tool is built once at startup, so the owner comes from the run being
+        served rather than from a second ambient value.
+        """
+        from amos.auth import actor_for_run
         from amos.database.engine import session_scope
+        from amos.memory.tools import current_run_uuid
 
         async with session_scope(self._factory) as session:
-            return await PgVectorStore(session).search(embedding, limit=limit, min_score=min_score)
+            if owner is None:
+                actor = await actor_for_run(session, current_run_uuid())
+                owner = actor.id if actor is not None else None
+            return await PgVectorStore(session).search(
+                embedding, limit=limit, min_score=min_score, owner=owner
+            )
 
     async def count(self) -> int:
         from amos.database.engine import session_scope

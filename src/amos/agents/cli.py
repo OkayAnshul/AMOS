@@ -9,14 +9,14 @@ import asyncio
 
 from amos.agents.registry import AgentRegistry
 from amos.agents.router import ROUTING_CASES, Router, evaluate_routing
+from amos.api.dependencies import build_provider
 from amos.config import get_settings
-from amos.llm.gemini import GeminiProvider
 from amos.observability import configure_logging
 
 
 async def routing() -> None:
     settings = get_settings()
-    router = Router(GeminiProvider(settings.require_api_key(), settings.llm_model), AgentRegistry())
+    router = Router(build_provider(settings), AgentRegistry())
     result = await evaluate_routing(router, ROUTING_CASES)
 
     print(result.summary())

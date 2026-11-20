@@ -48,7 +48,7 @@ class RunService:
         self,
         agent: object,
         session_factory: async_sessionmaker[AsyncSession] | None,
-        episodic: Callable[[AsyncSession], EpisodicMemory] | None = None,
+        episodic: Callable[[AsyncSession, Actor], EpisodicMemory] | None = None,
         trace_content: bool = False,
         reconciler: MemoryReconciler | None = None,
     ) -> None:
@@ -179,7 +179,7 @@ class RunService:
         if self._episodic is not None:
             try:
                 async with session_scope(self._factory) as session:
-                    await self._episodic(session).record(run_id, goal, _lesson_from(result))
+                    await self._episodic(session, actor).record(run_id, goal, _lesson_from(result))
             except Exception as exc:  # noqa: BLE001
                 log_event(
                     logger,
@@ -204,14 +204,14 @@ class RunService:
         log_event(logger, "run.persisted", run_id=str(run_id))
         return result, run_id
 
-    async def list_dead_letter(self, limit: int = 50) -> list[DeadLetteredRun]:
-        """Runs the queue gave up on. Empty without persistence."""
+    async def list_dead_letter(self, actor: Actor, limit: int = 50) -> list[DeadLetteredRun]:
+        """The actor's runs the queue gave up on. Empty without persistence."""
         from amos.worker.queue import list_dead_letter
 
         if self._factory is None:
             return []
         async with session_scope(self._factory) as session:
-            return await list_dead_letter(session, limit)
+            return await list_dead_letter(session, owner=actor.id, limit=limit)
 
     async def get_trace(self, run_id: uuid.UUID, actor: Actor) -> RunTrace | None:
         if self._factory is None:

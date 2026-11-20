@@ -146,10 +146,13 @@ class Worker:
         log_event(logger, "worker.run_failed", run_id=str(run_id), error=type(exc).__name__)
 
     async def sweep(self) -> int:
-        """Return runs abandoned by dead workers to the queue."""
+        """Return runs abandoned by dead workers to the queue — or, on their
+        final attempt, to the dead-letter queue."""
         async with session_scope(self._factory) as session:
             return await reclaim_abandoned_runs(
-                session, visibility_timeout=self._visibility_timeout
+                session,
+                visibility_timeout=self._visibility_timeout,
+                max_attempts=self._max_attempts,
             )
 
     async def run_forever(self, *, sweep_every: int = 30) -> None:

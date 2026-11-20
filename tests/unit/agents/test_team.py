@@ -178,3 +178,21 @@ async def test_single_routable_agent_skips_the_routing_call(tools: ToolRegistry)
 
     assert result.agent_name == "analyst"
     assert provider.call_count == 2, "nothing to choose between, so no router call"
+
+
+def test_the_iteration_setting_reaches_the_specialists(tools: ToolRegistry) -> None:
+    """`AMOS_AGENT_MAX_ITERATIONS` was read only by the single-agent path, so
+    with multi-agent on (the default) it silently did nothing (V1.6 survey)."""
+    team = AgentTeam(FakeProvider([valid_response_json()]), tools, max_iterations=2)
+    specialist = team.agent_for(AgentRegistry().get("analyst"))
+    assert specialist._max_iterations == 2
+
+
+def test_build_agent_passes_the_iteration_setting(tools: ToolRegistry) -> None:
+    from amos.api.dependencies import build_agent
+    from tests.conftest import isolated_settings
+
+    settings = isolated_settings(agent_max_iterations=3, planning_enabled=False)
+    team = build_agent(settings, provider=FakeProvider([valid_response_json()]), registry=tools)
+    assert isinstance(team, AgentTeam)
+    assert team.agent_for(AgentRegistry().get("researcher"))._max_iterations == 3

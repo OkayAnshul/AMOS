@@ -174,6 +174,38 @@ Next would be authorization, because it is the one people assume is already ther
 
 ---
 
+## Added at V1.6 — three leaks the V1.4 guards did not cover
+
+### V1.4 claimed isolation. Where did it not hold, and how was that found?
+
+Three places, all raw SQL outside the owner-scoped repository:
+- `GET /v1/runs/dead-letter` took an actor and ignored it — every user saw every user's failed goals.
+- Episodic recall (`recall_past_runs`) searched everyone's runs by similarity.
+- Retrieval had no owner filter at all, though ADR-013 says `user_id IS NULL OR user_id = :actor`.
+
+Found by mapping every read the demo page would make — the first thing that would have *displayed*
+these rows, to an audience.
+
+### Why did the structural guards not catch them?
+
+A guard protects the files it scans. V1.4's source-scan tests covered `repository.py` and
+`semantic.py`; the leaks were in `worker/queue.py`, `memory/episodic.py` and `rag/store.py`.
+Episodic memory now has its own guard, and `EpisodicMemory` is constructed with its actor like
+`SemanticMemory` — the ADR-013 pattern, applied where it was missing.
+
+### The retrieval leak was harmless. Why fix it now?
+
+Because ingestion never set `user_id`, every document was system corpus, so there was nothing
+private to leak — until V1.7 lets a user upload a document. A missing filter is a bug the moment the
+data it would have hidden exists; fixing it before the upload endpoint means it never shipped.
+
+### With no run (eval, the retrieval CLI), what does retrieval see?
+
+The system corpus only. `CAST(NULL AS uuid)` matches no owner, so `user_id IS NULL` is all that
+remains — failing closed, not open.
+
+---
+
 ## What this milestone does *not* claim
 
 - **AMOS is still not safe to expose publicly.** Authentication is a precondition, not a

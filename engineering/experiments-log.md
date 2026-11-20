@@ -470,3 +470,26 @@ restore-drill: PASSED, every table matches
 restoring under pressure, or anything about memories and runs — both tables were empty. Row counts
 prove rows arrived, not that their contents match; the vector probe is the only content check.
 **Decision affected:** back up after every ingest (`docs/18-deployment.md`).
+
+---
+
+## 2026-11-20 — Does one retry inside the deadline clear Gemini's 503s? (V1.6, ADR-014)
+**Question:** ADR-014 bets that "high demand" passes in about a second. Does it, on a real eval?
+**Setup:** `make eval` twice on V1.6, flash-lite, 880 chunks, during sustained Gemini overload
+(~08:30–08:50 Pacific). The second run at `INFO` so every `llm.retry`, `task.retrying` and
+`task.failed` event was counted.
+**Result:**
+| Run | Cases | Provider retries | Escaped the retry | Runs lost |
+|---|---|---|---|---|
+| 1 (WARNING logs) | 7/8 passed, 1 unmeasurable | not counted | 1 × 503 ended a run; 1 × timeout on the retry's remaining 23.1 s | 1 |
+| 2 (INFO logs) | **9/9 passed**, refusal 2/2, groundedness 0.89, 50 417 tokens | **20** | 2 × 503 again, 2 × timeout in the remaining budget — all inside tasks, all recovered by the executor's task retry | **0** |
+**Conclusion:** one retry cleared **at least 16 of 20** 503s (80%) under sustained overload; the
+escapes were absorbed one level up, because they happened inside tasks. The shared deadline did
+its job: no retry was ever given more than the time left (minimum seen 11.35 s), and none was
+skipped. Run 1's lost run is the remaining risk — a 503 that outlasts the retry *outside* a task.
+**Not shown:** a controlled comparison. 2026-11-19's 2-of-9 losses without the retry were a
+different hour and a different load. Nor does this say whether a longer delay would do better.
+**Decision affected:** ADR-014 stands. Its *reconsider if* ("503s outlast one retry in practice")
+fired once in 20 — kept under watch, not acted on from one run. **The baseline was not re-stored:**
+the gate refuses to compare 880 chunks with 850, and a run inflated by 20 retries is a poor
+reference; it is re-measured at V1.7's close, when the eval must run again anyway.

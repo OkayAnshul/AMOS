@@ -16,6 +16,7 @@ from amos.config import Settings
 from amos.database.progress import RunProgress
 from amos.llm.base import LLMProvider
 from amos.llm.gemini import GeminiProvider
+from amos.llm.retry import RetryingProvider
 from amos.memory.tools import RecallFactsTool, RecallPastRunsTool, RememberFactTool
 from amos.orchestration.executor import Executor
 from amos.orchestration.orchestrator import Orchestrator
@@ -26,7 +27,16 @@ from amos.tools.registry import ToolRegistry
 
 
 def build_provider(settings: Settings) -> LLMProvider:
-    return GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model)
+    """The one place a provider is constructed (V1.6).
+
+    Wrapped in `RetryingProvider` so a 5xx costs one extra call wherever it
+    happens — planner and synthesis included, which nothing retried before
+    (ADR-014). The judge and the routing CLI come through here too, rather than
+    building their own unwrapped provider.
+    """
+    return RetryingProvider(
+        GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model)
+    )
 
 
 def build_retrieval_tool(
@@ -85,9 +95,12 @@ def build_tool_agent(
     registry: ToolRegistry | None = None,
 ) -> ToolUsingAgent:
     """The V0.2 agent: tool-using, bounded loop. Also the executor's task runner."""
+    # `is None`, not `or`: ToolRegistry defines __len__, so an EMPTY registry is
+    # falsy and `registry or build_registry(...)` silently replaced it with the
+    # full tool set (found in the V1.6 survey).
     return ToolUsingAgent(
-        provider or build_provider(settings),
-        registry or build_registry(settings),
+        provider if provider is not None else build_provider(settings),
+        registry if registry is not None else build_registry(settings),
         timeout=settings.llm_timeout_seconds,
         max_iterations=settings.agent_max_iterations,
         temperature=settings.llm_temperature,
@@ -105,8 +118,8 @@ def build_agent(
     Both satisfy `run(goal) -> AgentResult`, so nothing downstream branches on
     which one is in use.
     """
-    provider = provider or build_provider(settings)
-    tools = registry or build_registry(settings, session_factory)
+    provider = provider if provider is not None else build_provider(settings)
+    tools = registry if registry is not None else build_registry(settings, session_factory)
 
     # V0.7: the team is a task runner like any other single agent, because they
     # all satisfy `run(goal) -> AgentResult`. That interface holding across five
@@ -119,6 +132,7 @@ def build_agent(
             timeout=settings.llm_timeout_seconds,
             temperature=settings.llm_temperature,
             max_revisions=settings.max_revisions,
+            max_iterations=settings.agent_max_iterations,
             critic_enabled=settings.critic_enabled,
             delegation_enabled=settings.delegation_enabled,
             max_delegation_depth=settings.max_delegation_depth,
@@ -158,7 +172,7 @@ def build_grounded_agent(settings: Settings, provider: LLMProvider | None = None
     """The V0.1 agent: no tools. Kept because it is still the right choice when
     a goal needs no tools, and because it is what the repair-loop tests cover."""
     return GroundedAgent(
-        provider or build_provider(settings),
+        provider if provider is not None else build_provider(settings),
         timeout=settings.llm_timeout_seconds,
         max_repair_attempts=settings.llm_max_repair_attempts,
         temperature=settings.llm_temperature,

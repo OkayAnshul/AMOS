@@ -124,7 +124,7 @@ Unbounded anything is a denial-of-service vector, including a self-inflicted one
 | Rate limiting (inbound) | ❌ | No untrusted callers yet |
 | Audit log | ✅ **durable since V0.3** | Every LLM and tool call is a row (`llm_calls`, `tool_calls`), reachable from `GET /v1/runs/{id}`. This row read "not durable until V0.3" for seven milestones after V0.3 shipped. |
 | Human approval workflow | ❌ | Required before any `WRITE` tool. Registry refuses them until it exists. |
-| Data isolation | ✅ **V1.4** | `user_id` on `runs` and `memories`, scoped where queries are built. `documents` is deliberately shared — see below. |
+| Data isolation | ✅ **V1.4, corrected V1.6** | `user_id` on `runs` and `memories`, scoped where queries are built. `documents` is deliberately shared — see below. V1.6 closed three places it did not hold: dead letters, episodic recall and retrieval (`bugs-log.md`, 2026-11-20). |
 
 **AMOS is still not safe to expose publicly**, and nothing in it should be described as
 production-secure. Authentication is a *precondition* for exposure, not a sufficient one — there

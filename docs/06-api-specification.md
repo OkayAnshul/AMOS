@@ -125,7 +125,8 @@ on this path.
 
 ### `GET /v1/runs/dead-letter`
 
-Runs the queue gave up on, newest first. `?limit=` defaults to 50, capped at 200.
+The caller's runs the queue gave up on, newest first. `?limit=` defaults to 50, capped at 200.
+**Owner-scoped since V1.6** — before, it ignored the caller and listed every user's (`bugs-log.md`).
 
 **These are not ordinary failures.** A `FAILED` run executed and produced a verdict; a
 `DEAD_LETTER` run never got one — the worker died on it `AMOS_WORKER_MAX_ATTEMPTS` times and the
@@ -168,12 +169,13 @@ parsing prose.
 |---|---|---|
 | `200` | Success | — |
 | `202` | Goal queued for a worker | — poll `GET /v1/runs/{id}` |
-| `404` | Unknown `run_id` | No |
+| `401` | Missing, malformed or unknown API key (`Authorization: Bearer <key>`), with a database | No — supply a valid key |
+| `404` | Unknown `run_id`, or another user's | No |
 | `422` | Request body failed validation (empty goal, missing field, non-UUID `run_id`) | No — fix the request |
 | `429` | `ProviderRateLimitError` | Yes, with backoff |
 | `500` | `ConfigurationError` or unhandled | No — server misconfigured |
 | `502` | `ProviderAuthError`, `OutputValidationError` or `ToolLoopExhaustedError` | No |
-| `503` | Persistence required but not configured | No |
+| `503` | `ProviderUnavailableError` (provider 5xx, after one retry — ADR-014), or persistence required but not configured | Provider: yes, shortly · persistence: no |
 | `504` | `ProviderTimeoutError` | Yes |
 
 `502` for `OutputValidationError` is the considered choice: the request was valid and AMOS
@@ -187,10 +189,8 @@ type is one line.
 
 ## Not yet implemented
 
-No authentication, no authorization, no rate limiting, no pagination, no list endpoint
-(`GET /v1/runs` does not exist), no cancellation, no streaming or SSE, and no `/metrics`
-endpoint — metrics leave over OTLP only.
-
-Auth arrives when there is more than one user. Adding it now would mean a `users` table with one
-permanent row (see `docs/05-data-model.md`, deliberate omissions). **AMOS is not currently safe
-to expose publicly**; `docs/13-security.md` says so in more detail.
+Authentication exists since V1.4 (API keys, ADR-013); **authorization does not** — any
+authenticated user can call every endpoint. No inbound rate limiting, no pagination, no list
+endpoint yet (`GET /v1/runs` arrives at V1.7), no cancellation, no streaming or SSE, and no
+`/metrics` endpoint — metrics leave over OTLP only. **AMOS is not safe to expose publicly**;
+`docs/13-security.md` says so in more detail.
