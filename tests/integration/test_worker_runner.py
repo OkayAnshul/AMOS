@@ -70,7 +70,7 @@ async def test_the_worker_executes_a_queued_run(
 ) -> None:
     run_id = await queue_a_run(db_factory, factory_actor, "a queued goal")
     agent = ScriptedAgent()
-    worker = Worker(db_factory, lambda: agent)
+    worker = Worker(db_factory, lambda _options: agent)
 
     assert await worker.run_once() is True
     assert agent.goals == ["a queued goal"]
@@ -83,7 +83,7 @@ async def test_run_once_reports_when_there_is_nothing_to_do(
 ) -> None:
     async with session_scope(db_factory) as session:
         await session.execute(text("UPDATE runs SET status='COMPLETED' WHERE status='QUEUED'"))
-    worker = Worker(db_factory, ScriptedAgent)
+    worker = Worker(db_factory, lambda _options: ScriptedAgent())
     assert await worker.run_once() is False
 
 
@@ -94,7 +94,7 @@ async def test_a_failing_run_does_not_kill_the_worker(
     """A worker that dies on one bad run stops draining the queue entirely."""
     run_id = await queue_a_run(db_factory, factory_actor, "will fail")
     agent = ScriptedAgent(ProviderTimeoutError("timed out"))
-    worker = Worker(db_factory, lambda: agent, max_attempts=3)
+    worker = Worker(db_factory, lambda _options: agent, max_attempts=3)
 
     assert await worker.run_once() is True, "the worker handled it and kept going"
     await cleanup(db_factory, run_id)
@@ -107,7 +107,7 @@ async def test_an_unexpected_exception_is_also_survived(
     """Not just AmosError — anything. An unhandled exception in one run must not
     take the worker down."""
     run_id = await queue_a_run(db_factory, factory_actor, "will explode")
-    worker = Worker(db_factory, lambda: ScriptedAgent(RuntimeError("boom")))
+    worker = Worker(db_factory, lambda _options: ScriptedAgent(RuntimeError("boom")))
 
     assert await worker.run_once() is True
     await cleanup(db_factory, run_id)
@@ -124,7 +124,9 @@ async def test_a_run_that_exhausts_its_attempts_is_given_up(
             text("UPDATE runs SET attempt_count = 2 WHERE id = :id"), {"id": str(run_id)}
         )
 
-    worker = Worker(db_factory, lambda: ScriptedAgent(ProviderTimeoutError("x")), max_attempts=3)
+    worker = Worker(
+        db_factory, lambda _options: ScriptedAgent(ProviderTimeoutError("x")), max_attempts=3
+    )
     await worker.run_once()
 
     # DEAD_LETTER since V1.1, not FAILED: the ceiling stopped the retries, so
@@ -140,7 +142,7 @@ async def test_the_worker_id_identifies_who_holds_a_run(
 ) -> None:
     """So a stuck run names its owner rather than being anonymous."""
     run_id = await queue_a_run(db_factory, factory_actor, "goal")
-    worker = Worker(db_factory, ScriptedAgent, worker_id="worker-alpha")
+    worker = Worker(db_factory, lambda _options: ScriptedAgent(), worker_id="worker-alpha")
     await worker.run_once()
 
     async with session_scope(db_factory) as session:
@@ -165,7 +167,7 @@ async def test_sweep_returns_abandoned_runs_to_the_queue(
             {"id": str(run_id)},
         )
 
-    worker = Worker(db_factory, ScriptedAgent, visibility_timeout=600)
+    worker = Worker(db_factory, lambda _options: ScriptedAgent(), visibility_timeout=600)
     assert await worker.sweep() >= 1
     assert await status_of(db_factory, run_id) == RunStatus.QUEUED
     await cleanup(db_factory, run_id)
@@ -176,7 +178,7 @@ async def test_completed_runs_are_counted(
     factory_actor: Actor,
 ) -> None:
     ids = [await queue_a_run(db_factory, factory_actor, f"g{i}") for i in range(2)]
-    worker = Worker(db_factory, ScriptedAgent)
+    worker = Worker(db_factory, lambda _options: ScriptedAgent())
     await worker.run_once()
     await worker.run_once()
 
@@ -208,7 +210,7 @@ async def test_the_worker_puts_the_run_id_in_context(
             return result()
 
     run_id = await queue_a_run(db_factory, factory_actor, "context")
-    worker = Worker(db_factory, ContextReadingAgent)
+    worker = Worker(db_factory, lambda _options: ContextReadingAgent())
     await worker.run_once()
 
     assert seen == [str(run_id)]
@@ -225,7 +227,7 @@ async def test_the_run_id_does_not_leak_into_the_next_claim(
     from amos.observability import get_current_run_id
 
     run_id = await queue_a_run(db_factory, factory_actor, "first")
-    worker = Worker(db_factory, ScriptedAgent)
+    worker = Worker(db_factory, lambda _options: ScriptedAgent())
     await worker.run_once()
 
     assert get_current_run_id() is None

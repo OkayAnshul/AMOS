@@ -19,8 +19,9 @@ import time
 from typing import Protocol
 
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence, TaskRecord
+from amos.database.recorder import record_event
 from amos.llm.base import LLMCallRecord, LLMProvider, LLMRequest
-from amos.observability import get_request_id, log_event, new_request_id
+from amos.observability import call_scope, get_request_id, log_event, new_request_id
 from amos.orchestration.executor import (
     DEFAULT_TASK_TIMEOUT_SECONDS,
     ExecutionReport,
@@ -148,13 +149,25 @@ class Orchestrator:
                     tasks=len(plan.tasks),
                     already_done=len(completed),
                 )
+                await record_event(
+                    "plan.resumed", tasks=len(plan.tasks), already_done=sorted(completed)
+                )
                 return plan, completed
 
-        plan = await self._planner.plan(goal, calls)
+        with call_scope(purpose="planner", agent=None, task_ref=None):
+            plan = await self._planner.plan(goal, calls)
         if self._plan_store is not None:
             # Before execution: a crash between here and the first task must
             # still leave a record of what was going to be attempted.
             await self._plan_store.save(plan)
+        await record_event(
+            "plan.created",
+            reasoning=plan.reasoning,
+            tasks=[
+                {"id": t.id, "description": t.description, "depends_on": list(t.depends_on)}
+                for t in plan.tasks
+            ],
+        )
         return plan, {}
 
     async def _synthesise(
@@ -190,15 +203,16 @@ class Orchestrator:
             f"\n\nThese tasks did not succeed: {', '.join(skipped)}" if skipped else ""
         )
 
-        response = await self._provider.complete(
-            LLMRequest(
-                prompt=prompt,
-                system_instruction=SYNTHESIS_INSTRUCTION,
-                response_schema=AgentResponse,
-                temperature=self._temperature,
-            ),
-            timeout=self._timeout,
-        )
+        with call_scope(purpose="synthesis", agent=None, task_ref=None):
+            response = await self._provider.complete(
+                LLMRequest(
+                    prompt=prompt,
+                    system_instruction=SYNTHESIS_INSTRUCTION,
+                    response_schema=AgentResponse,
+                    temperature=self._temperature,
+                ),
+                timeout=self._timeout,
+            )
         calls.append(
             LLMCallRecord(
                 provider=response.provider,

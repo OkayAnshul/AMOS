@@ -39,8 +39,10 @@ from typing import Any, ClassVar, Protocol
 from pydantic import BaseModel, Field
 
 from amos.agents.messages import AgentTask
-from amos.observability import log_event
-from amos.tools.base import Permission, Tool
+from amos.database.recorder import record_event
+from amos.llm.base import LLMCallRecord
+from amos.observability import call_scope, log_event
+from amos.tools.base import Permission, Tool, ToolOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,11 @@ class DelegationBudget:
     def __init__(self, limit: int = DEFAULT_BUDGET) -> None:
         self.limit = limit
         self.spent = 0
+        # What delegates spent, so the run that delegated can account for it.
+        # Before V1.7 a delegate's calls and tokens were discarded: only its
+        # answer came back, and `total_tokens` under-counted every delegated run.
+        self.llm_calls: list[LLMCallRecord] = []
+        self.tool_outcomes: list[ToolOutcome] = []
 
     @property
     def exhausted(self) -> bool:
@@ -186,7 +193,29 @@ class DelegateTool(Tool):
         )
 
         agent = self._factory(target, depth=self._depth + 1)
-        result = await agent.run(_prompt_from(task))
+        await record_event(
+            "delegation.started",
+            delegation_id=task.task_id,
+            source=self._caller,
+            target=target,
+            instruction=args.instruction,
+            depth=self._depth + 1,
+        )
+        # The delegate's calls are its own: tagged with its name and purpose, and
+        # the scope is reset afterwards (call_scope), so the caller's later calls
+        # are not mislabelled as the delegate's.
+        with call_scope(agent=target, purpose="delegate"):
+            result = await agent.run(_prompt_from(task))
+        self._budget.llm_calls.extend(result.llm_calls)
+        self._budget.tool_outcomes.extend(result.tool_outcomes)
+        await record_event(
+            "delegation.finished",
+            delegation_id=task.task_id,
+            source=self._caller,
+            target=target,
+            answer=result.response.answer[:2000],
+            tokens=result.total_tokens,
+        )
 
         log_event(logger, "delegation.returned", task_id=task.task_id, target=task.target_agent)
         return {

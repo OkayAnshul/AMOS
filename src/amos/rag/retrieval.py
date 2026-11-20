@@ -98,6 +98,10 @@ class SearchKnowledgeTool(Tool):
             "passages": [
                 {
                     "citation": hit.source or str(hit.document_id),
+                    # So a citation can open the exact passage it came from
+                    # (`GET /v1/chunks/{id}`, V1.7). Dropped before, which left
+                    # a citation pointing at a whole file.
+                    "chunk_id": str(hit.chunk_id),
                     "heading": hit.heading,
                     "score": round(hit.score, 4),
                     "content": hit.content,

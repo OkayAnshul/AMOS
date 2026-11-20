@@ -16,10 +16,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from amos import __version__
-from amos.agents.schemas import AgentResult, GoalRequest, QueuedRun, RunTrace
+from amos.agents.schemas import AgentResult, GoalRequest, QueuedRun, RunOptions, RunTrace
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent
-from amos.api.dependencies import build_agent, build_provider, build_registry
+from amos.api.dependencies import build_agent, build_provider, build_registry, build_run_agent
 from amos.api.persistence import RunService
 from amos.auth import LOCAL_ACTOR, Actor, authenticate, key_from_header
 from amos.config import Settings, get_settings
@@ -141,14 +141,29 @@ def create_app(
             app.state.engine = create_engine(settings)
             factory = create_session_factory(app.state.engine)
 
-        # One provider per process (V1.6): the agent and the reconciler share it,
-        # rather than the reconciler building a second client of its own.
+        # One provider and one tool registry per process (V1.6/V1.7): the agent,
+        # every per-run agent and the reconciler share them.
         provider = None
-        if app.state.agent is None or (app.state.run_service is None and factory is not None):
-            provider = build_provider(settings)
-
+        registry = None
+        agent_factory = None
         if app.state.agent is None:
-            app.state.agent = build_agent(settings, provider=provider, session_factory=factory)
+            provider = build_provider(settings)
+            registry = build_registry(settings, factory)
+            app.state.agent = build_agent(
+                settings, provider=provider, registry=registry, session_factory=factory
+            )
+            shared_provider, shared_registry = provider, registry
+
+            def agent_factory(options: RunOptions) -> object:
+                return build_run_agent(
+                    settings,
+                    options,
+                    provider=shared_provider,
+                    registry=shared_registry,
+                    session_factory=factory,
+                )
+        elif app.state.run_service is None and factory is not None:
+            provider = build_provider(settings)
 
         # Persistence is optional so the app still runs without a database —
         # earlier milestones' behaviour stays reachable, and tests need no container.
@@ -168,7 +183,7 @@ def create_app(
             if factory is not None:
                 reconciler = MemoryReconciler(
                     provider if provider is not None else build_provider(settings),
-                    build_registry(settings, factory),
+                    registry if registry is not None else build_registry(settings, factory),
                     timeout=settings.llm_timeout_seconds,
                     enabled=settings.memory_reconcile_enabled,
                 )
@@ -179,6 +194,7 @@ def create_app(
                 episodic,
                 trace_content=settings.trace_content,
                 reconciler=reconciler,
+                agent_factory=agent_factory,
             )
 
         log_event(
@@ -256,6 +272,22 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
 
+    def _checked(options: RunOptions | None) -> RunOptions | None:
+        """Off only (ADR-016): a run may switch off what this server enabled,
+        never switch on what it disabled."""
+        if options is None:
+            return None
+        refused = options.enabling_disabled(settings)
+        if refused:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "A run can only switch features off. These are off on this server: "
+                    + ", ".join(refused)
+                ),
+            )
+        return options
+
     @app.post("/v1/goals", response_model=AgentResult)
     async def submit_goal(
         payload: GoalRequest,
@@ -274,6 +306,7 @@ def create_app(
             actor,
             request_id=get_request_id() or "",
             idempotency_key=idempotency_key,
+            options=_checked(payload.options),
         )
         if run_id is not None:
             result.run_id = str(run_id)
@@ -308,6 +341,7 @@ def create_app(
                 actor,
                 request_id=get_request_id() or "",
                 idempotency_key=idempotency_key,
+                options=_checked(payload.options),
             )
             # Location points at where the outcome will appear, so a client does
             # not have to construct the polling URL itself.

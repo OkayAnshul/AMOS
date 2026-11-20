@@ -15,7 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from amos.agents.schemas import (
     AgentResult,
+    RunOptions,
     RunTrace,
+    TraceEvent,
     TraceLLMCall,
     TraceStep,
     TraceTask,
@@ -24,11 +26,12 @@ from amos.agents.schemas import (
 from amos.auth import Actor
 from amos.database.engine import session_scope
 from amos.database.models import Run
-from amos.database.repository import RunRepository
+from amos.database.recorder import RunRecorder, record_event, recording
+from amos.database.repository import RunRepository, RunStatus
 from amos.errors import AmosError, ConfigurationError
 from amos.memory.episodic import EpisodicMemory
 from amos.memory.reconcile import MemoryReconciler
-from amos.observability import log_event, set_current_run_id
+from amos.observability import call_scope, log_event, set_current_run_id
 from amos.telemetry.metrics import instruments, safe_labels
 from amos.telemetry.tracing import describe_goal, span
 from amos.worker.queue import DeadLetteredRun
@@ -51,12 +54,16 @@ class RunService:
         episodic: Callable[[AsyncSession, Actor], EpisodicMemory] | None = None,
         trace_content: bool = False,
         reconciler: MemoryReconciler | None = None,
+        agent_factory: Callable[[RunOptions], object] | None = None,
     ) -> None:
         self._agent = agent
         self._factory = session_factory
         self._episodic = episodic
         self._trace_content = trace_content
         self._reconciler = reconciler
+        # Builds a per-run agent when a run switches features off (ADR-016).
+        # Optional: without it, options are stored and the shared agent runs.
+        self._agent_factory = agent_factory
 
     @property
     def persistence_enabled(self) -> bool:
@@ -68,18 +75,25 @@ class RunService:
         exists and therefore cannot go through a scoped repository."""
         return self._factory
 
+    def _agent_for(self, options: RunOptions | None) -> object:
+        if options is not None and options.given() and self._agent_factory is not None:
+            return self._agent_factory(options)
+        return self._agent
+
     async def enqueue_only(
         self,
         goal: str,
         actor: Actor,
         request_id: str,
         idempotency_key: str | None = None,
+        options: RunOptions | None = None,
     ) -> uuid.UUID:
         """Record the run and hand it to the queue, without executing it.
 
         The async path (V0.8). The HTTP request returns as soon as the row is
         durable, which is the point: a goal taking minutes should not hold a
         connection open, and a client disconnect should not lose the work.
+        Options travel on the row, so the worker applies them (ADR-016).
         """
         from amos.worker.queue import enqueue
 
@@ -95,7 +109,10 @@ class RunService:
 
         async with session_scope(self._factory) as session:
             run = await RunRepository(session, actor).create_run(
-                goal=goal, request_id=request_id, idempotency_key=idempotency_key
+                goal=goal,
+                request_id=request_id,
+                idempotency_key=idempotency_key,
+                options=options.given() if options else None,
             )
             run_id = run.id
             await enqueue(session, run_id)
@@ -109,9 +126,13 @@ class RunService:
         actor: Actor,
         request_id: str,
         idempotency_key: str | None = None,
+        options: RunOptions | None = None,
     ) -> tuple[AgentResult, uuid.UUID | None]:
+        agent = self._agent_for(options)
+        memory_on = not (options is not None and options.memory is False)
+
         if self._factory is None:
-            result = await self._agent.run(goal)  # type: ignore[attr-defined]
+            result = await agent.run(goal)  # type: ignore[attr-defined]
             return result, None
 
         # 1. Idempotency check, in its own transaction.
@@ -128,10 +149,15 @@ class RunService:
                     )
                     return _result_from_run(existing), existing.id
 
-        # 2. Record the attempt before doing it.
+        # 2. Record the attempt before doing it — as RUNNING, which the sync path
+        #    never wrote before V1.7: a live view saw RECEIVED for the whole run.
         async with session_scope(self._factory) as session:
             run = await RunRepository(session, actor).create_run(
-                goal=goal, request_id=request_id, idempotency_key=idempotency_key
+                goal=goal,
+                request_id=request_id,
+                idempotency_key=idempotency_key,
+                options=options.given() if options else None,
+                status=RunStatus.RUNNING,
             )
             run_id = run.id
 
@@ -141,65 +167,55 @@ class RunService:
 
         # 3. Execute outside any transaction — an LLM call can take seconds and
         #    holding a database connection open across it would exhaust the pool.
+        #    Everything inside is recorded as it happens (ADR-015).
         started = time.perf_counter()
-        try:
-            with span(
-                "run.execute",
-                **{"amos.run_id": str(run_id), **describe_goal(goal, self._trace_content)},
-            ):
-                result = await self._agent.run(goal)  # type: ignore[attr-defined]
-        except AmosError as exc:
-            instruments().runs.add(1, safe_labels(outcome="FAILED"))
+        with recording(RunRecorder(self._factory)):
+            await record_event("run.started", options=options.given() if options else {})
+            try:
+                with span(
+                    "run.execute",
+                    **{"amos.run_id": str(run_id), **describe_goal(goal, self._trace_content)},
+                ):
+                    result = await agent.run(goal)  # type: ignore[attr-defined]
+            except AmosError as exc:
+                instruments().runs.add(1, safe_labels(outcome="FAILED"))
+                async with session_scope(self._factory) as session:
+                    repo = RunRepository(session, actor)
+                    run = await repo.get_trace(run_id)  # type: ignore[assignment]
+                    if run is not None:
+                        await repo.record_failure(run, type(exc).__name__, exc.message)
+                await record_event("run.failed", error=type(exc).__name__, message=exc.message)
+                raise
+
+            # 3.5 Reconcile what the answer CLAIMS with what was actually
+            #     written. Before recording, deliberately: the caveat must land in
+            #     the persisted trace, not be bolted on after it. Skipped when the
+            #     run switched memory off — it would write memory anyway.
+            if self._reconciler is not None and memory_on:
+                with call_scope(purpose="reconciler", agent=None, task_ref=None):
+                    result = await self._reconciler.reconcile(goal, result)
+
+            # 4. Record the outcome.
             async with session_scope(self._factory) as session:
                 repo = RunRepository(session, actor)
-                run = await repo.get_trace(run_id)  # type: ignore[assignment]
-                if run is not None:
-                    await repo.record_failure(run, type(exc).__name__, exc.message)
-            raise
-
-        # 3.5 Reconcile what the answer CLAIMS with what was actually written.
-        #     Before recording, deliberately: the caveat must land in the
-        #     persisted trace, not be bolted on after it. A stored answer that
-        #     says "I've noted that" when nothing was written is exactly the lie
-        #     this step exists to prevent, and it would outlive the request.
-        if self._reconciler is not None:
-            result = await self._reconciler.reconcile(goal, result)
-
-        # 4. Record the outcome.
-        async with session_scope(self._factory) as session:
-            repo = RunRepository(session, actor)
-            stored = await repo.get_trace(run_id)
-            if stored is not None:
-                await repo.record_success(stored, result)
+                stored = await repo.get_trace(run_id)
+                if stored is not None:
+                    await repo.record_success(stored, result)
+            await record_event("run.finished", outcome=result.outcome)
 
         # 5. Make the run findable by similarity (episodic memory).
         #    After the outcome, not before — the lesson is only knowable once the
         #    run has finished. Failing to record an episode must never fail the
         #    run: the answer is already correct and already persisted.
-        if self._episodic is not None:
-            try:
-                async with session_scope(self._factory) as session:
-                    await self._episodic(session, actor).record(run_id, goal, _lesson_from(result))
-            except Exception as exc:  # noqa: BLE001
-                log_event(
-                    logger,
-                    "episode.record_failed",
-                    run_id=str(run_id),
-                    error=type(exc).__name__,
-                )
+        if self._episodic is not None and memory_on:
+            await record_episode(self._factory, self._episodic, actor, run_id, goal, result)
 
         instruments().runs.add(1, safe_labels(outcome=result.outcome))
         instruments().run_duration.record(
             int((time.perf_counter() - started) * 1000), safe_labels(outcome=result.outcome)
         )
-        for record in result.llm_calls:
-            instruments().llm_calls.add(
-                1, safe_labels(provider=record.provider, model=record.model)
-            )
-            instruments().llm_tokens.add(
-                record.prompt_tokens + record.output_tokens,
-                safe_labels(provider=record.provider, model=record.model),
-            )
+        # Call metrics are counted by RecordingProvider since V1.7, on every
+        # path — counting them here too would double them.
 
         log_event(logger, "run.persisted", run_id=str(run_id))
         return result, run_id
@@ -245,6 +261,11 @@ def _result_from_run(run: Run) -> AgentResult:
 
 
 def _to_trace(run: Run) -> RunTrace:
+    ref_by_id = {t.id: t.plan_ref for t in run.tasks}
+    routed: dict[str, str] = {}
+    for event in run.events:
+        if event.kind == "task.routed" and event.task_ref and event.agent:
+            routed[event.task_ref] = event.agent  # the latest attempt's routing wins
     return RunTrace(
         run_id=str(run.id),
         goal=run.goal_text,
@@ -261,9 +282,12 @@ def _to_trace(run: Run) -> RunTrace:
                 plan_ref=t.plan_ref,
                 description=t.description,
                 state=t.state,
-                depends_on=[str(d) for d in (t.depends_on or [])],
+                depends_on=[ref_by_id.get(d, str(d)) for d in (t.depends_on or [])],
                 attempt_count=t.attempt_count,
                 error=(t.error or {}).get("message") if t.error else None,
+                position=t.position,
+                answer=(t.result or {}).get("answer") if t.result else None,
+                agent=routed.get(t.plan_ref),
             )
             for t in run.tasks
         ],
@@ -285,6 +309,13 @@ def _to_trace(run: Run) -> RunTrace:
                 latency_ms=c.latency_ms,
                 repair_attempt=c.repair_attempt,
                 error=c.error,
+                seq=c.seq,
+                purpose=c.purpose,
+                agent=c.agent,
+                task_ref=c.task_ref,
+                task_attempt=c.task_attempt,
+                run_attempt=c.run_attempt,
+                finished_at=c.created_at.isoformat() if c.created_at else None,
             )
             for c in run.llm_calls
         ],
@@ -296,10 +327,64 @@ def _to_trace(run: Run) -> RunTrace:
                 output=t.output,
                 error=t.error,
                 latency_ms=t.latency_ms,
+                seq=t.seq,
+                call_id=t.call_id,
+                purpose=t.purpose,
+                agent=t.agent,
+                task_ref=t.task_ref,
+                task_attempt=t.task_attempt,
+                run_attempt=t.run_attempt,
+                finished_at=t.created_at.isoformat() if t.created_at else None,
             )
             for t in run.tool_calls
         ],
+        events=[
+            TraceEvent(
+                seq=e.seq,
+                kind=e.kind,
+                task_ref=e.task_ref,
+                agent=e.agent,
+                task_attempt=e.task_attempt,
+                run_attempt=e.run_attempt,
+                payload=e.payload or {},
+                at=e.created_at.isoformat(),
+            )
+            for e in run.events
+        ],
+        options=run.options or {},
+        attempt_count=run.attempt_count,
+        claimed_by=run.claimed_by,
+        trace_id=_trace_id(run.trace_parent),
+        lesson=run.lesson,
     )
+
+
+def _trace_id(trace_parent: str | None) -> str | None:
+    """The trace id inside a W3C `traceparent` (`00-<trace id>-<span id>-<flags>`)."""
+    if not trace_parent:
+        return None
+    parts = trace_parent.split("-")
+    return parts[1] if len(parts) == 4 and len(parts[1]) == 32 else None
+
+
+async def record_episode(
+    factory: async_sessionmaker[AsyncSession],
+    episodic: Callable[[AsyncSession, Actor], EpisodicMemory],
+    actor: Actor,
+    run_id: uuid.UUID,
+    goal: str,
+    result: AgentResult,
+) -> None:
+    """Make a finished run findable by similarity. Never raises.
+
+    Shared by the sync path and the worker since V1.7 — before, queued runs were
+    never recorded as episodes, so `recall_past_runs` could not see any of them.
+    """
+    try:
+        async with session_scope(factory) as session:
+            await episodic(session, actor).record(run_id, goal, _lesson_from(result))
+    except Exception as exc:  # noqa: BLE001 - an episode must never fail a run
+        log_event(logger, "episode.record_failed", run_id=str(run_id), error=type(exc).__name__)
 
 
 def _lesson_from(result: AgentResult) -> str | None:

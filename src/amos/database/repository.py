@@ -11,7 +11,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,13 +19,11 @@ from amos.agents.schemas import AgentResult
 from amos.auth import Actor
 from amos.database.models import LLMCall, Run, Step, Task, ToolCallRow
 
+# One definition, in the queue module (V1.7). There were two, and they disagreed:
+# this module's had EXECUTING, which nothing ever wrote, and no RUNNING.
+from amos.worker.queue import RunStatus
 
-class RunStatus:
-    RECEIVED = "RECEIVED"
-    EXECUTING = "EXECUTING"
-    COMPLETED = "COMPLETED"
-    PARTIALLY_COMPLETED = "PARTIALLY_COMPLETED"
-    FAILED = "FAILED"
+__all__ = ["RunRepository", "RunStatus"]
 
 
 class RunRepository:
@@ -74,6 +72,8 @@ class RunRepository:
         goal: str,
         request_id: str,
         idempotency_key: str | None = None,
+        options: dict[str, bool] | None = None,
+        status: str = RunStatus.RECEIVED,
     ) -> Run:
         """Record the run before executing it.
 
@@ -85,9 +85,10 @@ class RunRepository:
             id=uuid.uuid4(),
             user_id=self._actor.id,
             goal_text=goal,
-            status=RunStatus.RECEIVED,
+            status=status,
             request_id=request_id,
             idempotency_key=idempotency_key,
+            options=options or None,
         )
         self._session.add(run)
         await self._session.flush()
@@ -117,8 +118,9 @@ class RunRepository:
         await self._session.flush()
 
         await self._save_task_rows(run, result)
-        self._add_trace_rows(run, step, result)
+        await self._add_trace_rows(run, step, result)
         await self._session.flush()
+        run.total_tokens = await self._stored_tokens(run, fallback=result.total_tokens)
         return run
 
     async def record_failure(
@@ -150,9 +152,33 @@ class RunRepository:
             run.total_tokens = result.total_tokens
             run.latency_ms = result.latency_ms
             await self._save_task_rows(run, result)
-            self._add_trace_rows(run, step, result)
+            await self._add_trace_rows(run, step, result)
         await self._session.flush()
+        # A failed run's calls are recorded live since V1.7, so its cost is
+        # known even when the agent never returned a result.
+        run.total_tokens = await self._stored_tokens(run, fallback=run.total_tokens)
         return run
+
+    async def _has_rows(self, model: type[LLMCall] | type[ToolCallRow], run: Run) -> bool:
+        return (
+            await self._session.execute(select(model.id).where(model.run_id == run.id).limit(1))
+        ).first() is not None
+
+    async def _stored_tokens(self, run: Run, *, fallback: int) -> int:
+        """The run's cost as the sum of its stored calls (ADR-015).
+
+        The in-memory total omitted failed task attempts, delegates and earlier
+        worker attempts. With no stored calls (no live recording), the
+        in-memory figure is all there is.
+        """
+        total = (
+            await self._session.execute(
+                select(func.sum(LLMCall.prompt_tokens + LLMCall.output_tokens)).where(
+                    LLMCall.run_id == run.id
+                )
+            )
+        ).scalar()
+        return int(total) if total is not None else fallback
 
     async def _save_task_rows(self, run: Run, result: AgentResult) -> None:
         """Persist the task DAG, updating rows that already exist.
@@ -202,12 +228,18 @@ class RunRepository:
             row.result = {"answer": record.answer} if record.answer else None
             row.error = {"message": record.error} if record.error else None
 
-    def _add_trace_rows(self, run: Run, step: Step, result: AgentResult) -> None:
-        """Turn the agent's in-memory records into rows.
+    async def _add_trace_rows(self, run: Run, step: Step, result: AgentResult) -> None:
+        """Turn the agent's in-memory records into rows — unless they were
+        already recorded live (ADR-015), in which case writing them again would
+        double every call.
 
-        Note how mechanical this is — that is the V0.1/V0.2 seams paying off.
+        Decided per table and per run, not by a global switch: agents that do
+        not record live (test doubles, an agent built without `build_provider`)
+        still get their rows this way.
         """
-        for record in result.llm_calls:
+        live_llm = await self._has_rows(LLMCall, run)
+        live_tools = await self._has_rows(ToolCallRow, run)
+        for record in [] if live_llm else result.llm_calls:
             self._session.add(
                 LLMCall(
                     id=uuid.uuid4(),
@@ -222,7 +254,7 @@ class RunRepository:
                     error=record.error,
                 )
             )
-        for outcome in result.tool_outcomes:
+        for outcome in [] if live_tools else result.tool_outcomes:
             self._session.add(
                 ToolCallRow(
                     id=uuid.uuid4(),
@@ -250,10 +282,12 @@ class RunRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_recent(self, limit: int = 20) -> list[Run]:
-        result = await self._session.execute(
-            self._runs().order_by(Run.created_at.desc()).limit(limit)
-        )
+    async def list_recent(self, limit: int = 20, before: datetime | None = None) -> list[Run]:
+        """The actor's runs, newest first; `before` pages backwards."""
+        query = self._runs().order_by(Run.created_at.desc()).limit(limit)
+        if before is not None:
+            query = query.where(Run.created_at < before)
+        result = await self._session.execute(query)
         return list(result.scalars().all())
 
 
@@ -263,4 +297,5 @@ def _trace_loaders() -> tuple[Any, ...]:
         selectinload(Run.steps),
         selectinload(Run.llm_calls),
         selectinload(Run.tool_calls),
+        selectinload(Run.events),
     )

@@ -31,6 +31,7 @@ import time
 from typing import Any
 
 from amos.agents.schemas import AgentResponse, AgentResult
+from amos.database.recorder import current_recorder
 from amos.errors import ToolLoopExhaustedError, ToolNotFoundError
 from amos.llm.base import LLMCallRecord, LLMProvider, LLMRequest, Turn
 from amos.observability import get_request_id, log_event, new_request_id
@@ -179,7 +180,20 @@ class ToolUsingAgent:
         )
 
     async def _invoke(self, call: ToolCall) -> ToolOutcome:
-        """Execute one tool call. Never raises — failures become outcomes."""
+        """Execute one tool call. Never raises — failures become outcomes.
+
+        Also the one place every tool outcome passes through — NOT_FOUND included,
+        which `Tool.execute` never sees — so it is where tool calls are recorded
+        to the run as they happen (ADR-015). Delegates, revisions and the
+        reconciler all run a ToolUsingAgent, so they are covered too.
+        """
+        outcome = await self._execute(call)
+        recorder = current_recorder()
+        if recorder is not None:
+            await recorder.tool_call(outcome)
+        return outcome
+
+    async def _execute(self, call: ToolCall) -> ToolOutcome:
         try:
             tool = self._registry.get(call.name)
         except ToolNotFoundError as exc:

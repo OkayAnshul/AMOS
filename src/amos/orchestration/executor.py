@@ -21,9 +21,10 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence
+from amos.database.recorder import record_event
 from amos.errors import AmosError, ProviderAuthError, ProviderRateLimitError
 from amos.llm.base import LLMCallRecord
-from amos.observability import log_event
+from amos.observability import call_scope, log_event
 from amos.orchestration.plan import Plan, PlannedTask
 from amos.orchestration.retry import backoff_delay, should_retry
 from amos.orchestration.state import (
@@ -170,12 +171,16 @@ class Executor:
             task.result = _resumed_result(answer)
             task.transition(TaskState.SUCCEEDED)
             log_event(logger, "task.resumed", task=plan_ref)
+            with call_scope(task_ref=plan_ref):
+                await record_event("task.resumed")
 
         # The loop terminates because every iteration either moves at least one
         # task towards a terminal state, or finds nothing runnable and stops.
         while True:
             for task in self._skip_unreachable(tasks):
                 await self._save(task)
+                with call_scope(task_ref=task.plan_ref):
+                    await record_event("task.skipped", reason=task.error)
             self._promote_ready(tasks)
 
             runnable = [t for t in tasks.values() if t.state is TaskState.READY]
@@ -244,8 +249,23 @@ class Executor:
         return skipped
 
     async def _run_task(self, task: TaskExecution, tasks: dict[str, TaskExecution]) -> None:
+        # The scope opens INSIDE the gathered coroutine: `gather` copies context
+        # per child, so each concurrent task keeps its own task_ref (ADR-015).
+        with call_scope(
+            task_ref=task.plan_ref,
+            task_attempt=task.attempt_count + 1,
+            purpose="agent",
+            agent=None,
+        ):
+            await self._attempt(task, tasks)
+
+    async def _attempt(self, task: TaskExecution, tasks: dict[str, TaskExecution]) -> None:
         task.transition(TaskState.RUNNING)
         task.attempt_count += 1
+        # Written live since V1.7, so a running task does not look PENDING.
+        # Resume trusts only SUCCEEDED rows, so an interim state is safe to store.
+        await self._save(task)
+        await record_event("task.started", description=task.description)
 
         try:
             # The outermost bound. Everything underneath has its own timeout —
@@ -267,6 +287,7 @@ class Executor:
                 attempt=task.attempt_count,
                 timeout_seconds=self._task_timeout,
             )
+            await record_event("task.timed_out", timeout_seconds=self._task_timeout)
             await self._handle_failure(task)
             return
         except AmosError as exc:
@@ -279,7 +300,9 @@ class Executor:
                 attempt=task.attempt_count,
                 error=type(exc).__name__,
             )
-            await self._handle_failure(task, retryable=is_retryable(exc))
+            retryable = is_retryable(exc)
+            await record_event("task.failed", error=task.error, retryable=retryable)
+            await self._handle_failure(task, retryable=retryable)
             return
 
         task.result = result
@@ -288,6 +311,7 @@ class Executor:
         task.transition(TaskState.SUCCEEDED)
         log_event(logger, "task.succeeded", task=task.plan_ref, attempt=task.attempt_count)
         await self._save(task)
+        await record_event("task.succeeded", answer=result.response.answer[:2000])
 
     async def _handle_failure(self, task: TaskExecution, *, retryable: bool = True) -> None:
         """Retry with backoff, or give up permanently.
@@ -296,8 +320,10 @@ class Executor:
         special retry state. One code path for "about to run" means retried
         tasks cannot behave differently from first attempts.
         """
+        await self._save(task)  # the FAILED / TIMED_OUT state, visible while it waits
         if retryable and should_retry(task.attempt_count, task.max_attempts):
             delay = backoff_delay(task.attempt_count - 1)
+            await record_event("task.retrying", delay_seconds=round(delay, 3))
             log_event(
                 logger,
                 "task.retrying",
@@ -320,6 +346,9 @@ class Executor:
                 attempts=task.attempt_count,
             )
             await self._save(task)
+            await record_event(
+                "task.permanently_failed", attempts=task.attempt_count, error=task.error
+            )
 
     @staticmethod
     def _build_goal(task: TaskExecution, tasks: dict[str, TaskExecution]) -> str:

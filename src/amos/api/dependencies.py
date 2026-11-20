@@ -10,12 +10,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from amos.agents.agent import GroundedAgent
+from amos.agents.schemas import OPTION_SETTINGS, RunOptions
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent, build_default_registry
 from amos.config import Settings
 from amos.database.progress import RunProgress
 from amos.llm.base import LLMProvider
 from amos.llm.gemini import GeminiProvider
+from amos.llm.recording import RecordingProvider
 from amos.llm.retry import RetryingProvider
 from amos.memory.tools import RecallFactsTool, RecallPastRunsTool, RememberFactTool
 from amos.orchestration.executor import Executor
@@ -34,8 +36,11 @@ def build_provider(settings: Settings) -> LLMProvider:
     (ADR-014). The judge and the routing CLI come through here too, rather than
     building their own unwrapped provider.
     """
+    # Recording INSIDE the retry: every real attempt is its own row (ADR-015).
     return RetryingProvider(
-        GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model)
+        RecordingProvider(
+            GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model)
+        )
     )
 
 
@@ -176,4 +181,49 @@ def build_grounded_agent(settings: Settings, provider: LLMProvider | None = None
         timeout=settings.llm_timeout_seconds,
         max_repair_attempts=settings.llm_max_repair_attempts,
         temperature=settings.llm_temperature,
+    )
+
+
+#: Tools that read or write memory — absent from a run that switches memory off.
+MEMORY_TOOLS = frozenset({"remember_fact", "recall_facts", "recall_past_runs"})
+
+
+def settings_for(settings: Settings, options: RunOptions | None) -> Settings:
+    """The server's settings with a run's options applied (ADR-016).
+
+    Options are validated as off-only at the API; `model_copy` does not
+    validate, which is safe here because only booleans are copied in.
+    """
+    if options is None or not options.given():
+        return settings
+    return settings.model_copy(
+        update={OPTION_SETTINGS[name]: value for name, value in options.given().items()}
+    )
+
+
+def filter_registry(registry: ToolRegistry, settings: Settings) -> ToolRegistry:
+    if settings.memory_enabled:
+        return registry
+    return ToolRegistry([tool for tool in registry if tool.name not in MEMORY_TOOLS])
+
+
+def build_run_agent(
+    settings: Settings,
+    options: RunOptions | None,
+    *,
+    provider: LLMProvider,
+    registry: ToolRegistry,
+    session_factory: object | None,
+) -> Orchestrator | ToolUsingAgent | AgentTeam:
+    """An agent for one run, from the process's shared provider and tools.
+
+    Constructors do no I/O, so building per run costs object allocation only;
+    the worker has built an agent per run since V0.8.
+    """
+    effective = settings_for(settings, options)
+    return build_agent(
+        effective,
+        provider=provider,
+        registry=filter_registry(registry, effective),
+        session_factory=session_factory,
     )

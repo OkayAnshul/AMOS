@@ -333,7 +333,35 @@ async def test_every_terminal_transition_is_checkpointed() -> None:
 
     await executor.execute(make_plan(task("t1"), task("t2", "t1")))
 
-    assert checkpoint.saved == [("t1", TaskState.SUCCEEDED), ("t2", TaskState.SUCCEEDED)]
+    terminal = [(ref, state) for ref, state in checkpoint.saved if state is not TaskState.RUNNING]
+    assert terminal == [("t1", TaskState.SUCCEEDED), ("t2", TaskState.SUCCEEDED)]
+
+
+async def test_a_running_task_is_checkpointed_before_it_finishes() -> None:
+    """V1.7 (ADR-015): a running task is written as RUNNING, so a live view does
+    not show it PENDING for its whole duration. Resume trusts only SUCCEEDED."""
+    checkpoint = RecordingCheckpoint()
+    executor = Executor(ScriptedRunner(), checkpoint=checkpoint, sleep=no_sleep)  # type: ignore[arg-type]
+
+    await executor.execute(make_plan(task("t1")))
+
+    assert checkpoint.saved == [("t1", TaskState.RUNNING), ("t1", TaskState.SUCCEEDED)]
+
+
+async def test_a_failed_attempt_is_checkpointed_before_its_retry() -> None:
+    checkpoint = RecordingCheckpoint()
+    runner = ScriptedRunner({"do t1": ProviderTimeoutError("slow")})
+    executor = Executor(runner, max_attempts=2, checkpoint=checkpoint, sleep=no_sleep)  # type: ignore[arg-type]
+
+    await executor.execute(make_plan(task("t1")))
+
+    assert [state for _, state in checkpoint.saved] == [
+        TaskState.RUNNING,
+        TaskState.FAILED,
+        TaskState.RUNNING,
+        TaskState.FAILED,
+        TaskState.PERMANENTLY_FAILED,
+    ]
 
 
 async def test_permanent_failure_and_skips_are_checkpointed_too() -> None:

@@ -102,6 +102,8 @@ class ClaimedRun:
     #: otherwise the one component that touches every user's runs would be
     #: the one component with no isolation (ADR-013).
     user_id: uuid.UUID | None = None
+    #: Per-run feature switches, applied by the worker (ADR-016).
+    options: dict[str, bool] | None = None
 
 
 async def claim_next_run(
@@ -130,7 +132,7 @@ async def claim_next_run(
                       FOR UPDATE SKIP LOCKED
                     LIMIT 1
              )
-         RETURNING id, goal_text, attempt_count, trace_parent, user_id
+         RETURNING id, goal_text, attempt_count, trace_parent, user_id, options
             """
         ),
         {
@@ -157,6 +159,7 @@ async def claim_next_run(
         attempt_count=row.attempt_count,
         trace_parent=row.trace_parent,
         user_id=row.user_id,
+        options=row.options,
     )
 
 
