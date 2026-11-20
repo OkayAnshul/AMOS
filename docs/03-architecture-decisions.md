@@ -753,3 +753,83 @@ memory is a fact about a person. Both are private by construction.
 ### Reconsider if
 A second service shares the database (row-level security), or accounts need permissions within
 them rather than only identity (authorization, a separate milestone).
+
+---
+
+## ADR-014 — Transient provider errors are retried once, inside the call's deadline; a second provider is deferred
+
+**Date** 2026-11-20 · **Status** Accepted (V1.6)
+
+### Context
+On 2026-11-19 two of nine eval goals failed on Gemini `503 UNAVAILABLE — high demand`. Both were
+raised by calls **outside** the task executor — the planner and the synthesis step — where nothing
+retries, so the whole run failed and the work of finished tasks was lost with it. Inside a task the
+same error *was* retried, but by re-running the entire task: routing, every tool call, the critic.
+
+The error could not even be named. `GeminiProvider` mapped every `ServerError` to the generic
+`ProviderError` with no status, so no caller could tell a 503 from a malformed request, and the API
+answered it as HTTP 500.
+
+The roadmap's V1.6 was a second provider (Groq), justified by `gemini-3.5-flash`'s 20 requests a
+day. The account page read on 2026-11-19 removed that reason: the default model,
+`gemini-3.5-flash-lite`, allows **500 a day**. Groq's `openai/gpt-oss-120b` allows 30 requests a
+minute but only **8K tokens a minute** — about one AMOS goal a minute.
+
+### Problem
+Make a transient provider failure cost one extra call, wherever it happens, without weakening any
+bound that already exists — and decide whether a second provider is still worth building.
+
+### Options
+1. **Retry in each caller** (planner, router, agent, critic, synthesis).
+2. **A wrapper over `LLMProvider`** that retries a typed transient error, applied where providers
+   are built.
+3. **Rely on the executor's task retry** and wrap the planner and synthesis in tasks.
+4. **A second provider as a fallback** on 503.
+
+### Decision
+**Option 2.** `ProviderUnavailableError(ProviderError)` names a 5xx. `RetryingProvider` wraps any
+provider and retries that error **once**, after a jittered delay (`backoff_delay`, the same
+function the executor uses), and **never** retries anything else: not a 429 (the quota is still
+spent), not an auth error, not a 4xx, not a timeout. `build_provider` applies it and becomes the
+only place a provider is constructed, so the judge and the routing CLI get it too.
+
+**The retry shares the caller's deadline.** The second attempt receives whatever remains of the
+original `timeout`, and no retry happens when too little remains. ADR-009's chain —
+*per-call bound < task timeout (300 s) < visibility timeout (600 s)* — holds unchanged: a retried
+call still cannot outlive the bound its caller set. Giving the retry a fresh timeout would have
+doubled the per-call worst case and let a task breach 300 s on work that was going to succeed.
+
+**The executor stops retrying what cannot succeed.** A daily `ProviderRateLimitError` (it resets
+at midnight Pacific) and a `ProviderAuthError` now fail the task permanently at once, with the
+reason. Before, both were retried up to three times with backoff.
+
+**Groq is deferred, not built.** The 503 problem is solved by option 2, the daily ceiling is 25×
+larger than the roadmap assumed, and Groq's token-per-minute limit makes it a slower provider, not
+a bigger one. `GROQ_API_KEY` stays in `.env` for the day it is needed.
+
+### Why
+Option 1 is five copies of a policy that must agree, and the next caller written forgets. Option 3
+fixes the two callers it names and leaves the cost of a 503 inside a task — a whole re-run — where
+it was. Option 4 solves a problem with a second dependency, a second contract and a second quota,
+when a single retry clears the observed failure; it also changes the model mid-run, which makes the
+eval's numbers a mixture of two series.
+
+### Tradeoffs
+- **Retries can stack.** Inside a task, a persistent 503 costs up to 2 calls per task attempt —
+  6 across the executor's three. That is bounded, and a single 503 now costs one call instead of a
+  whole task.
+- One retry is a guess that "high demand" passes in about a second. It is not measured; the
+  jittered delay is under a second and the deadline caps everything else.
+- A daily 429 now fails a run sooner. That is the point: three retries an hour apart would not
+  have succeeded either, and each one spent a call.
+
+### Consequences
+- `ProviderUnavailableError` maps to HTTP **503** in the API's one status table.
+- The embedding client classifies a 5xx the same way.
+- A provider is built once per process at startup; the memory reconciler shares it rather than
+  building a second one.
+
+### Reconsider if
+503s outlast one retry in practice (then a second, longer attempt or a fallback provider); or
+flash-lite fails the complex goals of V1.10 on quality (then Groq or `gemini-3.5-flash` as the
+higher-quality model for the writer); or the free-tier limits change.
