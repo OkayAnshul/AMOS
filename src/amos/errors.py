@@ -34,7 +34,16 @@ class ProviderAuthError(ProviderError):
 
 
 class ProviderRateLimitError(ProviderError):
-    """The provider rate-limited us. Free tier is ~15 RPM."""
+    """The provider rate-limited us. `details["quota_scope"]` says day or minute."""
+
+
+class ProviderUnavailableError(ProviderError):
+    """The provider failed on its side (HTTP 5xx) — usually transient.
+
+    Its own type since V1.6 (ADR-014): before, a 503 was a bare ProviderError with
+    no status, so nothing could tell "try again in a second" from "this request
+    is malformed", and the API answered it as a 500.
+    """
 
 
 class OutputValidationError(AmosError):

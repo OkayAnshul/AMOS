@@ -39,6 +39,7 @@ from amos.errors import (
     ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderUnavailableError,
 )
 from amos.llm.quota import quota_scope
 from amos.observability import log_event
@@ -202,6 +203,13 @@ class GeminiEmbeddings:
             if status in (401, 403):
                 raise ProviderAuthError("Embedding API rejected the key") from exc
             raise ProviderError(f"Embedding client error: {exc}") from exc
+        except genai_errors.ServerError as exc:
+            # Classified like generation's 5xx (ADR-014), so the error says what
+            # it is. A retrieval call that hits one fails the tool call, and the
+            # model is told — it is not retried here.
+            raise ProviderUnavailableError(
+                f"Embedding server error: {exc}", details={"status": getattr(exc, "code", None)}
+            ) from exc
         except genai_errors.APIError as exc:
             raise ProviderError(f"Embedding API error: {exc}") from exc
 

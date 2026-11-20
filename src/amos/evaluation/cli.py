@@ -19,14 +19,13 @@ import sys
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from amos.api.dependencies import build_agent
+from amos.api.dependencies import build_agent, build_provider
 from amos.config import get_settings
 from amos.database.engine import create_engine, create_session_factory, session_scope
 from amos.evaluation.baseline import DEFAULT_PATH, Baseline, Comparison, compare
 from amos.evaluation.cases import GOLDEN_GOALS
 from amos.evaluation.harness import EvaluationHarness
 from amos.evaluation.judge import GroundednessJudge
-from amos.llm.gemini import GeminiProvider
 from amos.observability import configure_logging
 
 
@@ -51,11 +50,7 @@ async def main(judge_enabled: bool = True, update_baseline: bool = False) -> int
 
     try:
         agent = build_agent(settings, session_factory=factory)
-        judge = (
-            GroundednessJudge(GeminiProvider(settings.require_api_key(), settings.llm_model))
-            if judge_enabled
-            else None
-        )
+        judge = GroundednessJudge(build_provider(settings)) if judge_enabled else None
         suite = await EvaluationHarness(agent, judge, pace_seconds=20.0).run(GOLDEN_GOALS)
     finally:
         if engine is not None:

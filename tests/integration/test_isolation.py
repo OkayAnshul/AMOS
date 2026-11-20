@@ -237,3 +237,113 @@ def test_every_memories_statement_filters_by_user() -> None:
         if "memories" in stmt and "user_id" not in stmt
     ]
     assert not unscoped, f"these statements touch memories without scoping: {unscoped}"
+
+
+# ---------- V1.6: three places the V1.4 claim did not hold ----------
+#
+# Found by a survey of the read surface before building the demo page, which is
+# the first thing that would have *displayed* these leaks. Each test below
+# failed before its fix.
+
+
+async def test_one_user_cannot_see_anothers_dead_letters(
+    db_session: AsyncSession, actor: Actor, other_actor: Actor
+) -> None:
+    """`GET /v1/runs/dead-letter` ignored its actor: every user saw every
+    user's failed goals. A dead-lettered run is still a run — what someone asked."""
+    from amos.worker.queue import enqueue, give_up, list_dead_letter
+
+    theirs = await RunRepository(db_session, other_actor).create_run(
+        goal="their failed goal", request_id="r"
+    )
+    await enqueue(db_session, theirs.id)
+    await give_up(db_session, theirs.id, "attempts exhausted")
+
+    mine = await list_dead_letter(db_session, owner=actor.id)
+    assert all(entry.run_id != str(theirs.id) for entry in mine), "dead letters leaked"
+    assert any(
+        entry.run_id == str(theirs.id)
+        for entry in await list_dead_letter(db_session, owner=other_actor.id)
+    )
+
+
+async def test_past_runs_recall_only_the_callers_own_runs(
+    db_session: AsyncSession, actor: Actor, other_actor: Actor
+) -> None:
+    """`recall_past_runs` searched every user's runs by similarity — the case
+    `test_every_memories_statement_filters_by_user` warns about: a missing filter
+    on a similarity search returns someone else's row ranked highly, and looks
+    like it worked."""
+    from amos.memory.episodic import EpisodicMemory
+
+    embeddings = FakeEmbeddings(dimensions=1536)
+    goal = "plan the quarterly budget review"
+    theirs = await RunRepository(db_session, other_actor).create_run(goal=goal, request_id="r")
+    await EpisodicMemory(db_session, embeddings, other_actor).record(theirs.id, goal, "lesson")
+
+    seen = await EpisodicMemory(db_session, embeddings, actor).recall_similar(goal, min_score=0.0)
+    assert all(e.run_id != theirs.id for e in seen), "another user's run was recalled"
+
+    own = await EpisodicMemory(db_session, embeddings, other_actor).recall_similar(
+        goal, min_score=0.0
+    )
+    assert any(e.run_id == theirs.id for e in own)
+
+
+async def test_retrieval_sees_the_system_corpus_and_only_the_callers_documents(
+    db_session: AsyncSession, actor: Actor, other_actor: Actor
+) -> None:
+    """ADR-013 says retrieval matches `user_id IS NULL OR user_id = :actor`. The
+    query had no owner filter at all — harmless only while ingestion never set
+    `user_id`, and a leak the moment uploads exist (V1.7)."""
+    from amos.database.models import Document
+    from amos.rag.store import PgVectorStore, StoredChunk
+
+    embeddings = FakeEmbeddings(dimensions=1536)
+    text = "the private itinerary for the offsite"
+    vector = await embeddings.embed_query(text)
+
+    async def add(owner: uuid.UUID | None, source: str) -> uuid.UUID:
+        doc = Document(
+            id=uuid.uuid4(),
+            user_id=owner,
+            source=source,
+            title=source,
+            content_hash=uuid.uuid4().hex,
+            chunk_count=1,
+        )
+        db_session.add(doc)
+        await db_session.flush()
+        await PgVectorStore(db_session).upsert(
+            [StoredChunk(document_id=doc.id, chunk_index=0, content=text, embedding=vector)]
+        )
+        return doc.id
+
+    system_doc = await add(None, "test-system.md")
+    their_doc = await add(other_actor.id, "test-theirs.md")
+    my_doc = await add(actor.id, "test-mine.md")
+
+    store = PgVectorStore(db_session)
+    mine = {hit.document_id for hit in await store.search(vector, limit=50, owner=actor.id)}
+    assert their_doc not in mine, "another user's document was retrieved"
+    assert {system_doc, my_doc} <= mine
+
+    anonymous = {hit.document_id for hit in await store.search(vector, limit=50)}
+    assert anonymous.isdisjoint({their_doc, my_doc}), "no owner must mean system corpus only"
+    assert system_doc in anonymous
+
+
+def test_every_runs_statement_in_episodic_memory_filters_by_user() -> None:
+    """The structural guard for episodic memory, as for semantic memory above."""
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "src" / "amos" / "memory" / "episodic.py"
+    ).read_text()
+    unscoped = [
+        stmt.strip()[:60].replace("\n", " ")
+        for stmt in re.findall(r'sql_text\(\s*(""".*?"""|(?:"[^"]*"\s*)+)', source, re.S)
+        if "runs" in stmt and "user_id" not in stmt
+    ]
+    assert not unscoped, f"these statements touch runs without scoping: {unscoped}"

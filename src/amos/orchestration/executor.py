@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence
-from amos.errors import AmosError
+from amos.errors import AmosError, ProviderAuthError, ProviderRateLimitError
 from amos.llm.base import LLMCallRecord
 from amos.observability import log_event
 from amos.orchestration.plan import Plan, PlannedTask
@@ -279,7 +279,7 @@ class Executor:
                 attempt=task.attempt_count,
                 error=type(exc).__name__,
             )
-            await self._handle_failure(task)
+            await self._handle_failure(task, retryable=is_retryable(exc))
             return
 
         task.result = result
@@ -289,14 +289,14 @@ class Executor:
         log_event(logger, "task.succeeded", task=task.plan_ref, attempt=task.attempt_count)
         await self._save(task)
 
-    async def _handle_failure(self, task: TaskExecution) -> None:
+    async def _handle_failure(self, task: TaskExecution, *, retryable: bool = True) -> None:
         """Retry with backoff, or give up permanently.
 
         A retry returns the task to READY — the normal path — rather than a
         special retry state. One code path for "about to run" means retried
         tasks cannot behave differently from first attempts.
         """
-        if should_retry(task.attempt_count, task.max_attempts):
+        if retryable and should_retry(task.attempt_count, task.max_attempts):
             delay = backoff_delay(task.attempt_count - 1)
             log_event(
                 logger,
@@ -400,3 +400,17 @@ __all__ = [
     "TaskExecution",
     "TaskRunner",
 ]
+
+
+def is_retryable(exc: AmosError) -> bool:
+    """Whether another attempt could possibly succeed (ADR-014).
+
+    A **daily** quota resets at midnight Pacific, and a rejected key is rejected
+    every time; retrying either spends calls on a known outcome. A per-minute
+    limit, a timeout or an unscoped 429 does pass, so backoff is right for them.
+    """
+    if isinstance(exc, ProviderAuthError):
+        return False
+    if isinstance(exc, ProviderRateLimitError):
+        return exc.details.get("quota_scope") != "day"
+    return True

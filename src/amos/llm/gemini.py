@@ -20,6 +20,7 @@ from amos.errors import (
     ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderUnavailableError,
 )
 from amos.llm.base import LLMRequest, LLMResponse, Turn
 from amos.llm.quota import quota_scope
@@ -96,8 +97,12 @@ class GeminiProvider:
         except genai_errors.ClientError as exc:
             raise self._translate_client_error(exc) from exc
         except genai_errors.ServerError as exc:
-            raise ProviderError(
-                f"Gemini server error: {exc}", details={"model": self._model}
+            # Its own type, with the status (ADR-014): a 503 "high demand" is
+            # worth one retry, and RetryingProvider can only tell it apart from a
+            # malformed request if the boundary says so.
+            raise ProviderUnavailableError(
+                f"Gemini server error: {exc}",
+                details={"model": self._model, "status": getattr(exc, "code", None)},
             ) from exc
         except genai_errors.APIError as exc:
             raise ProviderError(f"Gemini API error: {exc}", details={"model": self._model}) from exc
@@ -138,8 +143,8 @@ class GeminiProvider:
         status = getattr(exc, "code", None)
         message = str(exc)
         if status == 429:
-            # Two shapes: gemini-3.5-flash binds DAILY (20/day), flash-lite
-            # PER MINUTE (15/min). `quota_scope` says which, from the violated
+            # Two shapes: a DAILY limit (flash-lite 500/day) and a PER-MINUTE
+            # one (15/min) — account page, 2026-11-19. `quota_scope` says which, from the violated
             # quota's id, so a caller can say "resets at midnight Pacific"
             # rather than "try again". The provider's own text is kept because
             # it names the exact quota.

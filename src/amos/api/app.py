@@ -31,6 +31,7 @@ from amos.errors import (
     ProviderAuthError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderUnavailableError,
     ToolLoopExhaustedError,
 )
 from amos.memory.episodic import EpisodicMemory
@@ -55,6 +56,7 @@ _STATUS_MAP: list[tuple[type[AmosError], int]] = [
     (ProviderTimeoutError, 504),
     (ToolLoopExhaustedError, 502),
     (ProviderRateLimitError, 429),
+    (ProviderUnavailableError, 503),
     (ProviderAuthError, 502),
     (OutputValidationError, 502),
     (ConfigurationError, 500),
@@ -139,8 +141,14 @@ def create_app(
             app.state.engine = create_engine(settings)
             factory = create_session_factory(app.state.engine)
 
+        # One provider per process (V1.6): the agent and the reconciler share it,
+        # rather than the reconciler building a second client of its own.
+        provider = None
+        if app.state.agent is None or (app.state.run_service is None and factory is not None):
+            provider = build_provider(settings)
+
         if app.state.agent is None:
-            app.state.agent = build_agent(settings, session_factory=factory)
+            app.state.agent = build_agent(settings, provider=provider, session_factory=factory)
 
         # Persistence is optional so the app still runs without a database —
         # earlier milestones' behaviour stays reachable, and tests need no container.
@@ -153,13 +161,13 @@ def create_app(
                     dimensions=settings.embedding_dimensions,
                 )
 
-                def episodic(session: object) -> EpisodicMemory:
-                    return EpisodicMemory(session, embeddings)  # type: ignore[arg-type]
+                def episodic(session: object, actor: Actor) -> EpisodicMemory:
+                    return EpisodicMemory(session, embeddings, actor)  # type: ignore[arg-type]
 
             reconciler = None
             if factory is not None:
                 reconciler = MemoryReconciler(
-                    build_provider(settings),
+                    provider if provider is not None else build_provider(settings),
                     build_registry(settings, factory),
                     timeout=settings.llm_timeout_seconds,
                     enabled=settings.memory_reconcile_enabled,
@@ -325,7 +333,7 @@ def create_app(
                 status_code=503,
                 detail="Persistence is not configured; set AMOS_DATABASE_URL.",
             )
-        return await service.list_dead_letter(min(max(limit, 1), 200))
+        return await service.list_dead_letter(actor, min(max(limit, 1), 200))
 
     @app.get("/v1/runs/{run_id}", response_model=RunTrace)
     async def get_run_trace(run_id: str, actor: CurrentActor) -> RunTrace:

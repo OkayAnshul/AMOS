@@ -734,3 +734,81 @@ Released as v1.5.1 rather than re-tagging v1.5.0.
 difference shows up on someone else's schedule. And "CI exists" is not "CI is watched": checking the
 last run belongs in the session protocol's start, beside `make check`.
 **Test added:** none — the gate is CI itself; `make lint` now matches it.
+
+---
+
+## 2026-11-20 — Three places the V1.4 isolation claim did not hold
+**Milestone:** found in the survey before V1.7's read API; fixed in V1.6
+**Symptom:** none visible — which is the point of ADR-013. Each returned *more* data, not less.
+1. `GET /v1/runs/dead-letter` took an actor and ignored it; `list_dead_letter` had no owner filter.
+   Every authenticated user saw every user's dead-lettered goals.
+2. `EpisodicMemory.recall_similar` had no `user_id` filter, so `recall_past_runs` could return
+   another user's goal and lesson, ranked highly.
+3. Retrieval's `SEARCH_SQL` had no owner filter, though ADR-013 says it matches
+   `user_id IS NULL OR user_id = :actor`. Harmless only because ingestion never set `user_id`.
+**Root cause:** all three are raw SQL written outside the owner-scoped repository, and the V1.4
+source-scan guards covered `repository.py` and `semantic.py` only.
+**Fix:** the dead-letter query requires `owner`; `EpisodicMemory` is constructed with its actor, like
+`SemanticMemory`; `SEARCH_SQL` filters to the system corpus plus the caller's documents, the owner
+derived from the run as the memory tools do. A source-scan guard now covers `episodic.py` too.
+**How it was found:** mapping every read for the demo page — the first thing that would have
+*displayed* these rows to an audience.
+**Lesson:** a structural guard protects the files it scans. Isolation enforced "where queries are
+built" has to name every place a query is built, and raw SQL is where the next one appears.
+**Tests added:** three in `test_isolation.py` plus the episodic guard (each failed before its fix).
+
+---
+
+## 2026-11-20 — A worker lost on a run's final attempt left it QUEUED forever
+**Milestone:** found in the V1.6 survey
+**Symptom (by reading, then reproduced in a test):** a run whose worker died during its last
+permitted attempt was reclaimed to `QUEUED` and never claimed again.
+**Root cause:** `reclaim_abandoned_runs` re-queued every abandoned run; `claim_next_run` only takes
+runs with `attempt_count < max_attempts`; and `give_up` runs only from a live worker's failure
+handler — the worker that had died. Nothing could move the run on. It counted in `queue_depth` and
+appeared in no list.
+**Fix:** reclaim dead-letters a run already at its ceiling ("worker lost on the final attempt") and
+re-queues only the rest. The sweep passes the worker's own `max_attempts`.
+**Lesson:** a poison-message guard written in the failure handler cannot fire for the failure that
+kills the handler.
+**Test added:** `test_a_worker_lost_on_the_final_attempt_dead_letters_the_run` (failed before).
+
+---
+
+## 2026-11-20 — A Gemini 503 was a bare ProviderError, and nothing outside a task retried it
+**Milestone:** V1.6 (ADR-014)
+**Symptom:** two of nine eval goals failed on 2026-11-19 with `503 UNAVAILABLE — high demand`.
+The API would have answered the same error as HTTP 500.
+**Root cause:** `GeminiProvider` mapped every `ServerError` to `ProviderError` with no status, so no
+caller could distinguish it; the planner and synthesis calls sit outside the executor's retry.
+**Fix:** `ProviderUnavailableError` (HTTP 503) at both Gemini boundaries; `RetryingProvider` retries
+it once, inside the caller's deadline, applied in `build_provider` — now the only construction
+point (the judge and routing CLI built unwrapped providers of their own; the app built a second one
+for the reconciler).
+**Lesson:** a retry policy needs a vocabulary first. The error type is the fix; the wrapper is ten lines.
+**Tests added:** `tests/unit/test_provider_retry.py` (13).
+
+---
+
+## 2026-11-20 — The executor retried a daily quota error three times
+**Milestone:** V1.6
+**Symptom:** a task hitting a *daily* 429 was retried with backoff up to `task_max_attempts`, each
+retry a call against a quota that resets at midnight Pacific. A rejected key was retried the same way.
+**Root cause:** `_handle_failure` retried every `AmosError`; V1.5 taught the embedding client the
+day/minute difference and not the executor.
+**Fix:** `is_retryable`: a daily `ProviderRateLimitError` and a `ProviderAuthError` fail the task
+permanently at once. Per-minute limits, timeouts and unscoped 429s still back off.
+**Tests added:** three in `test_executor.py` (the two "not retried" tests failed before).
+
+---
+
+## 2026-11-20 — `AMOS_AGENT_MAX_ITERATIONS` did nothing with multi-agent on
+**Milestone:** V1.6
+**Symptom:** the setting changed nothing in the default configuration.
+**Root cause:** only `build_tool_agent` read it; `AgentTeam` built specialists from
+`AgentSpec.max_iterations` (5). The coherence audit of Session 10 checked that settings are *read*,
+not that the read reaches the path that runs.
+**Fix:** `AgentTeam(max_iterations=…)`, passed by `build_agent`.
+**Also fixed:** `registry or build_registry(...)` — `ToolRegistry` defines `__len__`, so an empty
+registry was falsy and silently replaced by the full tool set. Now `is None`.
+**Tests added:** two in `test_team.py` (failed before).

@@ -50,6 +50,11 @@ class _Instruments:
         self.retries = meter.create_counter(
             "amos.task.retries", description="Task retries", unit="1"
         )
+        # Separate from task retries: one is a whole task re-run by the executor,
+        # the other a single provider call repeated after a 5xx (ADR-014).
+        self.llm_retries = meter.create_counter(
+            "amos.llm.retries", description="Provider calls retried after a 5xx", unit="1"
+        )
 
 
 _instruments: _Instruments | None = None

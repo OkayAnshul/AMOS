@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from amos.auth import Actor
 from amos.observability import log_event
 from amos.rag.embeddings import EmbeddingProvider
 from amos.rag.store import _to_pgvector
@@ -46,11 +47,18 @@ class Episode:
 
 
 class EpisodicMemory:
-    """Records and recalls past run experience."""
+    """Records and recalls one user's past run experience.
 
-    def __init__(self, session: AsyncSession, embeddings: EmbeddingProvider) -> None:
+    Constructed with its owner, like `RunRepository` and `SemanticMemory`
+    (ADR-013). Until V1.6 it took none, and `recall_similar` searched **every
+    user's** runs by similarity — returning another user's goal and lesson ranked
+    highly, which looks exactly like the feature working.
+    """
+
+    def __init__(self, session: AsyncSession, embeddings: EmbeddingProvider, actor: Actor) -> None:
         self._session = session
         self._embeddings = embeddings
+        self._actor = actor
 
     async def record(self, run_id: uuid.UUID, goal: str, lesson: str | None = None) -> None:
         """Make a completed run findable by similarity.
@@ -62,12 +70,13 @@ class EpisodicMemory:
         await self._session.execute(
             sql_text(
                 "UPDATE runs SET goal_embedding = CAST(:embedding AS vector), "
-                "lesson = COALESCE(:lesson, lesson) WHERE id = :run_id"
+                "lesson = COALESCE(:lesson, lesson) WHERE id = :run_id AND user_id = :user_id"
             ),
             {
                 "embedding": _to_pgvector(embedding[0]),
                 "lesson": lesson,
                 "run_id": str(run_id),
+                "user_id": str(self._actor.id),
             },
         )
         log_event(logger, "episode.recorded", run_id=str(run_id), has_lesson=lesson is not None)
@@ -94,6 +103,7 @@ class EpisodicMemory:
                        1 - (goal_embedding <=> CAST(:embedding AS vector)) AS score
                 FROM runs
                 WHERE goal_embedding IS NOT NULL
+                  AND user_id = :user_id
                   -- Cast on BOTH uses: with a NULL parameter Postgres cannot
                   -- infer the type of a bare `:exclude IS NULL` and errors with
                   -- AmbiguousParameterError.
@@ -106,6 +116,7 @@ class EpisodicMemory:
                 "embedding": _to_pgvector(embedding),
                 "limit": limit,
                 "exclude": str(exclude_run_id) if exclude_run_id else None,
+                "user_id": str(self._actor.id),
             },
         )
         return [
