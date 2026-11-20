@@ -46,7 +46,13 @@ Three rules follow:
 **What is retried:** task execution failures — a provider timeout, a transient error inside the
 agent.
 
-**What is not:** anything a retry cannot fix. A malformed *plan* is re-prompted, not retried
+**Since V1.6, one level lower too (ADR-014):** a provider 5xx (`ProviderUnavailableError`) is
+retried **once**, inside the call's own deadline, by `RetryingProvider` — so a 503 in the planner or
+synthesis, outside any task, no longer ends the run.
+
+**What is not:** anything a retry cannot fix. Since V1.6 that includes a **daily** 429 (resets at
+midnight Pacific) and a rejected API key: the executor fails the task at once rather than spending
+two more calls on a known outcome. A malformed *plan* is re-prompted, not retried
 identically. A validation failure is repaired with the error attached. A provider timeout inside
 the V0.1 repair loop propagates rather than consuming the repair budget, because re-prompting
 cannot fix a network problem.

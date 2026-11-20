@@ -753,3 +753,23 @@ document, and the old text stayed retrievable. The ingest needed "a document is 
 - Why delete the old version in the *same* transaction as inserting the new one?
 - Why is the delete scoped to `user_id IS NULL`?
 **Status:** ⬜ Recognise
+
+### A retry needs a vocabulary before it needs a loop (Session 18)
+A Gemini 503 was a bare `ProviderError` with no status, so nothing could retry *only* the transient
+case. The fix was a typed error at the boundary; the wrapper over it is a dozen lines. The retry
+shares the caller's deadline so ADR-009's ordering of bounds survives.
+**Read:** <https://docs.python.org/3/library/asyncio-task.html#asyncio.wait_for> ·
+<https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/>
+**Answer:**
+- Why retry a 503 but never a 429, a 401 or a timeout?
+- What breaks if the retry gets a fresh timeout instead of the remaining one?
+**Status:** ⬜ Recognise
+
+### A guard protects the files it scans (Session 18)
+V1.4's isolation guards scanned `repository.py` and `semantic.py`; three leaks lived in raw SQL
+elsewhere — dead letters, episodic recall, retrieval. Each returned more data, never an error.
+**Read:** <https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html>
+**Answer:**
+- Why does a missing owner filter on a *similarity* search look like a working feature?
+- With no owner, why must retrieval fall back to the system corpus rather than everything?
+**Status:** ⬜ Recognise

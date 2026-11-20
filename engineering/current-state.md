@@ -3,11 +3,12 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-11-19 (Session 17 — V1.5, the demo track's foundation)
+**Last updated:** 2026-11-20 (Session 18 — V1.6, reliability and isolation; the track re-planned)
 
 ## Current Version
-**V1.5 — Demo-ready foundation**, the first milestone of the demo track (V1.5–V2.0,
-`docs/19-roadmap.md`). The V0.1–V1.0 roadmap is complete; V1.1–V1.4 are past it.
+**V1.6 — Reliability and isolation**, the second milestone of the demo track (V1.5–V2.0,
+`docs/19-roadmap.md`, **re-planned 2026-11-20**: V1.7 live run record → V1.8 web page → V1.9 web
+research → V1.10 complex goals → V2.0 demo). The V0.1–V1.0 roadmap is complete.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -18,7 +19,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
 V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
-V1.3 delegation · V1.4 auth + isolation · **V1.5 demo-ready foundation**
+V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · **V1.6 reliability and isolation**
 
 ## What Works
 ```
@@ -36,10 +37,15 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 - OpenTelemetry spans; goal text excluded by default, metric labels allowlisted
 - A 429 says whether its quota is **daily or per-minute** (`amos.llm.quota`); a daily embedding
   limit fails at once instead of sleeping through retries (V1.5)
+- A provider 5xx is `ProviderUnavailableError` (HTTP 503), **retried once inside the caller's
+  deadline** wherever it happens — planner and synthesis included (V1.6, ADR-014). The executor no
+  longer retries a daily 429 or a rejected key
+- Dead letters, episodic recall and retrieval are **owner-scoped** (V1.6 — three leaks closed); a
+  worker lost on a run's final attempt dead-letters it
 - **`make backup` / `make restore-drill` / `make restore`** — the first drill passed 2026-11-19
 - The corpus rebuilds in **one** free-tier day (850 chunks; `docs/build-along/` excluded), and an
   edited document **replaces** its old version on re-ingest
-- **638 tests** (640 collected, 2 live opt-in), in their own database `amos_test`; `mypy --strict`
+- **661 tests** (663 collected, 2 live opt-in), in their own database `amos_test`; `mypy --strict`
   and `ruff` clean; **CI runs with and without a database**, migrations both directions, and with
   no API key
 
@@ -101,7 +107,7 @@ Daily limits reset at midnight Pacific. Since V1.5 a daily 429 fails fast.
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`main`, at `v1.5.1` (v1.5.0 plus a CI fix: `bugs-log.md`, 2026-11-19). No open feature branch. The next one is `feat/v1.6-provider`.
+`main`, at `v1.6.0`. No open feature branch. The next one is `feat/v1.7-run-record`.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -114,8 +120,16 @@ are three-part, because the target derives the tag from `__version__` and that i
 ## Known Bugs
 **None open.** The pgvector similarity failure was reproduced and explained at V1.5 — the planner
 choosing between an exact scan and the HNSW index — and the test fixed (`bugs-log.md`,
-`experiments-log.md`, 2026-11-19). Twenty-three fixed in all, each in `engineering/bugs-log.md` with
+`experiments-log.md`, 2026-11-19). V1.6 fixed seven more found by surveying the read surface —
+three isolation leaks, a run stuck in `QUEUED` forever, an unclassified 503, retried daily 429s, and
+an iteration setting that did nothing. Thirty fixed in all, each in `engineering/bugs-log.md` with
 the lesson it taught.
+
+**Known and scheduled for V1.7** (not bugs in what is claimed, gaps in what is recorded): model and
+tool calls are written at the end of a run with no task, agent or purpose; routing decisions and
+critic verdicts are not stored; a delegate's own calls and tokens are discarded, so `total_tokens`
+under-counts delegated runs; failed runs store no calls; the worker records no episodic memory and
+no metrics. `docs/19-roadmap.md` V1.7.
 
 ## Technical Debt
 - **SQLAlchemy is capped below 2.1.** 2.1 changed `Select`'s typing (four errors in
@@ -129,9 +143,6 @@ the lesson it taught.
 - **Delegation quality is unmeasured.** The bounds are tested; whether models delegate *well*
   has no number, unlike routing accuracy.
 - `steps` still one per run: V1.1 made *tasks* incremental, not steps.
-- **A transient provider error ends the run.** A Gemini `503` raised outside the task executor
-  (router, planner) is never retried — it cost two eval goals on 2026-11-19. Scheduled in V1.6 as a
-  provider wrapper both providers share.
 - **`db_factory` tests commit for real and clean up at the end of the test body**, not in a
   fixture teardown — so a failing assertion leaks rows. Since V1.5 into `amos_test`, not the demo's
   database. Seen
@@ -153,9 +164,8 @@ the lesson it taught.
   questions now exist unlabelled, and "Why is there no authentication yet?" is false since V1.4.
   Fixing it by relabelling after seeing results is the thing the set's docstring forbids; the real
   fix is an independently authored set.
-- **The corpus lags `docs/` by this session's edits.** Edited documents re-embed on the next
-  `make ingest` (they now replace their old versions); today's embedding quota was mostly spent on
-  the rebuild, so run it tomorrow, then `make backup`.
+- **The corpus lags `docs/` by each session's edits** until the next `make ingest` (edited documents
+  replace their old versions). Run it, then `make backup`, at the start of a session.
 
 ## Environment
 | Thing | State |
@@ -165,11 +175,11 @@ the lesson it taught.
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
 | Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` → `835121ee2bd2` |
 | Users | `alembic upgrade head` creates `default` and **prints its key once**. `AMOS_BOOTSTRAP_API_KEY` sets it instead |
-| Corpus | **41 docs / 850 chunks**, rebuilt 2026-11-19 in one run; backed up (`backups/amos-20261119-140511.dump`, 6.6 MB, drill passed). Before that: EMPTY, destroyed 2026-09-13. A rebuild on 2026-09-14 hit the daily embedding quota partway and — running pre-fix code in one transaction — rolled back everything. Now 51 docs / ~1070 chunks, likely more than one free-tier day. Since the per-document-commit fix, `make ingest` keeps what it finishes and resumes: **run it on two consecutive days** |
+| Corpus | **42 docs / 880 chunks**, re-ingested 2026-11-20 (7 edited docs replaced their old versions); backed up (`backups/amos-20261120-144852.dump`, 6.8 MB). Rebuilt from empty on 2026-11-19 in one run (850 chunks; drill passed). A full rebuild fits one free-tier day since V1.5 |
 | Test database | `amos_test`, created and migrated by the test suite on first use (`AMOS_TEST_DATABASE_URL` overrides) |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
-| Coding sessions | Since 2026-11-17 the terminal account switcher set the assistant CLI's subprocess-environment scrub (`…_SUBPROCESS_ENV_SCRUB=1`), which on Linux also puts every session command in a PID/user namespace with nested namespaces disabled — **podman cannot start inside a session**. Run `make up` in your own terminal. A config-folder switcher that needs no scrub was written 2026-11-19 (the Studio project's account-switcher folder (`config-dirs/`)), not yet installed |
+| Coding sessions | Podman works inside a session again (verified 2026-11-20: `podman ps`, `make backup`). From 2026-11-17 to 11-19 an account switcher's environment scrub blocked containers in sessions; if that returns, run `make up` in your own terminal |
 | Attribution | The assistant's instruction file is untracked and imports `docs/working-agreement.md`. `make attribution-check` before every push |
 
 ## How To Run
@@ -183,19 +193,16 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**V1.6 — a second LLM provider** (`docs/19-roadmap.md`), started with
-`engineering/next-session-prompt.md`. It now includes the transient-error retry found at V1.5.
+**V1.7 — live run record and read API** (`docs/19-roadmap.md`; the approved plan's detail is in
+the V1.7 section there and in ADR-015/016 once written). Branch `feat/v1.7-run-record`. ADR-015
+(record as it happens) and ADR-016 (per-run options) before code.
 
-Before it (Anshul):
-1. A free Groq API key in `.env` as `GROQ_API_KEY`.
-2. Read the Gemini free-tier numbers for `gemini-embedding-001` and `gemini-3.5-flash` off the AI
-   Studio rate-limit page — the public docs page stopped listing them on or before 2026-11-19 — and
-   paste them at the start of the session.
-3. `make ingest` (re-embeds this session's edited docs, replacing old versions), then `make backup`.
+Nothing needed from Anshul before it. Live checks spend Gemini quota — about 60 calls per full
+demo pass of flash-lite's 500/day.
 
-### The advance gate — thirteen documents, never met
+### The advance gate — fourteen documents, never met
 
-`docs/interview/*.md`, now including `operations.md` (V1.5). This is the second of the project's
+`docs/interview/*.md` — fourteen, with V1.6's questions added to `reliability.md` and `security.md`. This is the second of the project's
 two equal objectives, and the teacher demo is exactly its test: explaining the system unaided.
 Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/interview/*.md` in milestone
 order. Building further before closing it is a deliberate choice against the working agreement's

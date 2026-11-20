@@ -185,6 +185,68 @@ directory the change never opened.
 
 ---
 
+## Added at V1.6 — transient errors (ADR-014)
+
+### Two of nine eval goals failed on a Gemini 503. Why did the existing retry not save them?
+
+Because the executor's retry wraps **tasks**, and both 503s came from calls outside any task — the
+planner (before the tasks exist) and synthesis (after they finish). Nothing retried those, so the
+whole run failed and the finished tasks' work was thrown away with it. Inside a task the same error
+*was* retried — by re-running the entire task: routing, every tool call, the critic.
+
+### Why could no caller tell a 503 from any other failure?
+
+`GeminiProvider` translated every `ServerError` into a bare `ProviderError` with no status. A
+retry policy needs a vocabulary before it needs a loop: `ProviderUnavailableError` names a 5xx,
+and the wrapper that retries it is a few lines. The API now answers it as **503**, not 500.
+
+### Why a wrapper over `LLMProvider` rather than a retry in each caller?
+
+Five callers — planner, router, agent, critic, synthesis — would hold five copies of one policy,
+and the next caller written would forget. `RetryingProvider` is applied in `build_provider`, which
+is now the **only** place a provider is constructed; the judge and the routing CLI used to build
+unwrapped ones of their own, and the app built a second one for the reconciler.
+
+### What does it retry, and what does it refuse to retry?
+
+Only `ProviderUnavailableError`, and only **once**. Never a 429 (the quota is spent — a retry spends
+more), never an auth error or a 4xx (same answer every time), never a timeout (the budget is gone).
+
+### Why does the retry share the caller's deadline instead of getting a fresh one?
+
+ADR-009 orders the bounds: per-call < task timeout (300 s) < visibility timeout (600 s). A fresh
+timeout per attempt doubles the per-call worst case, and a task could then breach 300 s on work
+that was going to succeed — and past 600 s, a second worker reclaims a run that is still running.
+So the retry gets **what is left** of the original timeout, and is skipped when under 3 s remain.
+
+### Don't retries now stack?
+
+Yes, and boundedly: inside a task a persistent 503 costs at most 2 calls per task attempt, 6 across
+the executor's three. A *single* 503 now costs one extra call instead of a whole task re-run, so the
+common case got cheaper.
+
+### What did the executor stop retrying, and why?
+
+A **daily** `ProviderRateLimitError` and a `ProviderAuthError` now fail the task at once. The daily
+quota resets at midnight Pacific; three backoff retries a few seconds apart were three calls spent
+on a known outcome. A per-minute limit still backs off, because that window does pass.
+
+### Why was a second provider (Groq) not built?
+
+Its justification was `gemini-3.5-flash`'s 20 calls a day. The default model, flash-lite, has 500.
+Groq's `gpt-oss-120b` allows 8K tokens a minute — about one AMOS goal a minute — so it is a slower
+provider, not a bigger one, and the 503 it was meant to cover is handled by one retry. Deferred with
+a stated *reconsider if*: flash-lite failing the complex goals on quality.
+
+### A worker dies during a run's last permitted attempt. What happened before V1.6?
+
+Reclaim put it back in `QUEUED`. The claim query only takes runs **below** the attempt ceiling, and
+`give_up` runs only from a live worker's failure handler — the worker that had died. So the run sat
+in `QUEUED` forever, counted in the queue depth and listed nowhere. Now reclaim dead-letters it.
+The lesson: a poison-message guard in the failure handler cannot fire for the failure that kills it.
+
+---
+
 ## What this milestone does *not* claim
 
 - Not exactly-once. Not close to it, and not trying.

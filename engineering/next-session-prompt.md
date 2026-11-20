@@ -28,7 +28,7 @@ Keep explanations short and link official docs.
 
 ## Before the first session (Anshul)
 
-- `make up` in your own terminal (sessions cannot start containers while the old account
-  switcher's environment scrub is active; see `current-state.md` → Environment).
-- `make ingest` today and again tomorrow — the corpus rebuild needs two days of embedding quota.
-- A free Groq API key in `.env` as `GROQ_API_KEY`, before V1.6.
+- `make up` (podman works inside a session again since 2026-11-20; run it in your own terminal
+  only if a session cannot start containers).
+- `make ingest` after editing docs, then `make backup` — a full rebuild fits one day's embedding
+  quota since V1.5 (850 chunks of 1000).
