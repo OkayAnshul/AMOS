@@ -23,13 +23,20 @@ from amos.agents.schemas import AgentResult, GoalRequest, QueuedRun, RunOptions,
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent
 from amos.api import views
-from amos.api.dependencies import build_agent, build_provider, build_registry, build_run_agent
+from amos.api.dependencies import (
+    budget_for,
+    build_agent,
+    build_provider,
+    build_registry,
+    build_run_agent,
+)
 from amos.api.persistence import RunService
 from amos.auth import LOCAL_ACTOR, Actor, authenticate, key_from_header
 from amos.config import Settings, get_settings
 from amos.database.engine import create_engine, create_session_factory, session_scope
 from amos.errors import (
     AmosError,
+    BudgetExhaustedError,
     ConfigurationError,
     OutputValidationError,
     ProviderAuthError,
@@ -79,6 +86,7 @@ _STATUS_MAP: list[tuple[type[AmosError], int]] = [
     (ToolLoopExhaustedError, 502),
     (ProviderRateLimitError, 429),
     (ProviderUnavailableError, 503),
+    (BudgetExhaustedError, 429),
     (ProviderAuthError, 502),
     (OutputValidationError, 502),
     (ConfigurationError, 500),
@@ -227,6 +235,7 @@ def create_app(
                 trace_content=settings.trace_content,
                 reconciler=reconciler,
                 agent_factory=agent_factory,
+                budget=lambda: budget_for(settings),
             )
 
         log_event(

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from amos.agents.schemas import RunOptions
 from amos.api.persistence import record_episode
 from amos.auth import Actor
+from amos.budget import RunBudget, budget_scope
 from amos.database.engine import session_scope
 from amos.database.recorder import RunRecorder, record_event, recording
 from amos.database.repository import RunRepository
@@ -64,11 +65,13 @@ class Worker:
         max_attempts: int = 3,
         visibility_timeout: int = DEFAULT_VISIBILITY_TIMEOUT,
         episodic: Callable[[AsyncSession, Actor], EpisodicMemory] | None = None,
+        budget: Callable[[], RunBudget] | None = None,
     ) -> None:
         self._factory = session_factory
         # Before V1.7 the worker recorded no episodes, so queued runs were
         # invisible to `recall_past_runs`; it shares the sync path's helper now.
         self._episodic = episodic
+        self._budget = budget
         self._agent_factory = agent_factory
         self.worker_id = worker_id or default_worker_id()
         self._poll_interval = poll_interval
@@ -109,6 +112,7 @@ class Worker:
         with (
             recording(RunRecorder(self._factory)),
             call_scope(run_attempt=claimed.attempt_count),
+            budget_scope(self._budget() if self._budget is not None else None),
         ):
             await record_event(
                 "run.claimed",

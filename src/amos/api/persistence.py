@@ -24,6 +24,7 @@ from amos.agents.schemas import (
     TraceToolCall,
 )
 from amos.auth import Actor
+from amos.budget import RunBudget, budget_scope
 from amos.database.engine import session_scope
 from amos.database.models import Run
 from amos.database.recorder import RunRecorder, record_event, recording
@@ -55,6 +56,7 @@ class RunService:
         trace_content: bool = False,
         reconciler: MemoryReconciler | None = None,
         agent_factory: Callable[[RunOptions], object] | None = None,
+        budget: Callable[[], RunBudget] | None = None,
     ) -> None:
         self._agent = agent
         self._factory = session_factory
@@ -64,6 +66,8 @@ class RunService:
         # Builds a per-run agent when a run switches features off (ADR-016).
         # Optional: without it, options are stored and the shared agent runs.
         self._agent_factory = agent_factory
+        # A fresh budget per run (ADR-019); None means unlimited, as in tests.
+        self._budget = budget
 
     @property
     def persistence_enabled(self) -> bool:
@@ -169,8 +173,13 @@ class RunService:
         #    holding a database connection open across it would exhaust the pool.
         #    Everything inside is recorded as it happens (ADR-015).
         started = time.perf_counter()
-        with recording(RunRecorder(self._factory)):
-            await record_event("run.started", options=options.given() if options else {})
+        budget = self._budget() if self._budget is not None else None
+        with recording(RunRecorder(self._factory)), budget_scope(budget):
+            await record_event(
+                "run.started",
+                options=options.given() if options else {},
+                budget=budget.snapshot() if budget else None,
+            )
             try:
                 with span(
                     "run.execute",

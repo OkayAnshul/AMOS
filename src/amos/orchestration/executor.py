@@ -22,7 +22,12 @@ from typing import Protocol
 
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence
 from amos.database.recorder import record_event
-from amos.errors import AmosError, ProviderAuthError, ProviderRateLimitError
+from amos.errors import (
+    AmosError,
+    BudgetExhaustedError,
+    ProviderAuthError,
+    ProviderRateLimitError,
+)
 from amos.llm.base import LLMCallRecord
 from amos.observability import call_scope, log_event
 from amos.orchestration.plan import Plan, PlannedTask
@@ -438,7 +443,7 @@ def is_retryable(exc: AmosError) -> bool:
     every time; retrying either spends calls on a known outcome. A per-minute
     limit, a timeout or an unscoped 429 does pass, so backoff is right for them.
     """
-    if isinstance(exc, ProviderAuthError):
+    if isinstance(exc, ProviderAuthError | BudgetExhaustedError):
         return False
     if isinstance(exc, ProviderRateLimitError):
         return exc.details.get("quota_scope") != "day"

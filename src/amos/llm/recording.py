@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import time
 
+from amos.budget import charge_llm_call
 from amos.database.recorder import current_recorder
 from amos.errors import ProviderError, ProviderRateLimitError
 from amos.llm.base import LLMProvider, LLMRequest, LLMResponse
+from amos.observability import get_call_context
 from amos.telemetry.metrics import instruments, safe_labels
 
 
@@ -35,6 +37,9 @@ class RecordingProvider:
         return str(getattr(self._inner, "_model", None) or getattr(self._inner, "model", "unknown"))
 
     async def complete(self, request: LLMRequest, *, timeout: float) -> LLMResponse:
+        # Every real attempt counts against the run's budget (ADR-019), retries
+        # included: each one spends quota.
+        await charge_llm_call(get_call_context().purpose)
         started = time.perf_counter()
         try:
             response = await self._inner.complete(request, timeout=timeout)
