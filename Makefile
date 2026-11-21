@@ -1,5 +1,5 @@
 # Common commands. `make help` lists them.
-.PHONY: browser-test web-up help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker release attribution-check backup restore-drill restore
+.PHONY: browser-test demo web-up help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker release attribution-check backup restore-drill restore
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -24,6 +24,12 @@ check: lint types test  ## Everything CI runs
 
 up:  ## Start PostgreSQL
 	podman-compose up -d
+
+demo:  ## Start Postgres and SearXNG, run the pre-flight checks, then serve the page with web research on
+	podman-compose up -d
+	-podman-compose --profile web up -d searxng
+	.venv/bin/python -m amos.demo
+	AMOS_WEB_ENABLED=true .venv/bin/python -m amos
 
 web-up:  ## Start SearXNG for web_search (V1.9); then set AMOS_WEB_ENABLED=true
 	podman-compose --profile web up -d searxng
