@@ -14,9 +14,11 @@ Two facts from Groq's documentation shape it (2026-11-22):
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -34,6 +36,12 @@ from amos.telemetry.tracing import span
 from amos.tools.base import ToolCall
 
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+#: A request's characters, at most. Groq's free tier refuses a request over its
+#: 8,000 tokens a minute outright (413); ~18,000 characters leaves room for the
+#: answer (ADR-023).
+MAX_REQUEST_CHARS = 18_000
+#: A tool result is never cut below this.
+MIN_TOOL_CHARS = 1_500
 #: Groq's own custom status for "flex tier at capacity"; transient like a 503.
 _UNAVAILABLE = {498, 500, 502, 503, 504}
 
@@ -52,14 +60,33 @@ class GroqProvider:
         *,
         base_url: str = DEFAULT_BASE_URL,
         transport: httpx.AsyncBaseTransport | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._api_key = api_key
         self.model = model
         self._base_url = base_url.rstrip("/")
         self._transport = transport
+        self._sleep = sleep
 
     async def complete(self, request: LLMRequest, *, timeout: float) -> LLMResponse:
         started = time.perf_counter()
+        try:
+            return await self._complete_once(request, timeout, started)
+        except ProviderRateLimitError as exc:
+            # A per-minute limit with a short retry-after is cheaper to wait out than
+            # to hand to a weaker model — inside the same deadline, once (ADR-023).
+            wait = exc.details.get("retry_after")
+            remaining = timeout - (time.perf_counter() - started)
+            if exc.details.get("quota_scope") != "minute" or not isinstance(wait, float):
+                raise
+            if wait + 3 > remaining:
+                raise
+            await self._sleep(wait)
+            return await self._complete_once(request, remaining - wait, started)
+
+    async def _complete_once(
+        self, request: LLMRequest, timeout: float, started: float
+    ) -> LLMResponse:
         try:
             return await self._complete(request, timeout, started)
         except ProviderError as exc:
@@ -166,7 +193,7 @@ class GroqProvider:
             }
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}] if system else []
         messages.extend(_messages(request.turns()))
-        body["messages"] = messages
+        body["messages"] = fit(messages)
         return body
 
     def _error(self, response: httpx.Response) -> ProviderError:
@@ -177,9 +204,15 @@ class GroqProvider:
             message = response.text[:300]
         if status == 429:
             scope = "day" if re.search(r"per day|\(RPD\)|\(TPD\)", message, re.I) else "minute"
+            details: dict[str, Any] = {
+                "status": status,
+                "quota_scope": scope,
+                "provider": self.name,
+            }
+            with contextlib.suppress(ValueError):
+                details["retry_after"] = float(response.headers.get("retry-after", ""))
             return ProviderRateLimitError(
-                f"Groq quota exceeded ({scope} limit). {message}",
-                details={"status": status, "quota_scope": scope, "provider": self.name},
+                f"Groq quota exceeded ({scope} limit). {message}", details=details
             )
         if status in (401, 403):
             return ProviderAuthError("Groq rejected the API key", details={"status": status})
@@ -188,6 +221,37 @@ class GroqProvider:
                 f"Groq server error {status}: {message}", details={"status": status}
             )
         return ProviderError(f"Groq error {status}: {message}", details={"status": status})
+
+
+_CUT = " … [cut to fit the model's request limit]"
+
+
+def fit(messages: list[dict[str, Any]], limit: int = MAX_REQUEST_CHARS) -> list[dict[str, Any]]:
+    """Cut the longest tool results until the request fits Groq (ADR-023).
+
+    Tool results are what grows — a page per read. The newest message is never
+    cut: it is what the model is answering. Nothing is cut below MIN_TOOL_CHARS.
+    Every cut makes the request strictly smaller, so this ends.
+    """
+    size = sum(len(str(m.get("content") or "")) for m in messages)
+    while size > limit:
+        candidates = [
+            i
+            for i, m in enumerate(messages[:-1])
+            if m["role"] == "tool" and len(m["content"].removesuffix(_CUT)) > MIN_TOOL_CHARS
+        ]
+        if not candidates:
+            break
+        longest = max(candidates, key=lambda i: len(messages[i]["content"]))
+        before = messages[longest]["content"]
+        base = before.removesuffix(_CUT)
+        keep = max(MIN_TOOL_CHARS, min(len(base) // 2, len(before) - (size - limit) - len(_CUT)))
+        after = base[:keep] + _CUT
+        if len(after) >= len(before):
+            break
+        messages[longest] = {**messages[longest], "content": after}
+        size -= len(before) - len(after)
+    return messages
 
 
 def _bad_tool_call(exc: ProviderError) -> bool:

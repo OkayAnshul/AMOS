@@ -9,9 +9,10 @@ carry no signature it made. So once a tool loop holds a tool call made by model 
 a Gemini member that is not M is skipped for that call; Groq accepts any history
 and can always take over. Decided from the model recorded on each turn.
 
-**Preferences.** An agent can prefer a member — the writer prefers Groq's
-stronger model (it has no tools, so no history question arises). A preference
-reorders the chain for that agent's calls; it never removes a member.
+**Preferences.** An agent, or a purpose, can prefer a member — the writer and
+the planner prefer Groq's stronger model (neither calls tools, so no history
+question arises). A preference reorders the chain for those calls; it never
+removes a member.
 """
 
 from __future__ import annotations
@@ -88,8 +89,8 @@ class FallbackProvider:
         return list(self._members)
 
     def _order(self) -> list[LLMProvider]:
-        agent = get_call_context().agent
-        preferred = self._prefer.get(agent or "")
+        context = get_call_context()
+        preferred = self._prefer.get(context.agent or "") or self._prefer.get(context.purpose or "")
         if not preferred:
             return list(self._members)
         first = [m for m in self._members if m.name == preferred]

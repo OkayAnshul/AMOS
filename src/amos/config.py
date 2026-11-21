@@ -177,6 +177,11 @@ class Settings(BaseSettings):
         default="groq",
         description="The provider the writer tries first (ADR-021). Empty: the chain's order.",
     )
+    planner_provider: str = Field(
+        default="groq",
+        description="The provider the planner tries first: the plan decides the whole run's "
+        "quality (ADR-021). Empty: the chain's order.",
+    )
 
     # V1.9 web research (ADR-018) and the per-run budget (ADR-019).
     web_enabled: bool = Field(

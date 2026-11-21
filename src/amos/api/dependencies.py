@@ -67,7 +67,14 @@ def build_provider(settings: Settings) -> LLMProvider:
         )
     if len(members) == 1:
         return RetryingProvider(members[0])
-    prefer = {"writer": settings.writer_provider} if settings.writer_provider else {}
+    prefer = {
+        role: provider
+        for role, provider in (
+            ("writer", settings.writer_provider),
+            ("planner", settings.planner_provider),
+        )
+        if provider
+    }
     return RetryingProvider(FallbackProvider(members, prefer=prefer))
 
 

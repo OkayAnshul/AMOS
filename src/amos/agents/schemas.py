@@ -26,6 +26,39 @@ class Confidence(StrEnum):
     LOW = "low"
 
 
+class Finding(BaseModel):
+    """One fact a researcher found, with the words that state it (ADR-022)."""
+
+    fact: str = Field(
+        description="The fact, with its figure and unit or its name, e.g. "
+        "'Zostel Anjuna: dorm bed ₹650 a night'."
+    )
+    quote: str = Field(
+        description="The exact words from the tool output that state this fact, copied "
+        "character for character, 5 to 30 words, including the figure."
+    )
+    source: str = Field(
+        description="The url, or the document citation, exactly as the tool output gave it."
+    )
+
+
+class FindingStatus(StrEnum):
+    CHECKED = "checked"
+    QUOTE_NOT_FOUND = "quote_not_found"
+    FIGURE_NOT_IN_QUOTE = "figure_not_in_quote"
+
+
+class CheckedFinding(Finding):
+    """A finding after code compared it with what the task read. Never produced
+    by a model: the executor builds it (ADR-022)."""
+
+    status: FindingStatus
+    #: Whether the cited source is one this task actually read.
+    source_seen: bool = False
+    #: Where the quote was found — the cited source, or the one that really says it.
+    found_in: str | None = None
+
+
 class AgentResponse(BaseModel):
     """The structured answer the model is required to produce."""
 
@@ -39,6 +72,11 @@ class AgentResponse(BaseModel):
     caveats: list[str] = Field(
         default_factory=list,
         description="What could make this answer wrong, or what it does not cover.",
+    )
+    findings: list[Finding] = Field(
+        default_factory=list,
+        description="Research only: every fact found, each with the exact words that state "
+        "it and its source. Empty when you computed or composed rather than looked up.",
     )
 
 
@@ -121,6 +159,10 @@ class AgentResult(BaseModel):
     repair_count: int = 0
     total_tokens: int = 0
     latency_ms: int = 0
+    findings: list[CheckedFinding] = Field(
+        default_factory=list,
+        description="The answer's findings after the check against what was read (ADR-022).",
+    )
 
 
 class QueuedRun(BaseModel):

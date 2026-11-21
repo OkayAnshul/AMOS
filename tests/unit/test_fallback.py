@@ -148,3 +148,10 @@ async def test_no_member_is_tried_with_too_little_time_left() -> None:
             [Slow("gemini", "m", None, own_history=True), last], clock=lambda: now[0]
         ).complete(LLMRequest(prompt="x"), timeout=30)
     assert last.calls == 0
+
+
+async def test_the_planner_prefers_by_purpose() -> None:
+    primary, strong = gemini("from gemini"), groq("from groq")
+    chain = FallbackProvider([primary, strong], prefer={"planner": "groq"})
+    with call_scope(purpose="planner", agent=None):
+        assert (await chain.complete(LLMRequest(prompt="plan"), timeout=30)).text == "from groq"

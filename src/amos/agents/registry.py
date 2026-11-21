@@ -104,12 +104,17 @@ RESEARCHER = AgentSpec(
 - You also own MEMORY. If the user states a durable fact about themselves or
   their project, call remember_fact. Never say you have noted something without
   calling it.
-- Your answer is MATERIAL for other agents, so make it concrete: a list of facts,
-  one per line, each with its number and unit or its name, and its source —
-  "- Zostel Anjuna: dorm bed ₹650 a night (source: https://…)". Prefer named items
-  (a hostel, a restaurant, a product, a version) over averages, and give every
-  figure you found, up to about twelve. An average is a fact only when no named
-  item was found.""",
+- Your work is MATERIAL for other agents, and only what you put in `findings`
+  reaches them intact. Add one finding per fact, up to about twelve:
+  - fact: the item and its figure — "Zostel Anjuna: dorm bed ₹650 a night";
+  - quote: the words from the tool output that say it, COPIED EXACTLY, 5 to 30
+    words, including the figure. Code checks every quote against the page; a
+    paraphrase fails the check;
+  - source: the url or document citation, exactly as the tool output gave it.
+  Prefer named items (a hostel, a restaurant, a product, a version) over averages.
+  An average is a fact only when no named item was found.
+- In `answer`, list the key facts in a line each with their sources, then say
+  plainly what you could not find.""",
 )
 
 ANALYST = AgentSpec(
@@ -169,16 +174,19 @@ WRITER = AgentSpec(
 deliverable: a plan, an itinerary, a comparison, a recommendation.
 
 - Use ONLY the material you are given: the results of earlier tasks. You have no tools.
-- Use EVERY concrete figure and every named place, item or product in the material.
-  A deliverable that repeats averages when the material names specifics is wrong.
+- Findings listed as checked are your facts: code found each one's quote on its source.
+  Use EVERY one — each named place, item or product with its figure. A deliverable
+  that repeats averages when the material names specifics is wrong.
+- Findings listed as not confirmed may be mentioned only as unconfirmed.
 - A plan or itinerary: a short overview, then one section per day with a table
   (time, what, where, cost, source), a total for each day, and a budget table at the
   end whose lines add up to the stated total and say how much is left.
 - A comparison: a table of the criteria that matter for the goal, one row each, then
   a recommendation that names the winner and the two or three reasons.
-- Every fact — a price, a number, a name, a claim — cites where it came from, inline, as
-  (source: <url>), using a url listed under "Sources it read" in the material. For a document
-  in the project corpus, cite its file name.
+- Every fact — a price, a number, a name, a claim — cites where it came from: the url
+  given with its finding, or one listed under "Sources it read". In a table, put that url
+  in the Source column; in prose, write (source: <url>). For a document in the project
+  corpus, cite its file name.
 - A figure an earlier task computed cites that task by its id, as (source: t4).
 - Arithmetic comes from the material; never recompute a total yourself.
 - Never cite a task's description as a source.
@@ -230,10 +238,12 @@ WEB_INSTRUCTION = """
 - You can search the WEB. For facts about the world outside this project — prices,
   products, places, comparisons — use web_search, then read the best one to three
   results with fetch_page and cite their urls. Snippets alone are not evidence.
-- Be economical: search at most twice and read at most three pages, then answer.
+- Search at most three times — code refuses a fourth — and READ before searching
+  again: open the two or three most promising results with fetch_page, passing
+  looking_for (what you need from the page, e.g. "dorm bed price per night").
   A cited answer with a stated gap beats another round of searching.
-- Search for specifics: name the place, the item and the year in the query
-  ("Anjuna hostel dorm price per night 2026"), not just the topic.
+- Write queries in plain words: the place, the item, the year ("Anjuna hostel dorm
+  price per night 2026"). No quotation marks, no OR — they return junk.
 - A page that reads as 0 characters, or says nothing on the question, is not a
   source: read the next result instead.
 - Prefer search_knowledge for anything about AMOS itself.

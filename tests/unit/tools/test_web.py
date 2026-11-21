@@ -226,3 +226,80 @@ def test_the_researcher_is_told_about_the_web_only_when_it_has_the_web() -> None
 
     assert WEB_INSTRUCTION in (team_with.agent_for(spec)._system_instruction or "")
     assert WEB_INSTRUCTION not in (team_without.agent_for(spec)._system_instruction or "")
+
+
+# ---------- research that reads (ADR-023) ----------
+
+
+async def test_a_fourth_search_in_one_task_is_refused_in_code() -> None:
+    from amos.observability import call_scope, set_current_run_id
+
+    tool = WebSearchTool("http://searxng.test", transport=searxng(SEARCH))
+    set_current_run_id("run-a")
+    try:
+        with call_scope(task_ref="t1", task_attempt=1):
+            statuses = [
+                (await tool.execute(call("web_search", query="redis streams"))).status
+                for _ in range(4)
+            ]
+            refused = await tool.execute(call("web_search", query="redis streams"))
+        with call_scope(task_ref="t2", task_attempt=1):
+            other_task = await tool.execute(call("web_search", query="redis streams"))
+    finally:
+        set_current_run_id(None)
+    assert statuses[:3] == [ToolStatus.OK] * 3 and statuses[3] is ToolStatus.INVALID_ARGS
+    assert "fetch_page" in (refused.error or "")
+    assert other_task.status is ToolStatus.OK, "the cap is per task, not per run"
+
+
+async def test_off_topic_results_are_dropped_and_counted() -> None:
+    data = {
+        "results": [
+            {
+                "url": "https://en.wikipedia.org/wiki/Polypropylene",
+                "title": "Polypropylene",
+                "content": "a polymer",
+            },
+            {
+                "url": "https://www.amazon.in/rtx-5090",
+                "title": "RTX 5090 price",
+                "content": "Buy now",
+            },
+            {
+                "url": "https://thalassa.example/menu",
+                "title": "Thalassa Vagator menu",
+                "content": "Greek food",
+            },
+        ]
+    }
+    tool = WebSearchTool("http://searxng.test", transport=searxng(data))
+    outcome = await tool.execute(call("web_search", query="Thalassa Vagator meal price"))
+    assert [r["url"] for r in outcome.output["results"]] == ["https://thalassa.example/menu"]
+    assert outcome.output["off_topic_dropped"] == 2
+
+
+async def test_a_long_page_is_cut_to_what_the_agent_is_looking_for() -> None:
+    filler = "<p>" + ("Home About Contact Login Careers Press " * 40) + "</p>"
+    page = (
+        filler * 8
+        + "<p>The Hosteller Anjuna. Dorm beds from ₹933 a night, breakfast ₹150.</p>"
+        + filler * 8
+    )
+    tool = FetchPageTool(
+        FixedProvenance({URL}), transport=pages({URL: html(page)}), resolver=public
+    )
+    outcome = await tool.execute(
+        call("fetch_page", url=URL, looking_for="dorm bed price per night")
+    )
+    out = outcome.output
+    assert out["excerpted"] is True and out["page_chars"] > len(out["text"])
+    assert "₹933 a night" in out["text"]
+    assert len(out["text"]) <= 6_000
+
+
+async def test_a_short_page_is_returned_whole() -> None:
+    tool = FetchPageTool(
+        FixedProvenance({URL}), transport=pages({URL: html(ARTICLE)}), resolver=public
+    )
+    outcome = await tool.execute(call("fetch_page", url=URL, looking_for="anything"))
+    assert outcome.output["excerpted"] is False
