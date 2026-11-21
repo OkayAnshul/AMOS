@@ -1254,3 +1254,48 @@ a fair reading — that stays the critic's job.
 ### Reconsider if
 More than a third of findings fail the check on live runs while being true on reading — then the
 check, or the instruction, is wrong.
+
+---
+
+## ADR-023 — Research that reads: a search cap, focused pages, and partial inputs
+
+**Date** 2026-11-22 · **Status** Accepted (V1.11) · **Amends** ADR-018 (web tools), the executor's skip rule (V0.4)
+
+### Context
+A live Goa run on 2026-11-22 lost its deliverable. Three causes, each measured in the run record:
+1. **Researchers search instead of reading.** One task ran 8 searches and tried 2 pages; the
+   prompt's "at most two searches" was ignored. Each search answer is a model call, so the loop
+   spends quota and time on queries that grow narrower and worse.
+2. **Pages are too long to carry.** A read page is up to 20,000 characters, mostly navigation and
+   boilerplate. Three of them in a tool loop make Gemini time out and Groq refuse the request
+   (`413 Request too large`, its 8,000-token per-minute ceiling) — so the fallback could not help.
+   SearXNG also returned off-topic results (a dictionary, a shop) for quoted or `OR` queries.
+3. **One failed task sinks the plan.** Transport research failed three times; the budget and writer
+   tasks depended on it and were skipped, so a run with two good research tasks produced no plan.
+
+### Decision
+1. **A search cap per task, in code.** The fourth `web_search` in one task attempt is refused with
+   an instruction to read the results already found or answer. Off-topic results — sharing no
+   specific word with the query — are dropped before the model sees them, and counted.
+2. **Focused page reading.** `fetch_page` takes `looking_for` ("dorm bed price per night"). A page
+   longer than 6,000 characters is cut to its most relevant passages, in page order: blocks scored by
+   the words of `looking_for` they contain and by figures and currency. The output says it is an
+   excerpt and how long the page was. Everything downstream — the findings check, the critic — sees
+   exactly what the agent saw.
+3. **A task that combines several results runs on what arrived.** A task with two or more
+   dependencies becomes ready when all of them have finished and **at least one succeeded**; it is
+   told which inputs are missing and why. A task with one dependency still needs it. The run is
+   still `PARTIALLY_COMPLETED`, and the deliverable says what is missing.
+4. **Groq requests fit Groq.** The longest tool results in a request to Groq are trimmed until the
+   request fits under its per-minute token ceiling, and a per-minute 429 with a short `retry-after`
+   inside the deadline is waited out once.
+
+### Tradeoffs
+- A capped researcher sometimes stops one search short of a better result.
+- Excerpting can cut the one sentence that mattered; `looking_for` makes that less likely, not
+  impossible. The page length is shown, so a reader can tell an excerpt from a short page.
+- A deliverable built on partial inputs is less complete — but says so, instead of not existing.
+
+### Reconsider if
+Capped tasks routinely end with "not found" where a fourth search would have found it, or a
+combining task's output on partial inputs misleads rather than informs.
