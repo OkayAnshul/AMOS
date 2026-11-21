@@ -886,3 +886,23 @@ saying so; a model that still asks for a tool fails as before. The web instructi
 **Lesson:** "it never fired" is evidence about the workloads so far, not about the next one.
 **Tests added:** `test_at_the_cap_the_agent_answers_from_what_it_gathered`; the cap test now pins
 exactly one extra, tool-free call.
+
+---
+
+## 2026-11-21 — Complex goals on a free tier: four failures in five live runs, each fixed
+**Milestone:** V1.10, demo queries 8 and 9 run live from the page
+1. **Parallel research passed 15 requests a minute.** Three concurrent researchers; one task's 429s
+   were retried after 0.5 s, lost, and took its dependents with it. *Fix:* a process-wide rate
+   limiter one slot under the quota; waits recorded and shown.
+2. **The budget ran out at the last review** (40 calls for five tasks). *Fix:* 60 — ADR-019's
+   reconsider-if, exactly.
+3. **The writer cited task descriptions,** because the material it got carried answers but not
+   sources. The citation check flagged every one. *Fix:* each upstream result carries its task id and
+   the URLs it read; task ids are citable for computed figures.
+4. **Search came back empty** — SearXNG's only working engine suspended after a day of use. *Fix:*
+   two more engines, probed from this machine.
+5. **Concurrent tasks drew on top of each other** in the lane graph. *Fix:* sub-rows per lane.
+**Not fixed, and not AMOS's to fix:** Gemini 503s under load still end tasks after one retry.
+The fallback is History's replay of an earlier run.
+**Lesson:** the first time a workload doubles in concurrency, every per-minute assumption breaks
+at once. Each failure here was visible on the page, which is how each was found.

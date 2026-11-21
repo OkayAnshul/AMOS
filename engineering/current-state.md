@@ -3,12 +3,11 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-11-21 (Session 18 — V1.6 reliability, V1.7 live run record, V1.8 the web page, V1.9 web research; the track re-planned)
+**Last updated:** 2026-11-21 (Session 18 — V1.6 reliability, V1.7 live run record, V1.8 the web page, V1.9 web research, V1.10 complex goals; the track re-planned)
 
 ## Current Version
-**V1.9 — Web research and the run budget**, the fifth milestone of the demo track (V1.5–V2.0,
-`docs/19-roadmap.md`, **re-planned 2026-11-20**: V1.10 complex goals → V2.0 demo). The V0.1–V1.0
-roadmap is complete.
+**V1.10 — Complex goals**, the sixth milestone of the demo track (V1.5–V2.0, `docs/19-roadmap.md`,
+**re-planned 2026-11-20**; next: V2.0 demo package). The V0.1–V1.0 roadmap is complete.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -19,7 +18,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
 V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
-V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · V1.7 live run record and read API · V1.8 mission control web page · **V1.9 web research**
+V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · V1.7 live run record and read API · V1.8 mission control web page · V1.9 web research · **V1.10 complex goals**
 
 ## What Works
 ```
@@ -64,6 +63,11 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 - **A per-run budget** (ADR-019): 40 model calls, 40 tool calls, 8 page reads by default, enforced at
   the recording seams; a spent budget is recorded and not retried. An exhausted tool loop ends in a
   tool-free answer call instead of failing
+- **Complex goals** (V1.10, ADR-020): a tool-less **writer** composes itineraries and comparisons from
+  earlier tasks; code checks every citation against what the run saw; suggestions go under *Not
+  sourced*. Model calls wait under the per-minute quota (a process-wide limiter). Live: demo query 9
+  completed in 17 calls / 68 s with a cited comparison table; query 8 completed once and ended
+  partial once under Gemini 503s
 - **`make backup` / `make restore-drill` / `make restore`** — the first drill passed 2026-11-19
 - The corpus rebuilds in **one** free-tier day (850 chunks; `docs/build-along/` excluded), and an
   edited document **replaces** its old version on re-ingest
@@ -129,7 +133,7 @@ Daily limits reset at midnight Pacific. Since V1.5 a daily 429 fails fast.
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`main`, at `v1.9.0`. No open feature branch. The next one is `feat/v1.10-complex-goals`.
+`main`, at `v1.10.0`. No open feature branch. The next one is `feat/v2.0-demo`.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -213,20 +217,13 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**V1.10 — complex goals** (`docs/19-roadmap.md`). Branch `feat/v1.10-complex-goals`. ADR-020 first:
-a `writer` agent with no tools composes the deliverable from earlier tasks' evidence, sourced items
-cite a source seen in the run (checked by code, not a model), and suggestions without a source go in
-a separate *not sourced* section. Then 4–6 complex golden goals and demo queries 8 and 9 live.
+**V2.0 — demo package**: `make demo` (checks and start), `docs/27-demo-script.md`, then a 10-slide
+deck and a project report (Anshul asked for both, 2026-11-21, to discuss before the demo). Two
+rehearsals with Anshul before tagging `v2.0.0`.
 
-For live checks: `make up && make web-up`, then `AMOS_WEB_ENABLED=true AMOS_ASYNC_ENABLED=true make run`
-and `make worker`; the page is at <http://127.0.0.1:8000/>.
+### The advance gate — eighteen documents, never met
 
-**Before the demo (V2.0):** the eval baseline was measured on 880 chunks; the corpus is now 837, so
-`make eval` reports "not comparable" until `make eval-baseline` is re-run once the docs settle.
-
-### The advance gate — seventeen documents, never met
-
-`docs/interview/*.md` — fifteen: V1.6's questions added to `reliability.md` and `security.md`, `run-record.md` (V1.7), `demo-surface.md` (V1.8) and `web-research.md` (V1.9). This is the second of the project's
+`docs/interview/*.md` — fifteen: V1.6's questions added to `reliability.md` and `security.md`, `run-record.md` (V1.7), `demo-surface.md` (V1.8), `web-research.md` (V1.9) and `synthesis.md` (V1.10). This is the second of the project's
 two equal objectives, and the teacher demo is exactly its test: explaining the system unaided.
 Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/interview/*.md` in milestone
 order. Building further before closing it is a deliberate choice against the working agreement's

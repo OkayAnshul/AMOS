@@ -537,7 +537,7 @@ because the page could not show what it was asked to show.
 | V1.7 Live run record and read API ✅ | 1½ sessions | ADR-015, ADR-016 | `run-record.md` |
 | V1.8 Mission control web page ✅ | 2 sessions | ADR-017 | `demo-surface.md` |
 | V1.9 Web research (SearXNG) ✅ | 1 session | ADR-018, ADR-019 | `web-research.md` |
-| V1.10 Complex goals | 1 session | ADR-020 | `synthesis.md` |
+| V1.10 Complex goals ✅ | 1 session | ADR-020 | `synthesis.md` |
 | V2.0 Demo package and release | ½ session + two rehearsals | — | — |
 | **Total** | **≈ 8 sessions** | | |
 
@@ -615,7 +615,7 @@ purpose, in order — and readable over HTTP.
 **Accept** recorded-fixture tests for both tools, the injection fixture, the budget cutoff; one
 live opt-in test.
 
-### V1.10 — Complex goals
+### V1.10 — Complex goals ✅ (2026-11-21)
 **Objective** "Plan a trip", "compare X and Y" produce a structured, cited deliverable.
 - A `writer` agent with **no tools** composes it from earlier tasks' evidence. Every sourced item
   cites a source; suggestions without one go in a separate *not sourced* section (ADR-020). A code
