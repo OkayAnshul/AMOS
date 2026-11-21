@@ -280,3 +280,43 @@ async def test_options_are_stored_and_build_their_own_agent(
         assert shared.call_count == 0, "the shared agent did not run"
     finally:
         await forget(db_factory, run_id)
+
+
+async def test_a_run_that_spends_its_budget_ends_with_the_reason(
+    db_factory: async_sessionmaker[AsyncSession], factory_actor: Actor
+) -> None:
+    """ADR-019 end to end: two tasks, a budget of three model calls. The second
+    task cannot start its work; the run ends with what it has and the record
+    says why — not a crash, and not a retry of something that cannot succeed."""
+    from amos.budget import RunBudget
+
+    provider = stack(
+        FakeProvider(
+            [
+                plan(("t1", []), ("t2", [])),
+                valid_response_json(answer="first"),
+                valid_response_json(answer="second"),
+                valid_response_json(answer="combined"),
+            ]
+        )
+    )
+    agent = team_agent(provider, db_factory, multi_agent_enabled=False)
+    service = RunService(
+        agent,
+        db_factory,
+        budget=lambda: RunBudget(max_llm_calls=2, max_tool_calls=10, max_page_fetches=1),
+    )
+    run_id, trace = await run_and_trace(service, factory_actor)
+    try:
+        kinds = [e["kind"] for e in trace["events"]]
+        assert "budget.exhausted" in kinds
+        exhausted = next(e for e in trace["events"] if e["kind"] == "budget.exhausted")
+        assert exhausted["payload"]["limit_kind"] == "llm_calls"
+        states = sorted(t["state"] for t in trace["tasks"])
+        assert states == ["PERMANENTLY_FAILED", "SUCCEEDED"]
+        failed = next(t for t in trace["tasks"] if t["state"] == "PERMANENTLY_FAILED")
+        assert "BudgetExhaustedError" in (failed["error"] or "")
+        assert failed["attempt_count"] == 1, "a spent budget is not retried"
+        assert trace["status"] == "PARTIALLY_COMPLETED"
+    finally:
+        await forget(db_factory, run_id)

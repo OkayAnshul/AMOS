@@ -1467,3 +1467,29 @@ light, dark, narrow, presenter — screenshots reviewed and iterated three times
 
 ### Next Exact Step
 V1.9 — web research, ADR-018 and ADR-019 first.
+
+## Session 18, continued — V1.9 (2026-11-21)
+
+**Module:** V1.9 — web research and the run budget (ADR-018, ADR-019)
+
+### What We Changed
+- `compose.yaml` + `searxng/settings.yml`: pinned SearXNG, profile `web`, `make web-up`.
+- `tools/builtin/net.py` (shared SSRF guard, every address), `tools/builtin/web.py`
+  (`web_search`, `fetch_page`, `RecordedProvenance`, `html_to_text`); `budget.py`.
+- Researcher allowlist and a web instruction added only when the tools are present; `web` option;
+  `/v1/system` web status and budget; page: Web switch, pages-read panel, budget figure.
+- Fixes from live runs: critic evidence includes page text; the loop cap ends in a tool-free answer.
+- Tests: `test_web.py` (fixtures, SSRF, redirects, injection), `test_budget.py`, provenance
+  isolation, budget end to end, a live SearXNG test. Docs: ADR-018/019, `06`, `13`, `19`, README,
+  interview `web-research.md`, logs.
+
+### Problems Encountered
+1. The critic judged web answers without the pages. 2. A researcher that would not stop searching
+failed three times. 3. The corpus outgrew one day's quota (fixed in V1.8's close).
+
+### Tests Performed
+`make check` green (737). Live: SearXNG measured on 10 queries; three live web runs — the third
+completed in 9 calls with cited pages and an accepting critic.
+
+### Next Exact Step
+V1.10 — complex goals, ADR-020 first.

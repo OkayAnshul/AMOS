@@ -37,7 +37,7 @@ All in `src/amos/api/app.py`; the read side's queries and response models in
 | `GET` | `/v1/corpus` | the system corpus plus your uploads | `200` | V1.7 |
 | `GET` | `/v1/chunks/{chunk_id}` | one passage, for a citation | `200` | V1.7 |
 | `POST` | `/v1/documents` | upload a `.md`/`.txt` file to your own corpus | `201` | V1.7 |
-| `GET` | `/v1/system` | provider, quota, features, bounds, database, queue, telemetry, agents, tools | `200` | V1.7 |
+| `GET` | `/v1/system` | provider, quota, features, bounds and run budget, database, queue, web search, telemetry, agents, tools | `200` | V1.7 |
 | `GET` | `/v1/insights` | aggregates over your stored runs | `200` | V1.7 |
 
 **Every list of personal data is owner-scoped**, with an isolation test each
@@ -50,7 +50,7 @@ Both goal endpoints accept `options`:
 
 ```json
 { "goal": "…", "options": { "planning": false, "multi_agent": true, "critic": false,
-                             "delegation": false, "memory": false } }
+                             "delegation": false, "memory": false, "web": false } }
 ```
 
 Each is `true`, `false` or absent (the server's setting). **A run may switch off what the server
@@ -223,6 +223,7 @@ parsing prose.
 | `202` | Goal queued for a worker | — poll `GET /v1/runs/{id}` |
 | `401` | Missing, malformed or unknown API key (`Authorization: Bearer <key>`), with a database | No — supply a valid key |
 | `404` | Unknown `run_id`, or another user's | No |
+| `429` | `BudgetExhaustedError`: the run spent its model-call budget (ADR-019) | Not the same run — it is recorded with the reason |
 | `422` | Request body failed validation (empty goal, missing field, non-UUID `run_id`) | No — fix the request |
 | `429` | `ProviderRateLimitError` | Yes, with backoff |
 | `500` | `ConfigurationError` or unhandled | No — server misconfigured |

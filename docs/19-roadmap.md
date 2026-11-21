@@ -536,7 +536,7 @@ because the page could not show what it was asked to show.
 | V1.6 Reliability and isolation ✅ | 1 session | ADR-014 | `reliability.md`, `security.md` (added to) |
 | V1.7 Live run record and read API ✅ | 1½ sessions | ADR-015, ADR-016 | `run-record.md` |
 | V1.8 Mission control web page ✅ | 2 sessions | ADR-017 | `demo-surface.md` |
-| V1.9 Web research (SearXNG) | 1 session | ADR-018, ADR-019 | `web-research.md` |
+| V1.9 Web research (SearXNG) ✅ | 1 session | ADR-018, ADR-019 | `web-research.md` |
 | V1.10 Complex goals | 1 session | ADR-020 | `synthesis.md` |
 | V2.0 Demo package and release | ½ session + two rehearsals | — | — |
 | **Total** | **≈ 8 sessions** | | |
@@ -603,7 +603,7 @@ purpose, in order — and readable over HTTP.
 - Verified in a real browser with screenshots (Playwright driving the installed Chrome).
 **Accept** demo queries 1–7 run from the page live · browser smoke test · screenshots reviewed.
 
-### V1.9 — Web research
+### V1.9 — Web research ✅ (2026-11-21)
 **Objective** Goals about the world answered with web citations, without an open network.
 - `web_search` over self-hosted **SearXNG** (no key; a pinned container beside Postgres), measured
   on 10 fixed queries (ADR-018). No unofficial scrapers.

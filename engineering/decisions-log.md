@@ -645,3 +645,19 @@ were deleted from the local corpus after `make backup`.
 *Consequence:* the eval baseline (880 chunks) is no longer comparable; it is re-measured before the
 demo (V2.0), once the documentation has stopped moving.
 *Reconsider if:* `docs/` passes 950 again — likely at V2.0. Next candidate: the build journal.
+
+---
+
+## 2026-11-21 — V1.9: the loop cap ends in an answer, and searching gets a stopping rule
+
+**An exhausted tool loop now makes one tool-free call asking for an answer** from what was gathered,
+with a caveat; a model that still asks for a tool fails as before. *Why:* the second live web run
+failed three times at the cap with evidence in hand — 19 model calls, no answer. *Reversal noted:*
+a `_finalise()` fallback was deleted at V0.7 because it never fired; it fires now that web research
+loops, and it returns with a test that proves it. *Bounded:* exactly one extra call.
+
+**The web instruction caps research at two searches and three pages.** A prompt is not a guarantee —
+ADR-019's budget is — but it is what made the same question converge in 9 calls instead of failing.
+
+**Web is off by default** (`AMOS_WEB_ENABLED=false`): it needs a running SearXNG, and the eval's
+golden goals are about AMOS's own documentation.
