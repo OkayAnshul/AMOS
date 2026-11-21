@@ -126,3 +126,42 @@ async def test_planner_and_task_llm_calls_are_all_recorded() -> None:
     # 1 planning + 2 task calls + 1 synthesis
     assert len(outcome.llm_calls) == 4
     assert outcome.total_tokens == sum(c.prompt_tokens + c.output_tokens for c in outcome.llm_calls)
+
+
+async def test_when_the_writer_finishes_the_run_its_deliverable_is_the_answer() -> None:
+    """ADR-020: synthesis would re-summarise a structured deliverable into a
+    paragraph, and spend a call doing it."""
+    import json
+
+    from amos.agents.schemas import AgentResponse, AgentResult, Confidence
+    from amos.llm.fake import FakeProvider
+    from amos.orchestration.orchestrator import Orchestrator
+
+    plan = json.dumps(
+        {
+            "reasoning": "research then write",
+            "tasks": [
+                {"id": "t1", "description": "find hostel prices", "depends_on": []},
+                {"id": "t2", "description": "write the itinerary", "depends_on": ["t1"]},
+            ],
+        }
+    )
+
+    class Runner:
+        async def run(self, goal: str) -> AgentResult:
+            writing = goal.startswith("write")
+            return AgentResult(
+                request_id="r",
+                response=AgentResponse(
+                    answer="## Day 1\\nBeds ₹500" if writing else "Beds cost ₹500",
+                    reasoning="r",
+                    confidence=Confidence.HIGH,
+                ),
+                agent_name="writer" if writing else "researcher",
+            )
+
+    provider = FakeProvider([plan])
+    result = await Orchestrator(provider, Runner()).run("Plan a trip")  # type: ignore[arg-type]
+
+    assert result.response.answer.startswith("## Day 1")
+    assert provider.call_count == 1, "planner only: no synthesis call"

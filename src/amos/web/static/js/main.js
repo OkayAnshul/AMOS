@@ -27,6 +27,14 @@ const PRESETS = [
   ["An honest refusal", "How is AMOS deployed on Kubernetes?"],
   ["Remember a fact", "Remember that my project review is on Friday."],
   ["Recall it", "When is my project review?"],
+  [
+    "Plan a Goa trip",
+    "Plan a 3-day Goa trip under ₹15,000: find typical hostel, food and transport costs, then split the budget per day.",
+  ],
+  [
+    "Compare two queues",
+    "Compare PostgreSQL LISTEN/NOTIFY and Redis Streams for a job queue and recommend one for a single-machine project.",
+  ],
 ];
 
 const OPTION_LABELS = {
@@ -439,6 +447,7 @@ function legend() {
     item(s("svg", { viewBox: "0 0 12 12" }, s("circle", { cx: 6, cy: 6, r: 3.4, style: { fill: "var(--fail)" } })), "failed call"),
     swatch("researcher"),
     swatch("analyst"),
+    swatch("writer"),
     swatch("critic"),
   );
 }
@@ -743,18 +752,22 @@ function describe(item, trace) {
     "critic.verdict": `Critic ${p.verdict === "accept" ? "accepted" : "asked to revise"}${item.task_ref ? ` ${item.task_ref}` : " the answer"}`,
     "delegation.started": `${capitalise(p.source)} asked ${capitalise(p.target)} for help`,
     "delegation.finished": `${capitalise(p.target)} answered ${capitalise(p.source)}`,
+    "provider.throttled": `Waited ${ms((p.waited_seconds || 0) * 1000)} for Gemini's per-minute limit (${p.per_minute} a minute)`,
+    "sources.checked": p.unseen?.length
+      ? `Citation check: ${p.unseen.length} source${p.unseen.length === 1 ? "" : "s"} this run never saw`
+      : `Citation check: all ${p.cited} cited sources were seen in this run`,
     "budget.exhausted": `Run budget reached: ${String(p.limit_kind || "").replace(/_/g, " ")} (${p.limit})`,
     "run.finished": "Run finished",
     "run.failed": "Run failed",
   };
-  const detail = p.reason || p.reasoning || p.error || p.instruction || p.answer || p.description || "";
+  const detail = p.reason || p.reasoning || p.error || p.instruction || p.answer || p.description || (p.unseen?.length ? p.unseen.join(", ") : "");
   return {
     time: offset(item.at),
     title: titles[item.kind] || capitalise(item.kind),
     detail: String(detail),
     meta: "",
     mark: h("span", { class: "ring" }),
-    error: ["task.failed", "task.timed_out", "task.permanently_failed", "run.failed", "budget.exhausted"].includes(item.kind),
+    error: ["task.failed", "task.timed_out", "task.permanently_failed", "run.failed", "budget.exhausted"].includes(item.kind) || (item.kind === "sources.checked" && p.unseen?.length > 0),
   };
 }
 

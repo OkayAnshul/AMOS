@@ -289,3 +289,32 @@ def test_the_critic_is_shown_the_page_a_fact_came_from() -> None:
     evidence = _evidence_from(result)
     assert any("500 rupees a night" in item for item in evidence)
     assert evidence[0].startswith("https://travel.example/goa: ")
+
+
+def test_the_writer_has_no_tools_and_does_not_delegate(tools: ToolRegistry) -> None:
+    """ADR-020: a writer that could fetch or commission work could introduce a
+    fact no earlier task found."""
+    team = AgentTeam(FakeProvider(["{}"]), tools)
+    writer = team.agent_for(AgentRegistry().get("writer"))
+    assert writer.tool_names == []
+    researcher = team.agent_for(AgentRegistry().get("researcher"))
+    delegate = next(t for t in researcher._registry if t.name == "delegate")
+    assert "writer" not in delegate._available, "the writer is not a delegation target"
+
+
+async def test_a_writer_citing_an_unseen_source_is_marked_unverified(tools: ToolRegistry) -> None:
+    class Ledger:
+        async def seen(self) -> set[str]:
+            return {"https://hostelworld.com/goa"}
+
+    answer = valid_response_json(
+        answer="Beds ₹500 (source: https://hostelworld.com/goa). Food ₹150 (source: https://invented.example).",
+        confidence="high",
+    )
+    provider = FakeProvider([route("writer"), answer])
+    result = await AgentTeam(provider, tools, critic_enabled=False, sources=Ledger()).run(
+        "Write the itinerary from the costs found earlier"
+    )
+    assert result.agent_name == "writer"
+    assert result.response.confidence.value == "low"
+    assert any("invented.example" in c for c in result.response.caveats)

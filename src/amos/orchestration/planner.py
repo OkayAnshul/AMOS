@@ -35,6 +35,11 @@ Rules:
   Independent tasks should have no dependencies so they can run concurrently.
 - Task ids are short symbols: t1, t2, t3.
 - Never create a cycle. Dependencies must point backwards only.
+- For a goal that asks for a DELIVERABLE — a plan, itinerary, comparison, recommendation
+  or report — use this shape: one research task per distinct topic, then a task for any
+  arithmetic (totals, splits, conversions) that depends on the research it needs, then
+  ONE final task that writes the deliverable and depends on all of them. Describe that
+  final task as writing or composing, and say what the deliverable must contain.
 """
 
 REPAIR_SUFFIX = """

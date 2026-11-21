@@ -139,7 +139,11 @@ function inline(text) {
 }
 
 export function markdown(source) {
-  const root = h("div", { class: "answer-body" });
+  const outer = h("div", { class: "answer-body" });
+  // Everything after a "Not sourced" heading is a labelled suggestion, not a
+  // researched fact (ADR-020), and is set apart so a reader cannot mistake one
+  // for the other.
+  let root = outer;
   const lines = String(source || "").replace(/\r/g, "").split("\n");
   let i = 0;
   while (i < lines.length) {
@@ -150,7 +154,14 @@ export function markdown(source) {
     }
     const heading = line.match(/^(#{1,4})\s+(.*)$/);
     if (heading) {
-      root.append(h(heading[1].length <= 2 ? "h3" : "h4", null, inline(heading[2])));
+      if (/^not sourced\b/i.test(heading[2].trim())) {
+        root = h("section", { class: "unsourced", "aria-label": "Not sourced" });
+        outer.append(root);
+        root.append(h("h4", null, "Not sourced"), h("p", { class: "unsourced-note" }, "Suggestions no source in this run supports."));
+      } else {
+        root = outer;
+        root.append(h(heading[1].length <= 2 ? "h3" : "h4", null, inline(heading[2])));
+      }
       i += 1;
       continue;
     }
@@ -190,5 +201,5 @@ export function markdown(source) {
     }
     root.append(h("p", null, inline(para.join(" "))));
   }
-  return root;
+  return outer;
 }

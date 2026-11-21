@@ -1100,3 +1100,51 @@ check each, not one per caller.
 ### Reconsider if
 Demo goals hit the budget while still making progress (raise it), or a run legitimately needs
 different budgets per agent.
+
+---
+
+## ADR-020 — A writer with no tools composes deliverables, and code checks what it cites
+
+**Date** 2026-11-21 · **Status** Accepted (V1.10)
+
+### Context
+"Plan a 3-day trip under a budget" or "compare X and Y and recommend one" need a *deliverable* — an
+itinerary, a comparison table — assembled from facts several tasks found. Today the orchestrator's
+synthesis call merges task answers into one paragraph, and nothing distinguishes a fact a source
+gave from a suggestion the model made up. For a plan, both are useful; presented alike, the second
+is laundered into the first.
+
+### Decision
+- **A `writer` agent with no tools.** It composes the deliverable from the material it is given —
+  the results of the tasks it depends on — and cannot search, compute or recall. It is not a
+  delegation target and cannot delegate: it writes; it does not commission.
+- **Two sections, by rule.** Every fact cites its source inline as `(source: <url or file>)`.
+  Suggestions with no source go under a heading **Not sourced**. General knowledge is allowed —
+  "carry cash for small vendors" — but only where it is labelled as such.
+- **Code checks the citations.** After the writer answers, every `(source: …)` and every URL it cites
+  is compared with what this run actually saw — search results and pages read, retrieval citations —
+  read from the stored run record (ADR-015). A citation the run never saw is a caveat and drops the
+  confidence to low. A model is not asked whether the citations are real; code looks.
+- **The critic judges the writer against the material it was given**, not against the writer's own
+  tool calls (it has none), and does not flag what is under *Not sourced*.
+- **The planner learns the shape**: research tasks, then arithmetic, then one writing task that
+  depends on them. **When the run's final task is the writer's, its deliverable is the answer** —
+  the synthesis call would only re-summarise a structured document into a paragraph.
+
+### Why
+A tool-less writer cannot introduce a fact by fetching it, so every fact in the deliverable traces to
+an earlier task's record. Checking citations in code is the V0.1 rule — LLMs handle uncertainty,
+software handles guarantees — applied to the one claim a model is most tempted to fabricate: where
+something came from. The *Not sourced* section keeps the helpful part of a plan without pretending it
+was researched.
+
+### Tradeoffs
+- The citation check proves a cited source was **seen**, not that it **says** what is claimed. That
+  second judgement stays with the critic, and is weaker for it.
+- One more agent to route to; the router's labelled set grows to keep measuring it.
+- A plan whose facts are thin will be mostly *Not sourced* — visible, by design.
+
+### Reconsider if
+The writer needs a fact mid-composition often enough that a research round-trip becomes the norm
+(then let it delegate to the researcher), or the citation check produces false alarms on legitimate
+sources (then the source ledger is missing a tool).

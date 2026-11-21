@@ -186,6 +186,17 @@ class Orchestrator:
                 caveats=[failures or "All tasks failed."],
             )
 
+        deliverable = _writers_deliverable(report)
+        if deliverable is not None:
+            # The final task composed the deliverable (ADR-020). Synthesis would
+            # re-summarise a structured document into a paragraph — and spend a
+            # call doing it.
+            if report.outcome == RunOutcome.PARTIALLY_COMPLETED:
+                deliverable.caveats.append(
+                    f"Partial result: {len(succeeded)} of {len(report.tasks)} tasks succeeded."
+                )
+            return deliverable
+
         if len(succeeded) == 1 and len(report.tasks) == 1:
             # One task answered the whole goal. Its answer IS the answer;
             # paying for a call to rephrase it would be pure waste.
@@ -252,3 +263,22 @@ def _to_record(task: TaskExecution) -> TaskRecord:
         answer=task.result.response.answer if task.result is not None else None,
         error=task.error,
     )
+
+
+def _writers_deliverable(report: ExecutionReport) -> AgentResponse | None:
+    """The run's answer when its one final task was composed by the writer.
+
+    "Final" means no other task depends on it. Only when there is exactly one
+    such task, it succeeded, and the writer produced it — otherwise synthesis
+    still has work to do.
+    """
+    needed = {dep for task in report.tasks for dep in task.depends_on}
+    sinks = [task for task in report.tasks if task.plan_ref not in needed]
+    if len(sinks) != 1 or len(report.tasks) < 2:
+        return None
+    sink = sinks[0]
+    if sink.state is not TaskState.SUCCEEDED or sink.result is None:
+        return None
+    if sink.result.agent_name != "writer":
+        return None
+    return sink.result.response

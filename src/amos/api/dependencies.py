@@ -11,6 +11,7 @@ from pathlib import Path
 
 from amos.agents.agent import GroundedAgent
 from amos.agents.schemas import OPTION_SETTINGS, RunOptions
+from amos.agents.sourcing import RecordedSources
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent, build_default_registry
 from amos.budget import RunBudget
@@ -18,6 +19,7 @@ from amos.config import Settings
 from amos.database.progress import RunProgress
 from amos.llm.base import LLMProvider
 from amos.llm.gemini import GeminiProvider
+from amos.llm.ratelimit import MinuteRateLimiter, RateLimitedProvider
 from amos.llm.recording import RecordingProvider
 from amos.llm.retry import RetryingProvider
 from amos.memory.tools import RecallFactsTool, RecallPastRunsTool, RememberFactTool
@@ -39,11 +41,29 @@ def build_provider(settings: Settings) -> LLMProvider:
     building their own unwrapped provider.
     """
     # Recording INSIDE the retry: every real attempt is its own row (ADR-015).
+    # The limiter inside the retry too, so a retried attempt waits for a slot;
+    # outside the recorder, so a recorded latency is the provider's, not the queue's.
     return RetryingProvider(
-        RecordingProvider(
-            GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model)
+        RateLimitedProvider(
+            RecordingProvider(
+                GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model)
+            ),
+            _limiter(settings.llm_minute_request_limit),
         )
     )
+
+
+_LIMITERS: dict[int, MinuteRateLimiter] = {}
+
+
+def _limiter(per_minute_quota: int) -> MinuteRateLimiter:
+    """One limiter per process and quota: every provider built here shares it,
+    because the quota is the key's, not the provider object's. One slot of
+    headroom under the published limit."""
+    slots = max(1, per_minute_quota - 1)
+    if slots not in _LIMITERS:
+        _LIMITERS[slots] = MinuteRateLimiter(slots)
+    return _LIMITERS[slots]
 
 
 def build_retrieval_tool(
@@ -153,6 +173,7 @@ def build_agent(
             delegation_enabled=settings.delegation_enabled,
             max_delegation_depth=settings.max_delegation_depth,
             delegation_budget=settings.delegation_budget,
+            sources=RecordedSources(session_factory) if session_factory is not None else None,
         )
     else:
         runner = build_tool_agent(settings, provider, tools)

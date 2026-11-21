@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence
+from amos.agents.sourcing import sources_in
 from amos.database.recorder import record_event
 from amos.errors import (
     AmosError,
@@ -370,9 +371,23 @@ class Executor:
         for dep in task.depends_on:
             upstream = tasks[dep]
             if upstream.result is not None:
-                context.append(
-                    f"- {upstream.description}\n  Result: {upstream.result.response.answer}"
+                # The task's id and the sources it read travel with its result
+                # (V1.10), so a writer can cite a url — or the task itself, for a
+                # computed figure — rather than paraphrasing a task's description.
+                sources = sorted(
+                    {
+                        source
+                        for outcome in upstream.result.tool_outcomes
+                        if outcome.succeeded
+                        for source in sources_in(outcome.output, outcome.name)
+                    }
                 )
+                line = (
+                    f"- {dep}: {upstream.description}\n  Result: {upstream.result.response.answer}"
+                )
+                if sources:
+                    line += "\n  Sources it read: " + ", ".join(sources[:12])
+                context.append(line)
 
         if not context:
             return task.description
