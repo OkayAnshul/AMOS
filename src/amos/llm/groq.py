@@ -27,6 +27,7 @@ from pydantic import BaseModel, ValidationError
 from amos.errors import (
     ProviderAuthError,
     ProviderError,
+    ProviderGenerationError,
     ProviderRateLimitError,
     ProviderTimeoutError,
     ProviderUnavailableError,
@@ -255,6 +256,11 @@ class GroqProvider:
         if status in _UNAVAILABLE:
             return ProviderUnavailableError(
                 f"Groq server error {status}: {message}", details={"status": status}
+            )
+        if status == 400 and "failed to generate json" in message.lower():
+            return ProviderGenerationError(
+                f"Groq could not fit its answer to the schema: {message}",
+                details={"status": status, "model": self.model},
             )
         return ProviderError(f"Groq error {status}: {message}", details={"status": status})
 

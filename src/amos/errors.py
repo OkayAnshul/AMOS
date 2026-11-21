@@ -37,6 +37,16 @@ class ProviderRateLimitError(ProviderError):
     """The provider rate-limited us. `details["quota_scope"]` says day or minute."""
 
 
+class ProviderGenerationError(ProviderError):
+    """The model could not produce output in the required shape (V1.11).
+
+    Groq's strict structured output answers 400 "Failed to generate JSON" when the
+    model cannot fit its answer to the schema. Not a fault of the request and not
+    worth repeating on the same model — but another model may manage it, so the
+    fallback chain moves on (ADR-021).
+    """
+
+
 class ProviderUnavailableError(ProviderError):
     """The provider failed on its side (HTTP 5xx) — usually transient.
 

@@ -155,3 +155,10 @@ async def test_the_planner_prefers_by_purpose() -> None:
     chain = FallbackProvider([primary, strong], prefer={"planner": "groq"})
     with call_scope(purpose="planner", agent=None):
         assert (await chain.complete(LLMRequest(prompt="plan"), timeout=30)).text == "from groq"
+
+
+async def test_a_model_that_cannot_fill_the_schema_hands_on() -> None:
+    from amos.errors import ProviderGenerationError
+
+    chain = FallbackProvider([groq(ProviderGenerationError("400")), gemini("from gemini")])
+    assert (await chain.complete(LLMRequest(prompt="x"), timeout=30)).text == "from gemini"

@@ -238,3 +238,18 @@ def test_fitting_ends_even_when_nothing_more_can_be_cut() -> None:
     ]
     fitted = fit([dict(m) for m in messages], limit=12000)
     assert len(fitted) == 4
+
+
+async def test_a_schema_it_could_not_fill_is_a_generation_error() -> None:
+    """Seen live: strict mode answered 400 for a long itinerary. Another model may manage."""
+    from amos.errors import ProviderGenerationError
+
+    rec = Recorder(
+        httpx.Response(
+            400, json={"error": {"message": "Failed to generate JSON. Please adjust your prompt."}}
+        )
+    )
+    with pytest.raises(ProviderGenerationError):
+        await provider(rec).complete(
+            LLMRequest(prompt="x", response_schema=AgentResponse), timeout=10
+        )

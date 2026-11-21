@@ -23,14 +23,24 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from amos.database.recorder import record_event
-from amos.errors import ProviderRateLimitError, ProviderTimeoutError, ProviderUnavailableError
+from amos.errors import (
+    ProviderGenerationError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderUnavailableError,
+)
 from amos.llm.base import LLMProvider, LLMRequest, LLMResponse
 from amos.observability import get_call_context, log_event
 
 logger = logging.getLogger(__name__)
 
 #: Failures the next member may succeed at. Auth errors, budget and bad requests are not.
-FALL_THROUGH = (ProviderUnavailableError, ProviderRateLimitError, ProviderTimeoutError)
+FALL_THROUGH = (
+    ProviderUnavailableError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+    ProviderGenerationError,
+)
 
 #: Below this much remaining deadline, no further member is tried.
 MIN_SECONDS_FOR_NEXT = 3.0
