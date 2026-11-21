@@ -1493,3 +1493,28 @@ completed in 9 calls with cited pages and an accepting critic.
 
 ### Next Exact Step
 V1.10 — complex goals, ADR-020 first.
+
+## Session 19 — V1.11 research quality and a fallback chain (2026-11-22)
+
+### Goal
+Groq and a Gemini fallback model; then make the Goa plan specific instead of generic.
+
+### What Was Built
+- ADR-021: `FallbackProvider` (flash-lite → Gemma 4 → Groq `gpt-oss-120b`), `GroqProvider` over
+  httpx; the writer and planner prefer Groq; strict structured output on Groq.
+- ADR-022: findings `{fact, quote, source}` checked in code; a reader step; the Findings section on
+  the page, each quote marked on its page in the inspector.
+- ADR-023: a per-task search cap, off-topic results dropped, `fetch_page(looking_for)` cutting a
+  long page to its passages, script-built pages flagged, combining tasks on partial inputs.
+- The quota meter counts the primary model; System lists the chain and calls per model.
+
+### Problems Encountered
+Seven, in `bugs-log.md` (2026-11-22). Gemini returned 503s on every model for parts of the day.
+
+### Tests Performed
+`make check` green (807). Five live Goa runs; the last: 5 of 5 tasks, 11 of 11 quotes found on their
+pages, named restaurants, hostels and scooter prices, every line cited, budget left per night.
+
+### Next Exact Step
+V2.0: re-baseline the eval (`make eval-baseline`), two rehearsals, release 2.0.0.
+

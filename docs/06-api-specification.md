@@ -43,6 +43,11 @@ All in `src/amos/api/app.py`; the read side's queries and response models in
 **Every list of personal data is owner-scoped**, with an isolation test each
 (`tests/integration/test_read_api.py`). `/v1/system`'s quota and queue figures are deliberately
 global — a quota belongs to the API key, the queue to the server — and carry counts only.
+Since V1.11, `provider.chain` lists the fallback chain in the order a call tries it (ADR-021),
+`quota.calls_today` counts the primary model only (`quota.model`), and `quota.by_model` gives
+today's calls per model. A run's events include `findings.checked` (each finding with its status,
+ADR-022), `provider.fallback` (which model failed, which answered) and `task.partial_inputs`
+(ADR-023).
 
 ### Per-run options (ADR-016)
 

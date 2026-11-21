@@ -906,3 +906,28 @@ exactly one extra, tool-free call.
 The fallback is History's replay of an earlier run.
 **Lesson:** the first time a workload doubles in concurrency, every per-minute assumption breaks
 at once. Each failure here was visible on the page, which is how each was found.
+
+---
+
+## 2026-11-22 — The generic Goa plan: seven causes found in the run record, each fixed
+**Milestone:** V1.11
+1. **Researchers searched instead of reading** — 8 searches, 2 pages; the prompt's cap was ignored.
+   *Fix:* a per-task search cap in code; off-topic results dropped (ADR-023).
+2. **A page's 20,000 characters shrank to two sentences** before anyone else saw it. *Fix:* quoted
+   findings, checked in code, handed on as facts (ADR-022); a reader step to extract them.
+3. **Groq refused the fallback** (`413 Request too large`): a research loop's pages exceeded its
+   8,000 tokens a minute. *Fix:* pages cut to relevant passages; Groq requests trimmed to fit.
+4. **One failed task sank the plan**: transport research failed; budget and writer were skipped.
+   *Fix:* a task combining several results runs on what arrived, told what is missing.
+5. **The writer refused** ("cannot provide a complete itinerary") over one missing price, and the
+   critic accepted it as "supported". *Fix:* the writer always delivers, marks the gap, and shows
+   what the budget leaves for it.
+6. **Raw JSON became the answer**: Groq's best-effort mode dropped a required field. *Fix:* strict
+   structured output; its own 400 hands on to the next model.
+7. **The citation check reported "cited 0"** for a fully sourced table. *Fix:* it reads a table's
+   Source column.
+**Found while fixing:** `fit()` looped forever when a cut result regained its marker on each pass —
+caught by a hanging test, fixed so every cut strictly shrinks the request, with a regression test.
+**Lesson:** "generic" was not one problem. Every cause was visible in the stored run — which tool
+was called, what it returned, which call failed — and none was visible in the answer alone.
+
