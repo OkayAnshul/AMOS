@@ -167,6 +167,7 @@ class ToolUsingAgent:
                     role="model",
                     tool_calls=response.tool_calls,
                     provider_state=response.provider_state,
+                    model=response.model,
                 )
             )
             step_outcomes = [await self._invoke(call) for call in response.tool_calls]

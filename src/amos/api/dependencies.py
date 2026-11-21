@@ -18,7 +18,9 @@ from amos.budget import RunBudget
 from amos.config import Settings
 from amos.database.progress import RunProgress
 from amos.llm.base import LLMProvider
+from amos.llm.fallback import FallbackProvider
 from amos.llm.gemini import GeminiProvider
+from amos.llm.groq import GroqProvider
 from amos.llm.ratelimit import MinuteRateLimiter, RateLimitedProvider
 from amos.llm.recording import RecordingProvider
 from amos.llm.retry import RetryingProvider
@@ -33,37 +35,61 @@ from amos.tools.registry import ToolRegistry
 
 
 def build_provider(settings: Settings) -> LLMProvider:
-    """The one place a provider is constructed (V1.6).
+    """The one place a provider is constructed (V1.6, V1.11).
 
-    Wrapped in `RetryingProvider` so a 5xx costs one extra call wherever it
-    happens — planner and synthesis included, which nothing retried before
-    (ADR-014). The judge and the routing CLI come through here too, rather than
-    building their own unwrapped provider.
+    A fallback chain (ADR-021) — the Gemini primary, a Gemini fallback model,
+    Groq — inside one retry (ADR-014). Each member: recording innermost, so
+    every real attempt is its own row with its own model (ADR-015); its own rate
+    limiter outside that, so a recorded latency is the provider's, not the
+    queue's. The judge and the routing CLI come through here too.
     """
-    # Recording INSIDE the retry: every real attempt is its own row (ADR-015).
-    # The limiter inside the retry too, so a retried attempt waits for a slot;
-    # outside the recorder, so a recorded latency is the provider's, not the queue's.
-    return RetryingProvider(
-        RateLimitedProvider(
-            RecordingProvider(
-                GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model)
-            ),
-            _limiter(settings.llm_minute_request_limit),
+    members: list[LLMProvider] = [
+        _member(
+            GeminiProvider(api_key=settings.require_api_key(), model=settings.llm_model),
+            settings.llm_minute_request_limit,
         )
+    ]
+    if settings.fallback_llm_model and settings.fallback_llm_model != settings.llm_model:
+        members.append(
+            _member(
+                GeminiProvider(
+                    api_key=settings.require_api_key(), model=settings.fallback_llm_model
+                ),
+                settings.fallback_llm_minute_limit,
+            )
+        )
+    if settings.groq_api_key:
+        members.append(
+            _member(
+                GroqProvider(api_key=settings.groq_api_key, model=settings.groq_model),
+                settings.groq_minute_request_limit,
+            )
+        )
+    if len(members) == 1:
+        return RetryingProvider(members[0])
+    prefer = {"writer": settings.writer_provider} if settings.writer_provider else {}
+    return RetryingProvider(FallbackProvider(members, prefer=prefer))
+
+
+def _member(provider: LLMProvider, per_minute_quota: int) -> LLMProvider:
+    return RateLimitedProvider(
+        RecordingProvider(provider),
+        _limiter(f"{provider.name}/{getattr(provider, 'model', '')}", per_minute_quota),
     )
 
 
-_LIMITERS: dict[int, MinuteRateLimiter] = {}
+_LIMITERS: dict[str, MinuteRateLimiter] = {}
 
 
-def _limiter(per_minute_quota: int) -> MinuteRateLimiter:
-    """One limiter per process and quota: every provider built here shares it,
-    because the quota is the key's, not the provider object's. One slot of
-    headroom under the published limit."""
+def _limiter(key: str, per_minute_quota: int) -> MinuteRateLimiter:
+    """One limiter per process and model: every provider built here for that
+    model shares it, because the quota is the key's and the model's, not the
+    provider object's. One slot of headroom under the published limit."""
     slots = max(1, per_minute_quota - 1)
-    if slots not in _LIMITERS:
-        _LIMITERS[slots] = MinuteRateLimiter(slots)
-    return _LIMITERS[slots]
+    name = f"{key}@{slots}"
+    if name not in _LIMITERS:
+        _LIMITERS[name] = MinuteRateLimiter(slots)
+    return _LIMITERS[name]
 
 
 def build_retrieval_tool(

@@ -32,10 +32,13 @@ class GeminiProvider:
     """Calls the Gemini API. Async, timeout-bounded, typed errors."""
 
     name = "gemini"
+    #: Gemini 3 rejects function calls in its history without a signature it made.
+    requires_own_history = True
 
     def __init__(self, api_key: str, model: str) -> None:
         self._client = genai.Client(api_key=api_key)
         self._model = model
+        self.model = model
 
     async def complete(self, request: LLMRequest, *, timeout: float) -> LLMResponse:
         config = types.GenerateContentConfig(
@@ -192,7 +195,7 @@ def _to_contents(turns: list[Turn]) -> list[types.Content]:
         # Replay the model's own content verbatim when we have it. Gemini 3.x
         # rejects reconstructed function-call parts because they lack the
         # thought_signature, which is not exposed as a reproducible value.
-        if turn.role == "model" and isinstance(turn.provider_state, types.Content):
+        if turn.role == "model" and isinstance(turn.provider_state, types.Content):  # Gemini's own
             contents.append(turn.provider_state)
             continue
 
