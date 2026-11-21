@@ -19,15 +19,53 @@ that had the OpenAPI description reading "V0.7" on a v1.0 build.
 
 ## Endpoints
 
-There are **five**, all in `src/amos/api/app.py`.
+All in `src/amos/api/app.py`; the read side's queries and response models in
+`src/amos/api/views.py` (V1.7). Every endpoint except `/health` requires
+`Authorization: Bearer <key>` when a database is configured.
 
-| Method | Path | Purpose | Success |
-|---|---|---|---|
-| `GET` | `/health` | liveness | `200` |
-| `POST` | `/v1/goals` | run a goal synchronously | `200` |
-| `POST` | `/v1/goals/async` | queue a goal for a worker | `202` |
-| `GET` | `/v1/runs/dead-letter` | runs the queue gave up on | `200` |
-| `GET` | `/v1/runs/{run_id}` | the full trace of a past run | `200` |
+| Method | Path | Purpose | Success | Since |
+|---|---|---|---|---|
+| `GET` | `/health` | liveness | `200` | V0.1 |
+| `POST` | `/v1/goals` | run a goal synchronously | `200` | V0.1 |
+| `POST` | `/v1/goals/async` | queue a goal for a worker (mounted when `AMOS_ASYNC_ENABLED`) | `202` | V0.8 |
+| `GET` | `/v1/runs` | your runs, newest first; `?idempotency_key=` finds one | `200` | V1.7 |
+| `GET` | `/v1/runs/dead-letter` | your runs the queue gave up on | `200` | V1.1 |
+| `GET` | `/v1/runs/{run_id}` | the full record of a run — live while it runs | `200` | V0.3 |
+| `GET` | `/v1/memories` | your current facts | `200` | V1.7 |
+| `GET` | `/v1/memories/history?subject=` | every value a subject has held | `200` | V1.7 |
+| `GET` | `/v1/corpus` | the system corpus plus your uploads | `200` | V1.7 |
+| `GET` | `/v1/chunks/{chunk_id}` | one passage, for a citation | `200` | V1.7 |
+| `POST` | `/v1/documents` | upload a `.md`/`.txt` file to your own corpus | `201` | V1.7 |
+| `GET` | `/v1/system` | provider, quota, features, bounds, database, queue, telemetry, agents, tools | `200` | V1.7 |
+| `GET` | `/v1/insights` | aggregates over your stored runs | `200` | V1.7 |
+
+**Every list of personal data is owner-scoped**, with an isolation test each
+(`tests/integration/test_read_api.py`). `/v1/system`'s quota and queue figures are deliberately
+global — a quota belongs to the API key, the queue to the server — and carry counts only.
+
+### Per-run options (ADR-016)
+
+Both goal endpoints accept `options`:
+
+```json
+{ "goal": "…", "options": { "planning": false, "multi_agent": true, "critic": false,
+                             "delegation": false, "memory": false } }
+```
+
+Each is `true`, `false` or absent (the server's setting). **A run may switch off what the server
+enabled, never switch on what it disabled** — that, or an unknown key, is `422`. Options are stored
+on the run (`runs.options`), so a queued run's worker applies them and the trace shows them.
+`memory: false` also skips episodic recording and the memory reconciler. Bounds — iterations,
+attempts, timeouts — are not options.
+
+### `POST /v1/documents`
+
+JSON, not multipart (multipart would need `python-multipart`, a new dependency):
+`{"filename": "notes.md", "text": "…"}`. A plain `.md` or `.txt` name (no folders, not hidden),
+at most 20 KB — one embedding batch with no pacing pause, so it answers in seconds. Stored as
+`uploads/<name>`, **owned by the caller and retrievable by the caller only**; re-uploading the same
+name replaces the caller's earlier version and nothing else. Returns `201` with
+`{document_id, source, chunks, status}` where `status` is `ingested` or `unchanged`.
 
 ### `GET /health`
 
@@ -143,8 +181,21 @@ What exactly happened on a past request — assembled from stored rows only, whi
 it answerable for a run that happened weeks ago.
 
 **Response `200`** — a `RunTrace`: `run_id`, `goal`, `status`, `request_id`, `result`, `error`,
-`total_tokens`, `latency_ms`, `created_at`, `completed_at`, and four lists reconstructing the
-execution — `tasks`, `steps`, `llm_calls`, `tool_calls`.
+`total_tokens`, `latency_ms`, `created_at`, `completed_at`, `options`, `attempt_count`,
+`claimed_by`, `trace_id`, `lesson`, and five lists reconstructing the execution — `tasks`, `steps`,
+`llm_calls`, `tool_calls`, `events`.
+
+**Since V1.7 it is live** (ADR-015). Each model and tool call is written as it finishes, each event
+as it happens, so polling a running run shows its progress. Every call carries `seq` (one order
+across calls and events), `purpose` (planner · router · agent · revision · critic · synthesis ·
+delegate · reconciler), `agent`, `task_ref`, `task_attempt` and `run_attempt`. A failed attempt —
+a 503 that was retried, a 429 — is its own row, with `error` beginning with the error type.
+Events record what has no table: `plan.created`, `task.started` / `retrying` / `timed_out` /
+`succeeded` / `skipped`, `task.routed` (agent and reason), `critic.verdict`,
+`delegation.started` / `finished`, `run.started` / `finished` / `failed`. Tasks carry `depends_on`
+as plan refs and the agent they were routed to. **Poll the whole run** rather than "events after
+N": a sequence value is assigned at insert, not commit, so a cursor could skip a row that
+committed late. `total_tokens` is the sum of the stored calls.
 
 | Status | Condition |
 |---|---|
@@ -191,6 +242,6 @@ type is one line.
 
 Authentication exists since V1.4 (API keys, ADR-013); **authorization does not** — any
 authenticated user can call every endpoint. No inbound rate limiting, no pagination, no list
-endpoint yet (`GET /v1/runs` arrives at V1.7), no cancellation, no streaming or SSE, and no
+endpoint for users or keys, no cancellation, no streaming or SSE, and no
 `/metrics` endpoint — metrics leave over OTLP only. **AMOS is not safe to expose publicly**;
 `docs/13-security.md` says so in more detail.

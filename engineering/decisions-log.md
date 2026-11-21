@@ -583,3 +583,24 @@ available, and keep the tool interface provider-neutral".
 **The gate, again.** The working agreement says a milestone is not complete until its interview
 document can be answered unaided, and the next does not start. Building on past it is Anshul's
 explicit choice, as on 2026-09-13; every milestone still writes its document.
+
+---
+
+## 2026-11-20 — V1.7: four decisions made against the code
+
+**Typed call tables plus a small event table, ordered by one sequence** (ADR-015) — not one
+event log for everything. *Why:* the trace endpoint, its schemas and the eval's counts read typed
+rows; a JSON event log would break or duplicate them. *Checked by:* a design review against the
+code before building.
+
+**Clients poll the whole run, not a cursor.** A sequence value is assigned at insert, not commit;
+concurrent tasks commit out of order, so `after=N` could skip a row forever.
+*Reconsider if:* runs grow to thousands of rows.
+
+**No usage table; the quota meter counts stored calls.** Embedding calls run inside open sessions,
+where a counter write would be a nested pool checkout. *Cost:* embeddings and calls outside runs
+are not counted — the meter is a floor and says so.
+
+**Uploads are JSON, ≤ 20 KB, user-owned.** JSON avoids `python-multipart`; 20 KB is one embedding
+batch with no pacing pause; ownership and an owner-namespaced hash keep uploads private and stop
+a file name from replacing the system corpus.

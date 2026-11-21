@@ -3,12 +3,12 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-11-20 (Session 18 — V1.6, reliability and isolation; the track re-planned)
+**Last updated:** 2026-11-21 (Session 18 — V1.6 reliability and isolation, V1.7 live run record; the track re-planned)
 
 ## Current Version
-**V1.6 — Reliability and isolation**, the second milestone of the demo track (V1.5–V2.0,
-`docs/19-roadmap.md`, **re-planned 2026-11-20**: V1.7 live run record → V1.8 web page → V1.9 web
-research → V1.10 complex goals → V2.0 demo). The V0.1–V1.0 roadmap is complete.
+**V1.7 — Live run record and read API**, the third milestone of the demo track (V1.5–V2.0,
+`docs/19-roadmap.md`, **re-planned 2026-11-20**: V1.8 web page → V1.9 web research → V1.10 complex
+goals → V2.0 demo). The V0.1–V1.0 roadmap is complete.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -19,7 +19,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
 V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
-V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · **V1.6 reliability and isolation**
+V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · **V1.7 live run record and read API**
 
 ## What Works
 ```
@@ -42,17 +42,26 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
   longer retries a daily 429 or a rejected key
 - Dead letters, episodic recall and retrieval are **owner-scoped** (V1.6 — three leaks closed); a
   worker lost on a run's final attempt dead-letters it
+- **A run is recorded as it happens** (V1.7, ADR-015): every model and tool call — each real
+  attempt — written as it finishes, tagged with task, agent and purpose; routing decisions, critic
+  verdicts, task starts and retries as events; one sequence orders all of it. `GET /v1/runs/{id}`
+  is live while the run runs. Totals are summed from stored calls; delegates are counted
+- **Per-run options** — planning, multi-agent, critic, delegation, memory — switch *off* what the
+  server enabled, stored on the run and applied by the worker (ADR-016)
+- **Read API:** runs list, memories and history, corpus, chunks, uploads (user-owned `.md`/`.txt`),
+  system (provider, quota meter, features, bounds, queue, agents, tools), insights — every
+  personal list owner-scoped with an isolation test
 - **`make backup` / `make restore-drill` / `make restore`** — the first drill passed 2026-11-19
 - The corpus rebuilds in **one** free-tier day (850 chunks; `docs/build-along/` excluded), and an
   edited document **replaces** its old version on re-ingest
-- **661 tests** (663 collected, 2 live opt-in), in their own database `amos_test`; `mypy --strict`
+- **698 tests** (700 collected, 2 live opt-in), in their own database `amos_test`; `mypy --strict`
   and `ruff` clean; **CI runs with and without a database**, migrations both directions, and with
   no API key
 
 ### Measured
 | What | Command | Result |
 |---|---|---|
-| End-to-end goals | `make eval` | **9/9** deterministic, refusal 2/2; groundedness 0.94. 70905 tokens. 2026-11-19, 850 chunks. A first run that day lost 2 goals to Gemini `503` and was not stored |
+| End-to-end goals | `make eval` | **9/9** deterministic, refusal 2/2; groundedness 1.00. 65 320 tokens. **2026-11-21, 880 chunks** — the stored baseline. Two runs the day before under Gemini overload: 7/8 + 1 unmeasurable, then 9/9 with 20 provider retries (≥16 cleared, `experiments-log.md`) |
 | Retrieval | `make retrieval` | **recall@5 100% (16/16), recall@1 62.5%, MRR 0.771** — 2026-11-19, 850 chunks. Not one series with V0.5's 0.958. Most rank-1 misses are unlabelled correct answers; one question is false since V1.4. Labels not widened |
 | Routing | `make routing` | **13/15 (86.7%)**, 2026-09-14. Both misses are lookup-then-compute cases labelled `analyst` and routed to `researcher` — which V1.3 delegation may have made the better answer. Labels deliberately not changed |
 | Memory storage | `make memory-trials` | store 100% (8/8), false claims 0% |
@@ -88,7 +97,7 @@ regression against it. Only deterministic rates gate; the judged score is contex
   **Still not safe to expose publicly**
 - **Without a database the API is unauthenticated** — by design, with a startup warning
 - The corpus is shared across users by design (`documents.user_id` NULL = system corpus)
-- No UI. CLIs and FastAPI's `/docs`
+- No UI yet (V1.8). CLIs, FastAPI's `/docs`, and since V1.7 a read API built for the page
 - `Tool` has no output schema, no retry policy and no audit metadata (`docs/08`)
 - Kubernetes, Kafka, Celery, microservices: **never built, never claimed**
 
@@ -107,7 +116,7 @@ Daily limits reset at midnight Pacific. Since V1.5 a daily 429 fails fast.
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`main`, at `v1.6.0`. No open feature branch. The next one is `feat/v1.7-run-record`.
+`main`, at `v1.7.0`. No open feature branch. The next one is `feat/v1.8-web-page`.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -125,11 +134,8 @@ three isolation leaks, a run stuck in `QUEUED` forever, an unclassified 503, ret
 an iteration setting that did nothing. Thirty fixed in all, each in `engineering/bugs-log.md` with
 the lesson it taught.
 
-**Known and scheduled for V1.7** (not bugs in what is claimed, gaps in what is recorded): model and
-tool calls are written at the end of a run with no task, agent or purpose; routing decisions and
-critic verdicts are not stored; a delegate's own calls and tokens are discarded, so `total_tokens`
-under-counts delegated runs; failed runs store no calls; the worker records no episodic memory and
-no metrics. `docs/19-roadmap.md` V1.7.
+V1.7 closed the record's gaps (unordered, unattributed calls; no verdicts; discarded delegate
+costs; failed runs with no calls; worker without episodes or metrics) and a duplicated `RunStatus`.
 
 ## Technical Debt
 - **SQLAlchemy is capped below 2.1.** 2.1 changed `Select`'s typing (four errors in
@@ -173,8 +179,8 @@ no metrics. `docs/19-roadmap.md` V1.7.
 | Python | 3.14.4, `.venv/` |
 | Container | podman 5.8.2 + podman-compose (rootless) |
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
-| Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` → `835121ee2bd2` |
-| Users | `alembic upgrade head` creates `default` and **prints its key once**. `AMOS_BOOTSTRAP_API_KEY` sets it instead |
+| Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` → `835121ee2bd2` → `9c1f0d7e2a14` (V1.7 run record) |
+| Users | `alembic upgrade head` creates `default` and **prints its key once**. `AMOS_BOOTSTRAP_API_KEY` sets it instead. A `presenter` user was created 2026-11-20 for live checks and the demo; its key is not in the repo |
 | Corpus | **42 docs / 880 chunks**, re-ingested 2026-11-20 (7 edited docs replaced their old versions); backed up (`backups/amos-20261120-144852.dump`, 6.8 MB). Rebuilt from empty on 2026-11-19 in one run (850 chunks; drill passed). A full rebuild fits one free-tier day since V1.5 |
 | Test database | `amos_test`, created and migrated by the test suite on first use (`AMOS_TEST_DATABASE_URL` overrides) |
 | Version | `src/amos/__init__.py`; the build reads it |
@@ -193,16 +199,17 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**V1.7 — live run record and read API** (`docs/19-roadmap.md`; the approved plan's detail is in
-the V1.7 section there and in ADR-015/016 once written). Branch `feat/v1.7-run-record`. ADR-015
-(record as it happens) and ADR-016 (per-run options) before code.
+**V1.8 — mission control web page** (`docs/19-roadmap.md`). Branch `feat/v1.8-web-page`. ADR-017
+(plain HTML/CSS/JS, no build step, no CDN, self-hosted fonts, strict CSP) before code. The read API
+it draws on is complete; the design is in the approved plan: a live lane graph — one lane per agent,
+a capsule per task, a tick per call — with an inspector for every request and response.
 
-Nothing needed from Anshul before it. Live checks spend Gemini quota — about 60 calls per full
-demo pass of flash-lite's 500/day.
+Browser checks use Playwright for Python as a dev dependency driving the installed Chrome
+(`/usr/sbin/google-chrome-stable`), no browser download.
 
-### The advance gate — fourteen documents, never met
+### The advance gate — fifteen documents, never met
 
-`docs/interview/*.md` — fourteen, with V1.6's questions added to `reliability.md` and `security.md`. This is the second of the project's
+`docs/interview/*.md` — fifteen: V1.6's questions added to `reliability.md` and `security.md`, and `run-record.md` (V1.7). This is the second of the project's
 two equal objectives, and the teacher demo is exactly its test: explaining the system unaided.
 Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/interview/*.md` in milestone
 order. Building further before closing it is a deliberate choice against the working agreement's

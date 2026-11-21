@@ -89,6 +89,19 @@ field and fails open when it misses one.
 
 Token counts are *values*, not dimensions — summed, never grouped by.
 
+## The run record is the readable telemetry (V1.7)
+
+OpenTelemetry leaves the process over OTLP and keeps nothing readable in it, so the demo page
+does not read it. What the page shows comes from the **stored run record** (ADR-015): every model
+and tool call written as it finishes, attributed to task, agent and purpose; every routing
+decision, critic verdict and retry as an event; aggregates in `GET /v1/insights` computed from
+those rows. A run's `trace_id` (from its stored `traceparent`) links the record to the collector's
+spans when tracing is on.
+
+**Call metrics moved** from `RunService` into `RecordingProvider`, so they are counted on every
+path — the worker and runs without a database included, where they were skipped before — and a
+retried call counts each attempt.
+
 ## No-op by default
 
 Tracing and metrics are inert unless `AMOS_OTLP_ENDPOINT` is set. The OpenTelemetry API is built
