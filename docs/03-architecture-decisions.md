@@ -1148,3 +1148,59 @@ was researched.
 The writer needs a fact mid-composition often enough that a research round-trip becomes the norm
 (then let it delegate to the researcher), or the citation check produces false alarms on legitimate
 sources (then the source ledger is missing a tool).
+
+---
+
+## ADR-021 — A fallback chain of models, and a stronger model for the writer
+
+**Date** 2026-11-22 · **Status** Accepted (V1.11) · **Revisits** ADR-014's deferral of a second provider
+
+### Context
+ADR-014 deferred a second provider: one retry cleared most of Gemini's 503s, and flash-lite's 500
+calls a day were enough. Both assumptions broke in the demo's own workloads. A live complex goal
+lost a task to 503s that outlasted the retry, and a probe on 2026-11-22 found **every** Gemini model
+overloaded at once — flash, both Gemma 4 models, and flash-lite. ADR-014's *reconsider if* named both
+triggers: "503s outlast one retry in practice", and "flash-lite fails the complex goals on quality".
+The Goa plan, even when it completed, was generic; part of the cause is the smallest model writing it.
+
+### Options
+1. **More keys or accounts on Gemini's free tier.** Refused: Google's API terms forbid circumventing
+   documented limits, and keys in one project share its quota anyway.
+2. **A second Gemini model** as a fallback. Its own quota (Gemma 4: 14,400 a day), no new code — but
+   the same infrastructure, so it does not help when Google is overloaded.
+3. **A second provider, Groq**, on separate infrastructure, over its OpenAI-compatible API with
+   `httpx` (already a dependency) — no SDK.
+4. **Both**, as an ordered chain.
+
+### Decision
+**Option 4.** `FallbackProvider` tries, in order: the Gemini primary (`flash-lite`), a Gemini
+fallback model (`gemma-4-26b-a4b-it`, measured to answer structured output), then Groq
+(`openai/gpt-oss-120b`). A call moves to the next member on a 503, a rate limit or a timeout with time
+still left in the caller's deadline — **shared across the chain**, so ADR-009's bounds still hold. The
+whole chain sits inside ADR-014's single retry; each member has its own rate limiter and is recorded
+on its own row, so the page shows which model answered.
+
+**One rule the chain must keep:** a conversation whose tool calls came from one model cannot continue
+on a *different Gemini* model — Gemini 3 rejects function calls in its history that carry no
+signature it made. Groq accepts any history. So once a tool loop has a tool call from model M, Gemini
+members other than M are skipped for the rest of that loop; Groq can always take over. Checked in
+code on every call, from the model recorded on each turn.
+
+**The writer prefers Groq.** It has no tools, so no signature question arises, and `gpt-oss-120b` is a
+far stronger writer than flash-lite. If Groq fails, the writer falls back down the same chain.
+
+Groq specifics, read from its documentation on the day: `openai/gpt-oss-120b` allows 30 requests and
+8,000 tokens a minute, 1,000 requests and 200,000 tokens a day; it supports tool use but not parallel
+tool calls; **structured output cannot be combined with tools**, so with tools the schema is stated in
+the instruction and the answer parsed, and without tools `json_schema` is used.
+
+### Tradeoffs
+- **Answers can come from different models within one run.** The record says which, per call.
+- Groq's 8,000 tokens a minute make it slow for large prompts; it is a fallback and a writer, not
+  the workhorse.
+- A second provider is a second contract to keep working; both pass the same test suite on fixtures.
+- Gemma's tool calling is unmeasured (it returned 503 when probed); it is used where it was measured.
+
+### Reconsider if
+Groq's free tier changes, Gemini's capacity problems stop, or the writer's output is not measurably
+better on the complex goals than flash-lite's.
