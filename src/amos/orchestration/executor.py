@@ -20,14 +20,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from amos.agents.findings import check_findings
-from amos.agents.schemas import (
-    AgentResponse,
-    AgentResult,
-    CheckedFinding,
-    Confidence,
-    FindingStatus,
-)
+from amos.agents.findings import check_findings, read_texts
+from amos.agents.schemas import AgentResponse, AgentResult, Confidence, FindingStatus
 from amos.agents.sourcing import sources_in
 from amos.database.recorder import record_event
 from amos.errors import (
@@ -338,8 +332,10 @@ class Executor:
             await self._handle_failure(task, retryable=retryable)
             return
 
-        if result.response.findings:
-            # Each quote looked for in what this task read (ADR-022). Code, not a model.
+        if result.response.findings and read_texts(result.tool_outcomes):
+            # Each quote looked for in what this task read (ADR-022). Code, not a
+            # model. A task that read nothing — the analyst, the writer — has
+            # nothing to check against; its "findings" are not research.
             result.findings = check_findings(result.response.findings, result.tool_outcomes)
             await record_event(
                 "findings.checked",
@@ -521,10 +517,7 @@ def _findings_block(result: AgentResult) -> str:
     heading that says they are not confirmed: dropping them would hide work, and
     passing them as facts would launder them.
     """
-    checked = result.findings or [
-        CheckedFinding(**f.model_dump(), status=FindingStatus.QUOTE_NOT_FOUND)
-        for f in result.response.findings
-    ]
+    checked = result.findings
     if not checked:
         return ""
     confirmed = [f for f in checked if f.status is FindingStatus.CHECKED][:MAX_HANDED_FINDINGS]

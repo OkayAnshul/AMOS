@@ -136,3 +136,17 @@ def test_the_hand_off_separates_facts_from_unconfirmed_claims() -> None:
     facts, doubts = block.split("Not confirmed")
     assert "Dorm ₹933" in facts and PAGE in facts
     assert "Dorm ₹899" in doubts and "Dorm ₹899" not in facts
+
+
+def test_a_task_that_read_nothing_hands_on_no_findings() -> None:
+    """The analyst and the writer read nothing; their 'findings' are not research."""
+    result = AgentResult(
+        request_id="r",
+        response=AgentResponse(
+            answer="a",
+            reasoning="r",
+            confidence=Confidence.HIGH,
+            findings=[Finding(fact="Total ₹5,400", quote="Total ₹5,400", source="t4")],
+        ),
+    )
+    assert _findings_block(result) == ""

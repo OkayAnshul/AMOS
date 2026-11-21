@@ -1425,10 +1425,15 @@ async function systemPage() {
           h(
             "div",
             { class: "group" },
-            row("Provider", capitalise(sys.provider.name)),
-            row("Model", sys.provider.model),
+            (sys.provider.chain || [{ provider: sys.provider.name, model: sys.provider.model, role: "primary" }]).map((m, n) =>
+              row(
+                n === 0 ? "First" : `Then, if busy`,
+                `${capitalise(m.provider)} ${m.model}`,
+                [m.per_minute ? `${m.per_minute} a minute` : "", m.preferred_by?.length ? `tried first by the ${m.preferred_by.join(" and ")}` : ""].filter(Boolean).join(", "),
+              ),
+            ),
             row("Embeddings", `${sys.provider.embedding_model}, ${sys.provider.embedding_dimensions} dimensions`),
-            row("On a 5xx", "one retry, inside the call's deadline"),
+            row("On a 5xx", "one retry, then the next model, inside the call's deadline"),
           ),
         ),
         ...section(
@@ -1451,8 +1456,9 @@ async function systemPage() {
             row("Provider busy (503) today", count(q.unavailable_today)),
             row("Tokens today", count(q.tokens_today)),
             row("Resets", q.resets),
+            (q.by_model || []).map((m) => row(`${capitalise(m.provider)} ${m.model}`, `${count(m.calls)} calls`, m.failed ? `${count(m.failed)} did not answer` : null)),
           ),
-          h("div", { class: "group-foot" }, q.note),
+          h("div", { class: "group-foot" }, `The meter counts ${q.model || "the primary model"}, whose daily quota it is. ${q.note}`),
         ),
         ...section(
           "Features",

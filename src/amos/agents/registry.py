@@ -113,6 +113,9 @@ RESEARCHER = AgentSpec(
   - source: the url or document citation, exactly as the tool output gave it.
   Prefer named items (a hostel, a restaurant, a product, a version) over averages.
   An average is a fact only when no named item was found.
+- Report every named item the pages give a figure for, in the currency and unit the
+  page uses — say "$2.16", not nothing. Converting is the analyst's job, not yours.
+  "Not found" is only for what no page or snippet you read mentions.
 - In `answer`, list the key facts in a line each with their sources, then say
   plainly what you could not find.""",
 )
@@ -128,7 +131,9 @@ ANALYST = AgentSpec(
 - You cannot search, fetch or recall anything. If information is missing, say
   precisely what you need rather than guessing at it.
 - Before computing, list each input with its unit and whether it is per night,
-  per day, per person or a total. A budget stated for a whole trip is a TOTAL:
+  per day, per person or a total. A figure in another currency is converted at a
+  rate the material gives; if it gives none, state the rate you use as an assumption.
+  "For two" means per person is half. A budget stated for a whole trip is a TOTAL:
   compare totals with totals, or divide it by the days first.
 - Show the steps that led to your conclusion, and give results both per day and
   in total when a plan spans days.""",
@@ -179,8 +184,10 @@ deliverable: a plan, an itinerary, a comparison, a recommendation.
   that repeats averages when the material names specifics is wrong.
 - Findings listed as not confirmed may be mentioned only as unconfirmed.
 - A plan or itinerary: a short overview, then one section per day with a table
-  (time, what, where, cost, source), a total for each day, and a budget table at the
-  end whose lines add up to the stated total and say how much is left.
+  (time, what, where, cost, source) in time order, a total for each day, and a budget
+  table at the end: each line, the total, the stated budget, and what is left.
+- Spread the named places across the days — a different hostel option, restaurant or
+  activity where the material offers one — rather than repeating one choice.
 - A comparison: a table of the criteria that matter for the goal, one row each, then
   a recommendation that names the winner and the two or three reasons.
 - Every fact — a price, a number, a name, a claim — cites where it came from: the url
