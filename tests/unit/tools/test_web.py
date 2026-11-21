@@ -303,3 +303,13 @@ async def test_a_short_page_is_returned_whole() -> None:
     )
     outcome = await tool.execute(call("fetch_page", url=URL, looking_for="anything"))
     assert outcome.output["excerpted"] is False
+
+
+async def test_a_script_built_page_says_it_is_not_a_source() -> None:
+    shell = "<html><body><div id='root'></div><script>app()</script></body></html>"
+    tool = FetchPageTool(
+        FixedProvenance({URL}), transport=pages({URL: html(shell)}), resolver=public
+    )
+    outcome = await tool.execute(call("fetch_page", url=URL))
+    assert outcome.output["readable"] is False
+    assert "Read the next" in outcome.output["instruction"]

@@ -33,6 +33,8 @@ MAX_PAGE_CHARS = 20_000
 MAX_REDIRECTS = 3
 #: A page longer than this is cut to its most relevant passages (ADR-023).
 FOCUS_CHARS = 6_000
+#: Below this, a page read is a script-built shell, not a source.
+EMPTY_PAGE_CHARS = 80
 #: Searches one task attempt may make; the next is refused, in code (ADR-023).
 MAX_SEARCHES_PER_TASK = 3
 
@@ -449,6 +451,20 @@ class FetchPageTool(Tool):
         if len(text) > MAX_PAGE_CHARS:
             text, truncated = text[:MAX_PAGE_CHARS], True
         page_chars = len(text)
+        if page_chars < EMPTY_PAGE_CHARS:
+            # Booking sites build their pages with scripts; a plain read gets a
+            # shell. Seen live: the researcher read one such page and gave up.
+            return {
+                "url": url,
+                "final_url": current,
+                "title": title[:300],
+                "text": text,
+                "readable": False,
+                "page_chars": page_chars,
+                "untrusted": True,
+                "instruction": "This page has almost no readable text — it is probably built "
+                "by scripts. It is not a source. Read the next most promising result instead.",
+            }
         # A long page is cut to what the agent asked for (ADR-023). The findings
         # check and the critic see this excerpt: exactly what the agent saw.
         text, excerpted = focus(text, args.looking_for)
