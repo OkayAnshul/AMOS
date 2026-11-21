@@ -31,8 +31,9 @@ from amos.agents.registry import AgentRegistry, AgentSpec
 from amos.agents.router import Router
 from amos.agents.schemas import AgentResponse, AgentResult
 from amos.agents.tool_agent import ToolUsingAgent
+from amos.database.recorder import record_event
 from amos.llm.base import LLMCallRecord, LLMProvider
-from amos.observability import log_event
+from amos.observability import call_scope, log_event
 from amos.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -145,9 +146,18 @@ class AgentTeam:
     async def run(self, goal: str) -> AgentResult:
         calls: list[LLMCallRecord] = []
 
-        spec = await self._choose(goal, calls)
-        agent = self.agent_for(spec)
-        result = await agent.run(goal)
+        with call_scope(purpose="router", agent=None):
+            spec, reason = await self._choose(goal, calls)
+        # One lane per agent on the page comes from this event (ADR-015).
+        with call_scope(agent=spec.name):
+            await record_event("task.routed", agent=spec.name, reason=reason)
+
+        # One budget for the whole task, created here so what delegates spend
+        # can be added back to this result rather than vanishing (V1.7).
+        budget = DelegationBudget(self._delegation_budget)
+        agent = self.agent_for(spec, budget=budget)
+        with call_scope(purpose="agent", agent=spec.name):
+            result = await agent.run(goal)
         calls.extend(result.llm_calls)
 
         answer = result.response
@@ -155,15 +165,16 @@ class AgentTeam:
 
         if self._critic_enabled:
             answer, report, review_calls = await self._review_and_revise(
-                goal, agent, answer, result
+                goal, agent, answer, result, spec.name
             )
             calls.extend(review_calls)
 
+        calls.extend(budget.llm_calls)
         return AgentResult(
             request_id=result.request_id,
             response=answer,
             llm_calls=calls,
-            tool_outcomes=result.tool_outcomes,
+            tool_outcomes=[*result.tool_outcomes, *budget.tool_outcomes],
             tasks=result.tasks,
             outcome=result.outcome,
             agent_name=spec.name,
@@ -172,13 +183,14 @@ class AgentTeam:
             latency_ms=result.latency_ms,
         )
 
-    async def _choose(self, goal: str, calls: list[LLMCallRecord]) -> AgentSpec:
-        """Pick a specialist. Skipped when there is nothing to choose between."""
+    async def _choose(self, goal: str, calls: list[LLMCallRecord]) -> tuple[AgentSpec, str]:
+        """Pick a specialist, and say why. Skipped when there is nothing to
+        choose between."""
         routable = self._agents.routable
         if not self._routing_enabled or len(routable) < 2:
-            return routable[0]
+            return routable[0], "only one agent could do this"
         decision = await self._router.route(goal, calls)
-        return self._agents.get(decision.agent)
+        return self._agents.get(decision.agent), decision.reason
 
     async def _review_and_revise(
         self,
@@ -186,6 +198,7 @@ class AgentTeam:
         agent: ToolUsingAgent,
         answer: AgentResponse,
         result: AgentResult,
+        agent_name: str = "agent",
     ) -> tuple[AgentResponse, CriticReport, list[LLMCallRecord]]:
         """Review, and allow a bounded number of revisions.
 
@@ -194,7 +207,7 @@ class AgentTeam:
         """
         calls: list[LLMCallRecord] = []
         evidence = _evidence_from(result)
-        report = await self._critic.review(goal, answer, evidence, calls)
+        report = await self._review(goal, answer, evidence, calls, revision=0)
 
         for attempt in range(self._max_revisions):
             if report.accepted:
@@ -205,11 +218,12 @@ class AgentTeam:
                 attempt=attempt + 1,
                 unsupported=len(report.unsupported_claims),
             )
-            revised = await agent.run(_revision_prompt(goal, answer, report))
+            with call_scope(purpose="revision", agent=agent_name):
+                revised = await agent.run(_revision_prompt(goal, answer, report))
             calls.extend(revised.llm_calls)
             answer = revised.response
             evidence = _evidence_from(revised) or evidence
-            report = await self._critic.review(goal, answer, evidence, calls)
+            report = await self._review(goal, answer, evidence, calls, revision=attempt + 1)
 
         if not report.accepted:
             # Budget exhausted with objections outstanding. Return the answer WITH
@@ -218,6 +232,28 @@ class AgentTeam:
             answer = apply_report(answer, report)
 
         return answer, report, calls
+
+    async def _review(
+        self,
+        goal: str,
+        answer: AgentResponse,
+        evidence: list[str],
+        calls: list[LLMCallRecord],
+        *,
+        revision: int,
+    ) -> CriticReport:
+        """One critic review, recorded as a verdict event (never stored before V1.7)."""
+        with call_scope(purpose="critic", agent="critic"):
+            report = await self._critic.review(goal, answer, evidence, calls)
+            await record_event(
+                "critic.verdict",
+                verdict=report.verdict.value,
+                reasoning=report.reasoning,
+                unsupported_claims=list(report.unsupported_claims),
+                revision=revision,
+                evidence_items=len(evidence),
+            )
+        return report
 
 
 def _delegation_instruction(agents: AgentRegistry, spec: AgentSpec) -> str:

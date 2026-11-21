@@ -11,7 +11,10 @@ import json
 import logging
 import sys
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from typing import Any
 
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
@@ -46,6 +49,51 @@ def set_current_run_id(run_id: str | None) -> None:
 
 def get_current_run_id() -> str | None:
     return _current_run_id.get()
+
+
+@dataclass(frozen=True)
+class CallContext:
+    """Who is making a model or tool call, and why (ADR-015).
+
+    The run id is NOT here: it has one source, `get_current_run_id`, already read
+    by the plan store, the checkpoints and the memory tools. A second copy would
+    be a second thing to keep in step.
+
+    `purpose` is one of: planner · router · agent · revision · critic ·
+    synthesis · delegate · reconciler.
+    """
+
+    purpose: str | None = None
+    agent: str | None = None
+    task_ref: str | None = None
+    task_attempt: int = 0
+    run_attempt: int = 0
+
+
+_EMPTY_CONTEXT = CallContext()
+_call_context: ContextVar[CallContext | None] = ContextVar("call_context", default=None)
+
+
+def get_call_context() -> CallContext:
+    return _call_context.get() or _EMPTY_CONTEXT
+
+
+@contextmanager
+def call_scope(**changes: Any) -> Iterator[CallContext]:
+    """Change the call context for a block, and **put it back** afterwards.
+
+    Set-and-reset rather than a bare `.set()`, because `asyncio.wait_for` runs
+    its coroutine in the *same* task on Python 3.14 and copies no context: a
+    `.set()` inside an agent run would leak out to its caller and label every
+    later call with the wrong agent and purpose. `asyncio.gather` does copy, so a
+    scope opened inside each gathered coroutine stays with that coroutine.
+    """
+    scoped = replace(get_call_context(), **changes)
+    token = _call_context.set(scoped)
+    try:
+        yield scoped
+    finally:
+        _call_context.reset(token)
 
 
 class JsonFormatter(logging.Formatter):

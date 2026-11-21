@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from amos.llm.base import LLMCallRecord
 from amos.tools.base import ToolOutcome
@@ -42,10 +42,52 @@ class AgentResponse(BaseModel):
     )
 
 
+#: Per-run option -> the server setting it can switch off (ADR-016).
+OPTION_SETTINGS: dict[str, str] = {
+    "planning": "planning_enabled",
+    "multi_agent": "multi_agent_enabled",
+    "critic": "critic_enabled",
+    "delegation": "delegation_enabled",
+    "memory": "memory_enabled",
+}
+
+
+class RunOptions(BaseModel):
+    """Features switched for one run. Absent means "as the server is configured".
+
+    **Off only** (ADR-016): a run may switch off what the server enabled, never
+    switch on what it disabled — a server flag is the operator's decision about
+    cost and capability, and a request that could override it would make the
+    environment file advisory. Bounds (iterations, attempts, timeouts) are not
+    options at all: they are safety limits.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    planning: bool | None = None
+    multi_agent: bool | None = None
+    critic: bool | None = None
+    delegation: bool | None = None
+    memory: bool | None = None
+
+    def given(self) -> dict[str, bool]:
+        """Only the options the client actually set."""
+        return {name: value for name, value in self.model_dump().items() if value is not None}
+
+    def enabling_disabled(self, settings: object) -> list[str]:
+        """Options that try to switch ON something the server has OFF."""
+        return [
+            name
+            for name, value in self.given().items()
+            if value and not getattr(settings, OPTION_SETTINGS[name])
+        ]
+
+
 class GoalRequest(BaseModel):
     """What a client submits."""
 
     goal: str = Field(min_length=1, max_length=8000)
+    options: RunOptions | None = None
 
 
 class AgentResult(BaseModel):
@@ -108,9 +150,15 @@ class TraceTask(BaseModel):
     plan_ref: str
     description: str
     state: str
+    #: Plan refs of the tasks this one needs (V1.7). Row UUIDs before, which no
+    #: client could map back — so the graph could not be drawn from a trace.
     depends_on: list[str] = Field(default_factory=list)
     attempt_count: int = 0
     error: str | None = None
+    position: int = 0
+    answer: str | None = None
+    #: The specialist it was routed to, from its latest `task.routed` event.
+    agent: str | None = None
 
 
 class TraceLLMCall(BaseModel):
@@ -121,6 +169,14 @@ class TraceLLMCall(BaseModel):
     latency_ms: int
     repair_attempt: int
     error: str | None = None
+    # V1.7 (ADR-015): where, why, and in what order.
+    seq: int = 0
+    purpose: str | None = None
+    agent: str | None = None
+    task_ref: str | None = None
+    task_attempt: int = 0
+    run_attempt: int = 0
+    finished_at: str | None = None
 
 
 class TraceToolCall(BaseModel):
@@ -130,6 +186,27 @@ class TraceToolCall(BaseModel):
     output: dict[str, object] | None = None
     error: str | None = None
     latency_ms: int
+    seq: int = 0
+    call_id: str | None = None
+    purpose: str | None = None
+    agent: str | None = None
+    task_ref: str | None = None
+    task_attempt: int = 0
+    run_attempt: int = 0
+    finished_at: str | None = None
+
+
+class TraceEvent(BaseModel):
+    """Something that happened and has no table of its own (ADR-015)."""
+
+    seq: int
+    kind: str
+    task_ref: str | None = None
+    agent: str | None = None
+    task_attempt: int = 0
+    run_attempt: int = 0
+    payload: dict[str, object] = Field(default_factory=dict)
+    at: str
 
 
 class TraceStep(BaseModel):
@@ -160,3 +237,12 @@ class RunTrace(BaseModel):
     steps: list[TraceStep] = Field(default_factory=list)
     llm_calls: list[TraceLLMCall] = Field(default_factory=list)
     tool_calls: list[TraceToolCall] = Field(default_factory=list)
+    events: list[TraceEvent] = Field(default_factory=list)
+    #: Per-run feature switches (ADR-016); empty means the server's defaults.
+    options: dict[str, bool] = Field(default_factory=dict)
+    #: Queue attempts, the worker that last held it, and the OpenTelemetry trace
+    #: id that links this run to the collector's spans.
+    attempt_count: int = 0
+    claimed_by: str | None = None
+    trace_id: str | None = None
+    lesson: str | None = None

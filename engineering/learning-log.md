@@ -773,3 +773,23 @@ elsewhere — dead letters, episodic recall, retrieval. Each returned more data,
 - Why does a missing owner filter on a *similarity* search look like a working feature?
 - With no owner, why must retrieval fall back to the system corpus rather than everything?
 **Status:** ⬜ Recognise
+
+### Context propagation in asyncio (Session 18)
+A contextvar is copied when a Task is created (`gather`, `create_task`), not when a coroutine is
+awaited — and `wait_for` on 3.12+ awaits in the same task. So a value set inside a block leaks out
+unless it is reset.
+**Read:** <https://docs.python.org/3/library/contextvars.html> ·
+<https://docs.python.org/3/library/asyncio-task.html#asyncio.wait_for>
+**Answer:**
+- Why does `call_scope` reset its token in a `finally`?
+- Why is the task scope opened inside `_run_task` rather than in `execute`?
+**Status:** ⬜ Recognise
+
+### A sequence orders inserts, not commits (Session 18)
+`nextval()` is assigned when a row is inserted; two transactions can commit in the other order.
+A client paging by "seq > last seen" can miss a row forever.
+**Read:** <https://www.postgresql.org/docs/18/functions-sequence.html>
+**Answer:**
+- Why does the page fetch the whole run instead of a cursor?
+- What would make a cursor safe? (Hint: ordering by commit, not insert.)
+**Status:** ⬜ Recognise

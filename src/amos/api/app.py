@@ -10,16 +10,18 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from amos import __version__
-from amos.agents.schemas import AgentResult, GoalRequest, QueuedRun, RunTrace
+from amos.agents.schemas import AgentResult, GoalRequest, QueuedRun, RunOptions, RunTrace
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent
-from amos.api.dependencies import build_agent, build_provider, build_registry
+from amos.api import views
+from amos.api.dependencies import build_agent, build_provider, build_registry, build_run_agent
 from amos.api.persistence import RunService
 from amos.auth import LOCAL_ACTOR, Actor, authenticate, key_from_header
 from amos.config import Settings, get_settings
@@ -141,14 +143,39 @@ def create_app(
             app.state.engine = create_engine(settings)
             factory = create_session_factory(app.state.engine)
 
-        # One provider per process (V1.6): the agent and the reconciler share it,
-        # rather than the reconciler building a second client of its own.
+        # One provider and one tool registry per process (V1.6/V1.7): the agent,
+        # every per-run agent and the reconciler share them.
         provider = None
-        if app.state.agent is None or (app.state.run_service is None and factory is not None):
+        registry = None
+        agent_factory = None
+        if app.state.agent is None:
+            provider = build_provider(settings)
+            registry = build_registry(settings, factory)
+            app.state.agent = build_agent(
+                settings, provider=provider, registry=registry, session_factory=factory
+            )
+            app.state.registry = registry
+            shared_provider, shared_registry = provider, registry
+
+            def agent_factory(options: RunOptions) -> object:
+                return build_run_agent(
+                    settings,
+                    options,
+                    provider=shared_provider,
+                    registry=shared_registry,
+                    session_factory=factory,
+                )
+        elif app.state.run_service is None and factory is not None:
             provider = build_provider(settings)
 
-        if app.state.agent is None:
-            app.state.agent = build_agent(settings, provider=provider, session_factory=factory)
+        # The read API's embeddings: uploads, and constructing semantic memory
+        # for the memory panel. Tests set their own fake before startup.
+        if factory is not None and app.state.embeddings is None:
+            app.state.embeddings = GeminiEmbeddings(
+                settings.require_api_key(),
+                model=settings.embedding_model,
+                dimensions=settings.embedding_dimensions,
+            )
 
         # Persistence is optional so the app still runs without a database —
         # earlier milestones' behaviour stays reachable, and tests need no container.
@@ -168,7 +195,7 @@ def create_app(
             if factory is not None:
                 reconciler = MemoryReconciler(
                     provider if provider is not None else build_provider(settings),
-                    build_registry(settings, factory),
+                    registry if registry is not None else build_registry(settings, factory),
                     timeout=settings.llm_timeout_seconds,
                     enabled=settings.memory_reconcile_enabled,
                 )
@@ -179,6 +206,7 @@ def create_app(
                 episodic,
                 trace_content=settings.trace_content,
                 reconciler=reconciler,
+                agent_factory=agent_factory,
             )
 
         log_event(
@@ -220,6 +248,9 @@ def create_app(
     app.state.settings = settings
     app.state.run_service = run_service
     app.state.engine = None
+    app.state.registry = None
+    app.state.embeddings = None
+    app.state.tracing = tracing_on
 
     @app.middleware("http")
     async def request_id_middleware(
@@ -256,6 +287,22 @@ def create_app(
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
 
+    def _checked(options: RunOptions | None) -> RunOptions | None:
+        """Off only (ADR-016): a run may switch off what this server enabled,
+        never switch on what it disabled."""
+        if options is None:
+            return None
+        refused = options.enabling_disabled(settings)
+        if refused:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "A run can only switch features off. These are off on this server: "
+                    + ", ".join(refused)
+                ),
+            )
+        return options
+
     @app.post("/v1/goals", response_model=AgentResult)
     async def submit_goal(
         payload: GoalRequest,
@@ -274,6 +321,7 @@ def create_app(
             actor,
             request_id=get_request_id() or "",
             idempotency_key=idempotency_key,
+            options=_checked(payload.options),
         )
         if run_id is not None:
             result.run_id = str(run_id)
@@ -308,6 +356,7 @@ def create_app(
                 actor,
                 request_id=get_request_id() or "",
                 idempotency_key=idempotency_key,
+                options=_checked(payload.options),
             )
             # Location points at where the outcome will appear, so a client does
             # not have to construct the polling URL itself.
@@ -357,6 +406,98 @@ def create_app(
         if trace is None:
             raise HTTPException(status_code=404, detail=f"No run with id {run_id}")
         return trace
+
+    # ---------- the read API (V1.7): what the demo page shows ----------
+
+    def _factory() -> Any:
+        service: RunService = app.state.run_service
+        if not service.persistence_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="Persistence is not configured; set AMOS_DATABASE_URL.",
+            )
+        return service.session_factory
+
+    @app.get("/v1/runs", response_model=list[views.RunSummary])
+    async def list_runs(
+        actor: CurrentActor,
+        limit: int = 30,
+        before: datetime | None = None,
+        idempotency_key: str | None = None,
+    ) -> list[views.RunSummary]:
+        """Your runs, newest first. `idempotency_key` finds one run by the key its
+        client chose — how a page watches a synchronous run while it executes."""
+        async with session_scope(_factory()) as session:
+            return await views.list_runs(
+                session,
+                actor,
+                limit=min(max(limit, 1), 200),
+                before=before,
+                idempotency_key=idempotency_key,
+            )
+
+    @app.get("/v1/memories", response_model=list[views.MemoryView])
+    async def list_memories(actor: CurrentActor, limit: int = 100) -> list[views.MemoryView]:
+        """Your current facts, newest first."""
+        async with session_scope(_factory()) as session:
+            return await views.memories(
+                session, actor, app.state.embeddings, min(max(limit, 1), 500)
+            )
+
+    @app.get("/v1/memories/history", response_model=list[views.MemoryView])
+    async def memory_history(actor: CurrentActor, subject: str) -> list[views.MemoryView]:
+        """Every value a subject has held — supersession is a chain, not a delete."""
+        async with session_scope(_factory()) as session:
+            return await views.memory_history(session, actor, app.state.embeddings, subject)
+
+    @app.get("/v1/corpus", response_model=views.CorpusView)
+    async def get_corpus(actor: CurrentActor) -> views.CorpusView:
+        """The system corpus and your own uploads — what retrieval can see for you."""
+        async with session_scope(_factory()) as session:
+            return await views.corpus(session, actor)
+
+    @app.get("/v1/chunks/{chunk_id}", response_model=views.ChunkView)
+    async def get_chunk(chunk_id: uuid.UUID, actor: CurrentActor) -> views.ChunkView:
+        """One passage, so a citation can open exactly what it cites."""
+        async with session_scope(_factory()) as session:
+            found = await views.chunk(session, actor, chunk_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"No chunk with id {chunk_id}")
+        return found
+
+    @app.post("/v1/documents", status_code=201, response_model=views.UploadResult)
+    async def upload_document(
+        upload: views.DocumentUpload, actor: CurrentActor
+    ) -> views.UploadResult:
+        """Add a `.md` or `.txt` file to your own corpus — retrievable by you only."""
+        factory = _factory()
+        try:
+            views.validate_upload(upload)
+        except views.UploadRejected as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        async with session_scope(factory) as session:
+            return await views.upload_document(session, actor, app.state.embeddings, upload)
+
+    @app.get("/v1/system", response_model=views.SystemView)
+    async def get_system(actor: CurrentActor) -> views.SystemView:
+        """Everything about this server a presenter might be asked: provider,
+        quota, features, bounds, database, queue, telemetry, agents and tools."""
+        service: RunService = app.state.run_service
+        registry = app.state.registry
+        if not service.persistence_enabled:
+            return await views.system(
+                settings, actor, session=None, registry=registry, tracing=app.state.tracing
+            )
+        async with session_scope(_factory()) as session:
+            return await views.system(
+                settings, actor, session=session, registry=registry, tracing=app.state.tracing
+            )
+
+    @app.get("/v1/insights")
+    async def get_insights(actor: CurrentActor) -> dict[str, Any]:
+        """Aggregates over your stored runs — computed from rows, not telemetry."""
+        async with session_scope(_factory()) as session:
+            return await views.run_insights(session, actor)
 
     return app
 

@@ -215,6 +215,36 @@ Every `vector` column is added by raw SQL in its migration, because SQLAlchemy c
 `vector` type. They are therefore **absent from `models.py`** and explicitly allowlisted in
 `test_schema_drift.py`, so the drift check stays meaningful rather than quietly ignoring them.
 
+## The live run record (V1.7, ADR-015)
+
+```sql
+CREATE SEQUENCE run_record_seq;              -- one order across the three tables below
+
+-- added to llm_calls and tool_calls:
+seq          BIGINT NOT NULL DEFAULT nextval('run_record_seq'),
+purpose      VARCHAR(32),   -- planner | router | agent | revision | critic | synthesis | delegate | reconciler
+agent        VARCHAR(64),
+task_ref     VARCHAR(32),   -- the planner's id, e.g. "t2"
+task_attempt INTEGER NOT NULL DEFAULT 0,
+run_attempt  INTEGER NOT NULL DEFAULT 0,
+
+CREATE TABLE run_events (                    -- what has no table of its own
+    id UUID PRIMARY KEY, run_id UUID NOT NULL REFERENCES runs ON DELETE CASCADE,
+    seq BIGINT NOT NULL DEFAULT nextval('run_record_seq'),
+    kind VARCHAR(48) NOT NULL,               -- task.routed, critic.verdict, task.retrying, …
+    task_ref VARCHAR(32), agent VARCHAR(64),
+    task_attempt INTEGER NOT NULL DEFAULT 0, run_attempt INTEGER NOT NULL DEFAULT 0,
+    payload JSONB NOT NULL DEFAULT '{}', created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+ALTER TABLE runs ADD COLUMN options JSONB;    -- per-run feature switches (ADR-016)
+```
+
+Calls are now **written as they finish**, one short transaction each, rather than batch-inserted at
+the end. Adding `seq` with a `nextval()` default filled every existing row with its own value, so
+old runs have an order too. `documents.user_id` is now set by uploads (`POST /v1/documents`): an
+owned document, retrievable by its owner only.
+
 ## Indexes, and why each exists
 
 ```sql

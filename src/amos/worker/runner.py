@@ -20,16 +20,21 @@ import asyncio
 import logging
 import os
 import socket
+import time
 import uuid
 from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from amos.agents.schemas import RunOptions
+from amos.api.persistence import record_episode
 from amos.auth import Actor
 from amos.database.engine import session_scope
+from amos.database.recorder import RunRecorder, record_event, recording
 from amos.database.repository import RunRepository
-from amos.errors import AmosError
-from amos.observability import log_event, set_current_run_id, set_request_id
+from amos.memory.episodic import EpisodicMemory
+from amos.observability import call_scope, log_event, set_current_run_id, set_request_id
+from amos.telemetry.metrics import instruments, safe_labels
 from amos.telemetry.tracing import continued_trace
 from amos.worker.queue import (
     DEFAULT_VISIBILITY_TIMEOUT,
@@ -52,14 +57,18 @@ class Worker:
     def __init__(
         self,
         session_factory: async_sessionmaker[AsyncSession],
-        agent_factory: Callable[[], object],
+        agent_factory: Callable[[RunOptions | None], object],
         *,
         worker_id: str | None = None,
         poll_interval: float = 2.0,
         max_attempts: int = 3,
         visibility_timeout: int = DEFAULT_VISIBILITY_TIMEOUT,
+        episodic: Callable[[AsyncSession, Actor], EpisodicMemory] | None = None,
     ) -> None:
         self._factory = session_factory
+        # Before V1.7 the worker recorded no episodes, so queued runs were
+        # invisible to `recall_past_runs`; it shares the sync path's helper now.
+        self._episodic = episodic
         self._agent_factory = agent_factory
         self.worker_id = worker_id or default_worker_id()
         self._poll_interval = poll_interval
@@ -93,32 +102,57 @@ class Worker:
         # Execution happens outside any transaction — the V0.3 reasoning still
         # applies, and matters more here: a run can take minutes, and holding a
         # pooled connection open across it would starve every other worker.
-        try:
-            agent = self._agent_factory()
-            # Continues the trace of the request that enqueued this run, rather
-            # than starting a second one that nothing links to the first.
-            with continued_trace(
-                claimed.trace_parent,
-                "run.execute.worker",
-                **{
-                    "amos.run_id": str(claimed.run_id),
-                    "amos.worker_id": self.worker_id,
-                    "amos.attempt": claimed.attempt_count,
-                },
-            ):
-                result = await agent.run(claimed.goal)  # type: ignore[attr-defined]
-        except AmosError as exc:
-            await self._record_failure(claimed.run_id, actor, exc)
-            return True
-        except Exception as exc:  # noqa: BLE001 - a worker must not die on one run
-            await self._record_failure(claimed.run_id, actor, exc)
-            return True
+        options = RunOptions.model_validate(claimed.options) if claimed.options else None
+        started = time.perf_counter()
+        # Recorded as it happens, like the sync path (ADR-015), with the run's
+        # attempt on every row — a reclaimed run's earlier attempt stays visible.
+        with (
+            recording(RunRecorder(self._factory)),
+            call_scope(run_attempt=claimed.attempt_count),
+        ):
+            await record_event(
+                "run.claimed",
+                worker=self.worker_id,
+                attempt=claimed.attempt_count,
+                options=options.given() if options else {},
+            )
+            try:
+                agent = self._agent_factory(options)
+                # Continues the trace of the request that enqueued this run,
+                # rather than starting a second one that nothing links to the first.
+                with continued_trace(
+                    claimed.trace_parent,
+                    "run.execute.worker",
+                    **{
+                        "amos.run_id": str(claimed.run_id),
+                        "amos.worker_id": self.worker_id,
+                        "amos.attempt": claimed.attempt_count,
+                    },
+                ):
+                    result = await agent.run(claimed.goal)  # type: ignore[attr-defined]
+            except Exception as exc:  # noqa: BLE001 - a worker must not die on one run
+                instruments().runs.add(1, safe_labels(outcome="FAILED"))
+                await self._record_failure(claimed.run_id, actor, exc)
+                await record_event("run.failed", error=type(exc).__name__)
+                set_current_run_id(None)
+                return True
 
-        async with session_scope(self._factory) as session:
-            repo = RunRepository(session, actor)
-            stored = await repo.get_trace(claimed.run_id)
-            if stored is not None:
-                await repo.record_success(stored, result)
+            async with session_scope(self._factory) as session:
+                repo = RunRepository(session, actor)
+                stored = await repo.get_trace(claimed.run_id)
+                if stored is not None:
+                    await repo.record_success(stored, result)
+            await record_event("run.finished", outcome=result.outcome)
+
+        memory_on = not (options is not None and options.memory is False)
+        if self._episodic is not None and memory_on:
+            await record_episode(
+                self._factory, self._episodic, actor, claimed.run_id, claimed.goal, result
+            )
+        instruments().runs.add(1, safe_labels(outcome=result.outcome))
+        instruments().run_duration.record(
+            int((time.perf_counter() - started) * 1000), safe_labels(outcome=result.outcome)
+        )
 
         self.runs_completed += 1
         log_event(logger, "worker.completed", run_id=str(claimed.run_id))

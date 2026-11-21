@@ -833,3 +833,111 @@ eval's numbers a mixture of two series.
 503s outlast one retry in practice (then a second, longer attempt or a fallback provider); or
 flash-lite fails the complex goals of V1.10 on quality (then Groq or `gemini-3.5-flash` as the
 higher-quality model for the writer); or the free-tier limits change.
+
+---
+
+## ADR-015 — A run is recorded as it happens, attributed to its task, agent and purpose
+
+**Date** 2026-11-20 · **Status** Accepted (V1.7)
+
+### Context
+`GET /v1/runs/{id}` was meant to answer "what exactly happened". A survey for the demo page found
+it could not:
+- Model and tool calls were **batch-inserted when the run finished**, in one transaction, so they
+  shared one `created_at` and their order was arbitrary. A run in flight showed none of them.
+- No call said which task, which agent or what for: the planner, the router, a specialist, the
+  critic and synthesis were indistinguishable rows.
+- Routing decisions and critic verdicts were **never stored**; with planning on, the orchestrator's
+  result dropped even the in-memory ones.
+- A delegate's own calls and tokens were **discarded**, so `total_tokens` under-counted every
+  delegated run; failed task attempts and failed runs stored no calls at all.
+- Task rows recorded only terminal states, so a running or retrying task looked `PENDING`.
+
+### Problem
+Make the stored record complete enough to draw the run — its graph, its lanes, every call in order,
+every decision — while it runs and after, without changing what the agents do.
+
+### Options
+1. **Keep the batch, add columns.** Attribution, but still nothing until the end.
+2. **One append-only event table for everything**, calls included, as JSON.
+3. **Write the typed call rows as each call finishes**, plus a small event table for what has no
+   table, ordered by one shared sequence.
+
+### Decision
+**Option 3.**
+- A **call context** — task, task attempt, run attempt, agent, purpose — lives in a contextvar
+  beside the run id, changed only through a `call_scope(...)` that sets *and resets*.
+  `asyncio.wait_for` runs its coroutine in the same task on Python 3.14 and does not copy context,
+  so an un-reset `.set()` would leak into the caller and mislabel every later call.
+- `RecordingProvider` sits **inside** `RetryingProvider`: every real attempt — a failed 503, a 429
+  with its scope — is one `llm_calls` row, written in its own short transaction as the call returns.
+- Tool calls are recorded at `ToolUsingAgent._invoke`, the one point every tool outcome passes
+  through, NOT_FOUND included — which also covers delegates, revisions and the reconciler.
+- `run_events` holds only what has no table: plan created, task started / retrying / timed out /
+  finished, routed (agent and reason), critic verdict, delegation started / finished.
+- One Postgres sequence is the `DEFAULT` for a `seq` column on all three tables: a total order
+  across them, and a stable key for a client to diff on.
+
+### Why
+Option 1 leaves the page blind until the run ends — the opposite of "watch it live". Option 2
+throws away typed rows that the trace endpoint, its schemas and the eval's counts depend on, or
+duplicates them. Option 3 keeps every existing reader working and adds one writer per seam.
+
+The precedent is V1.1's `RunProgress`: short transactions around SQL only. **No model call ever runs
+inside an open session**, so a write per call never nests a pool checkout.
+
+### Tradeoffs
+- **More writes**: one small transaction per call. A run makes tens of calls; the cost is noise
+  next to a model round-trip, and it is measured by the existing latency figures, not assumed.
+- **A sequence is assigned at insert, not commit**, so concurrent tasks can commit out of order.
+  Clients therefore poll the **whole run** (a few hundred rows) rather than "everything after N" —
+  a cursor would skip a row that committed late.
+- `total_tokens` is now the **sum of stored calls**: it rises for delegated and retried runs,
+  because they were under-counted before. Not one series with earlier runs' figures.
+- No write is attempted for a call cancelled mid-flight (a task timeout); the timeout itself is an
+  event.
+
+### Consequences
+- The batch insert at the end of a run stays for agents that do not record live (tests' fake agents
+  and direct agents) and is skipped when live rows exist — not a global switch.
+- Failed runs keep their calls. Call metrics move into the recorder, so the worker emits them too.
+- Retrieval passages carry their chunk id, so a citation can open its source.
+
+### Reconsider if
+Runs grow to thousands of calls (then a cursor with commit-ordered ids, or server-sent events), or a
+second consumer needs the stream (then the event table becomes the interface, not an implementation
+detail).
+
+---
+
+## ADR-016 — Features are switchable per run, off only
+
+**Date** 2026-11-20 · **Status** Accepted (V1.7)
+
+### Context
+Planning, multi-agent, the critic, delegation and memory are environment flags read once at
+startup. The demo page is meant to show what each one does — the same goal with and without the
+critic — and restarting the server between runs is not a demo.
+
+### Decision
+`POST /v1/goals` and `/v1/goals/async` accept `options` — `planning`, `multi_agent`, `critic`,
+`delegation`, `memory`, each `true`, `false` or absent. **A run may switch off what the server
+enabled, never switch on what it disabled** (422): a server flag is an operator's cost or capability
+decision. Options are stored on the run (`runs.options`), so the worker applies them, the trace
+shows them, and an idempotent replay cannot change them.
+
+A run with options gets its own agent, built from the **shared** provider and tool registry —
+constructors do no I/O, and the worker already builds an agent per run. `memory: false` also skips
+episodic recording and the memory reconciler, which would otherwise write memory anyway.
+
+### Why
+Off-only keeps the server's configuration the ceiling. Allowing a request to turn on, say,
+delegation on a server that disabled it would make the environment file advisory.
+
+### Tradeoffs
+- Per-run construction is a small cost on every run that sends options.
+- Bounds (iterations, attempts, timeouts) are **not** per-run options: they are safety limits, and a
+  request lowering one is harmless but raising one is not — so none are exposed.
+
+### Reconsider if
+Options need to be per *user* rather than per run (that is authorization, not configuration).

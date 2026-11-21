@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     DateTime,
     Float,
     ForeignKey,
@@ -27,6 +28,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -115,6 +117,8 @@ class Run(Base):
     # a run enqueued with tracing off has no parent, and inventing one would be
     # worse than the gap.
     trace_parent: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Per-run feature switches (ADR-016). NULL means the server's defaults.
+    options: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -133,10 +137,13 @@ class Run(Base):
         back_populates="run", cascade="all, delete-orphan", order_by="Step.attempt"
     )
     llm_calls: Mapped[list[LLMCall]] = relationship(
-        back_populates="run", cascade="all, delete-orphan", order_by="LLMCall.created_at"
+        back_populates="run", cascade="all, delete-orphan", order_by="LLMCall.seq"
     )
     tool_calls: Mapped[list[ToolCallRow]] = relationship(
-        back_populates="run", cascade="all, delete-orphan", order_by="ToolCallRow.created_at"
+        back_populates="run", cascade="all, delete-orphan", order_by="ToolCallRow.seq"
+    )
+    events: Mapped[list[RunEvent]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", order_by="RunEvent.seq"
     )
 
     __table_args__ = (
@@ -371,6 +378,17 @@ class LLMCall(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    #: One sequence across llm_calls, tool_calls and run_events (ADR-015): the
+    #: order things happened in, which `created_at` could not give when a whole
+    #: run's rows shared one transaction.
+    seq: Mapped[int] = mapped_column(
+        BigInteger, server_default=text("nextval('run_record_seq')"), nullable=False
+    )
+    purpose: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    task_ref: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    task_attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    run_attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     run: Mapped[Run] = relationship(back_populates="llm_calls")
 
@@ -403,7 +421,52 @@ class ToolCallRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    #: One sequence across llm_calls, tool_calls and run_events (ADR-015): the
+    #: order things happened in, which `created_at` could not give when a whole
+    #: run's rows shared one transaction.
+    seq: Mapped[int] = mapped_column(
+        BigInteger, server_default=text("nextval('run_record_seq')"), nullable=False
+    )
+    purpose: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    task_ref: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    task_attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    run_attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     run: Mapped[Run] = relationship(back_populates="tool_calls")
 
     __table_args__ = (Index("idx_tool_calls_run", "run_id"),)
+
+
+class RunEvent(Base):
+    """Something that happened in a run and has no table of its own (ADR-015).
+
+    Routing decisions, critic verdicts, task starts and retries, delegation. Calls
+    are NOT events — they keep their typed tables, which the trace endpoint and
+    the evaluation read.
+    """
+
+    __tablename__ = "run_events"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(
+        BigInteger, server_default=text("nextval('run_record_seq')"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(48), nullable=False)
+    task_ref: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    task_attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    run_attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("clock_timestamp()")
+    )
+
+    run: Mapped[Run] = relationship(back_populates="events")
+
+    __table_args__ = (Index("idx_run_events_run_seq", "run_id", "seq"),)

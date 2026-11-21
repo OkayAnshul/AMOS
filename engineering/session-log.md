@@ -1409,3 +1409,38 @@ before its fix. `make eval` ×2 on live Gemini (above). `make attribution-check`
 
 ## Next Exact Step
 V1.7 — live run record and read API, ADR-015 and ADR-016 first.
+
+## Session 18, continued — V1.7 (2026-11-20/21)
+
+**Module:** V1.7 — live run record and read API (ADR-015, ADR-016)
+
+### What We Changed
+- Migration `9c1f0d7e2a14`: `run_record_seq`; `seq`, `purpose`, `agent`, `task_ref`,
+  `task_attempt`, `run_attempt` on both call tables; `run_events`; `runs.options`.
+- `observability.py` `CallContext` + `call_scope`; `database/recorder.py`; `llm/recording.py`
+  (inside the retry, and where call metrics are now counted).
+- Scopes and events in the orchestrator, executor (live task states), team (routing, verdicts,
+  revisions) and delegation (delegate costs kept).
+- `RunService` and the worker record live, accept options, share `record_episode`; one `RunStatus`.
+- Read API in `api/views.py` + routes; owner-scoped `rag/corpus.py`, `database/insights.py`;
+  global `database/usage.py`; uploads owner-aware in `rag/ingest.py`; quota settings.
+- Tests: `test_call_context.py`, `test_run_record.py`, `test_read_api.py`, worker options, delegate
+  cost, option mapping. Docs: ADR-015/016, `05`, `06`, `14`, `19`, interview `run-record.md`.
+
+### Problems Encountered
+1. A plan agent's review found the run id must keep one source, `wait_for` copies no context on
+   3.14, and an `after=` cursor can skip late commits — each changed the design before code.
+2. `RunStatus.RUNNING` did not exist in the repository's copy of the class.
+
+### Tests Performed
+`make check`: 698 passed, 2 skipped. Live: demo query 1 synchronously — 10 calls, 2 tool calls,
+13 events, attributed and ordered, `total_tokens` = stored sum, answer 100. Demo query 2 queued
+with `critic: false` — progress visible while polling, zero critic calls, citations with chunk ids.
+`make eval-baseline` on 880 chunks: 9/9, groundedness 1.00 — stored.
+
+### Things I Learned
+- A record written from a summary can only contain the summary.
+- A sequence orders inserts, not commits.
+
+### Next Exact Step
+V1.8 — the web page, ADR-017 first.

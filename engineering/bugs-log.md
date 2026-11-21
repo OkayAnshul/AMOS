@@ -812,3 +812,33 @@ not that the read reaches the path that runs.
 **Also fixed:** `registry or build_registry(...)` — `ToolRegistry` defines `__len__`, so an empty
 registry was falsy and silently replaced by the full tool set. Now `is None`.
 **Tests added:** two in `test_team.py` (failed before).
+
+---
+
+## 2026-11-20 — The run record could not reconstruct the run
+**Milestone:** found surveying for the demo page; fixed in V1.7 (ADR-015)
+**Symptom:** `GET /v1/runs/{id}` could not draw a run: no call order (one transaction, one
+`created_at`), no task/agent/purpose on any call, no routing decisions or critic verdicts, task
+`depends_on` as row UUIDs a client could not map, and nothing at all until the run finished.
+**Also under it:** a delegate's calls and tokens were **discarded** — `total_tokens` under-counted
+every delegated run; failed task attempts and failed runs stored no calls; the sync path never
+wrote `RUNNING`; the worker recorded no episodes and no metrics.
+**Root cause:** the record was written as a summary of the in-memory result, after the fact. Every
+gap was something the result object did not carry.
+**Fix:** record at the seams as it happens — `RecordingProvider` inside the retry, tool calls at
+`_invoke`, events for decisions, a shared sequence, totals summed from stored calls.
+**Lesson:** a record written from a summary can only contain the summary. Write it where things
+happen.
+**Tests added:** `test_run_record.py` (6), `test_call_context.py` (7), a delegate-cost test that
+failed without its fix.
+
+---
+
+## 2026-11-20 — Two `RunStatus` classes that disagreed
+**Milestone:** V1.7
+**Symptom:** `RunStatus.RUNNING` raised `AttributeError` from the repository module.
+**Root cause:** `database/repository.py` and `worker/queue.py` each defined `RunStatus`. The
+repository's had `EXECUTING` — never written anywhere — and lacked `QUEUED`, `RUNNING` and
+`DEAD_LETTER`, which the queue's had.
+**Fix:** one definition (the queue's), imported by the repository.
+**Lesson:** two definitions of one vocabulary drift by construction; the unused value was the tell.
