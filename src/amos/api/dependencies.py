@@ -10,8 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from amos.agents.agent import GroundedAgent
-from amos.agents.sourcing import RecordedSources
 from amos.agents.schemas import OPTION_SETTINGS, RunOptions
+from amos.agents.sourcing import RecordedSources
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent, build_default_registry
 from amos.budget import RunBudget
