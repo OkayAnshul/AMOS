@@ -1651,3 +1651,76 @@ button.row:hover {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Findings (ADR-022): what each researcher found, and what code made of it. */
+.findings {
+  display: grid;
+  gap: 14px;
+}
+
+.findings-lede {
+  margin: 0;
+  color: var(--ink-2);
+  max-width: 72ch;
+}
+
+.finding-group {
+  border-left: 3px solid var(--c);
+}
+
+.finding-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px 6px;
+  font-size: 0.86em;
+  color: var(--ink-2);
+}
+
+.finding-task {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.finding-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.group > .row.finding::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.row.finding {
+  align-items: flex-start;
+}
+
+.row.finding .status {
+  margin-top: 2px;
+}
+
+.finding-quote {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink-2);
+  font-style: italic;
+  font-size: 0.92em;
+  line-height: 1.45;
+}
+
+.finding.doubtful .row-title {
+  color: var(--ink-2);
+}
+
+.quote-mark {
+  background: color-mix(in srgb, var(--researcher, #5856d6) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+  outline: 1px solid color-mix(in srgb, var(--researcher, #5856d6) 45%, transparent);
+}

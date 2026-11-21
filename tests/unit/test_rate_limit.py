@@ -68,7 +68,29 @@ def test_build_provider_limits_below_the_published_quota() -> None:
     from amos.api.dependencies import build_provider
     from tests.conftest import isolated_settings
 
-    provider = build_provider(isolated_settings(llm_minute_request_limit=15))
+    provider = build_provider(
+        isolated_settings(llm_minute_request_limit=15, fallback_llm_model="", groq_api_key="")
+    )
     limited = provider.inner  # type: ignore[attr-defined]
     assert isinstance(limited, RateLimitedProvider)
     assert limited._limiter.per_minute == 14
+
+
+def test_build_provider_assembles_the_fallback_chain_in_order() -> None:
+    """ADR-021: Gemini primary, the Gemini fallback model, Groq — each with its own limiter."""
+    from amos.api.dependencies import build_provider
+    from amos.llm.fallback import FallbackProvider, model_of
+    from tests.conftest import isolated_settings
+
+    provider = build_provider(
+        isolated_settings(fallback_llm_model="gemma-4-26b-a4b-it", groq_api_key="test-groq")
+    )
+    chain = provider.inner  # type: ignore[attr-defined]
+    assert isinstance(chain, FallbackProvider)
+    assert [f"{m.name}/{model_of(m)}" for m in chain.members] == [
+        "gemini/fake-model",
+        "gemini/gemma-4-26b-a4b-it",
+        "groq/openai/gpt-oss-120b",
+    ]
+    limiters = {id(m._limiter) for m in chain.members}  # type: ignore[attr-defined]
+    assert len(limiters) == 3, "each model has its own per-minute quota"

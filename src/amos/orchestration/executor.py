@@ -20,7 +20,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from amos.agents.schemas import AgentResponse, AgentResult, Confidence
+from amos.agents.findings import check_findings, read_texts
+from amos.agents.schemas import AgentResponse, AgentResult, Confidence, FindingStatus
 from amos.agents.sourcing import sources_in
 from amos.database.recorder import record_event
 from amos.errors import (
@@ -221,11 +222,24 @@ class Executor:
             )
 
     def _promote_ready(self, tasks: dict[str, TaskExecution]) -> None:
-        """PENDING → READY once every dependency has succeeded."""
+        """PENDING → READY once its dependencies allow it.
+
+        One dependency: it must have succeeded. Two or more — a task that
+        combines results — all must have finished and at least one succeeded
+        (ADR-023): two good research tasks are worth a plan that says what the
+        third would have added; skipping it threw that work away.
+        """
         for task in tasks.values():
             if task.state is not TaskState.PENDING:
                 continue
-            if all(tasks[dep].state is TaskState.SUCCEEDED for dep in task.depends_on):
+            states = [tasks[dep].state for dep in task.depends_on]
+            every_input = all(s is TaskState.SUCCEEDED for s in states)
+            enough_inputs = (
+                len(states) >= 2
+                and all(s is TaskState.SUCCEEDED or s in UNRECOVERABLE_STATES for s in states)
+                and any(s is TaskState.SUCCEEDED for s in states)
+            )
+            if every_input or enough_inputs:
                 task.transition(TaskState.READY)
 
     def _skip_unreachable(self, tasks: dict[str, TaskExecution]) -> list[TaskExecution]:
@@ -241,9 +255,13 @@ class Executor:
         while changed:
             changed = False
             for task in tasks.values():
-                if task.state in (TaskState.PENDING, TaskState.READY) and any(
-                    tasks[dep].state in UNRECOVERABLE_STATES for dep in task.depends_on
-                ):
+                failed = [d for d in task.depends_on if tasks[d].state in UNRECOVERABLE_STATES]
+                # A combining task is unreachable only when none of its inputs can
+                # arrive (ADR-023); a single-input task, as soon as its input fails.
+                unreachable = bool(failed) and (
+                    len(task.depends_on) < 2 or len(failed) == len(task.depends_on)
+                )
+                if task.state in (TaskState.PENDING, TaskState.READY) and unreachable:
                     blocker = next(
                         dep for dep in task.depends_on if tasks[dep].state in UNRECOVERABLE_STATES
                     )
@@ -266,6 +284,9 @@ class Executor:
             await self._attempt(task, tasks)
 
     async def _attempt(self, task: TaskExecution, tasks: dict[str, TaskExecution]) -> None:
+        missing = [d for d in task.depends_on if tasks[d].state is not TaskState.SUCCEEDED]
+        if missing and task.attempt_count == 0:
+            await record_event("task.partial_inputs", missing=missing)
         task.transition(TaskState.RUNNING)
         task.attempt_count += 1
         # Written live since V1.7, so a running task does not look PENDING.
@@ -311,6 +332,17 @@ class Executor:
             await self._handle_failure(task, retryable=retryable)
             return
 
+        if result.response.findings and read_texts(result.tool_outcomes):
+            # Each quote looked for in what this task read (ADR-022). Code, not a
+            # model. A task that read nothing — the analyst, the writer — has
+            # nothing to check against; its "findings" are not research.
+            result.findings = check_findings(result.response.findings, result.tool_outcomes)
+            await record_event(
+                "findings.checked",
+                total=len(result.findings),
+                checked=sum(f.status is FindingStatus.CHECKED for f in result.findings),
+                findings=[f.model_dump(mode="json") for f in result.findings[:30]],
+            )
         task.result = result
         task.llm_calls.extend(result.llm_calls)
         task.tool_outcomes.extend(result.tool_outcomes)
@@ -370,6 +402,15 @@ class Executor:
         context = []
         for dep in task.depends_on:
             upstream = tasks[dep]
+            if upstream.result is None:
+                # A combining task running on partial inputs is told what is missing
+                # and why, so it can say so rather than paper over it (ADR-023).
+                context.append(
+                    f"- {dep}: {upstream.description}\n  DID NOT FINISH"
+                    f" ({upstream.error or upstream.state.value}). Work without it, and say"
+                    " plainly what is missing because of it."
+                )
+                continue
             if upstream.result is not None:
                 # The task's id and the sources it read travel with its result
                 # (V1.10), so a writer can cite a url — or the task itself, for a
@@ -382,9 +423,8 @@ class Executor:
                         for source in sources_in(outcome.output, outcome.name)
                     }
                 )
-                line = (
-                    f"- {dep}: {upstream.description}\n  Result: {upstream.result.response.answer}"
-                )
+                line = f"- {dep}: {upstream.description}" + _findings_block(upstream.result)
+                line += f"\n  Result: {upstream.result.response.answer}"
                 if sources:
                     line += "\n  Sources it read: " + ", ".join(sources[:12])
                 context.append(line)
@@ -463,3 +503,30 @@ def is_retryable(exc: AmosError) -> bool:
     if isinstance(exc, ProviderRateLimitError):
         return exc.details.get("quota_scope") != "day"
     return True
+
+
+#: Findings handed on per task: enough for a dozen named items, bounded for the writer's prompt.
+MAX_HANDED_FINDINGS = 15
+
+
+def _findings_block(result: AgentResult) -> str:
+    """A task's findings for the tasks that depend on it (ADR-022).
+
+    Checked findings are handed on as facts, with the source the quote was found
+    on — corrected, if the agent cited the wrong page. The rest are kept, under a
+    heading that says they are not confirmed: dropping them would hide work, and
+    passing them as facts would launder them.
+    """
+    checked = result.findings
+    if not checked:
+        return ""
+    confirmed = [f for f in checked if f.status is FindingStatus.CHECKED][:MAX_HANDED_FINDINGS]
+    doubtful = [f for f in checked if f.status is not FindingStatus.CHECKED][:MAX_HANDED_FINDINGS]
+    block = ""
+    if confirmed:
+        block += "\n  Findings (each quote was found on its source by code; use these as facts):"
+        block += "".join(f"\n    - {f.fact} (source: {f.found_in or f.source})" for f in confirmed)
+    if doubtful:
+        block += "\n  Not confirmed on any page it read (do not present as fact):"
+        block += "".join(f"\n    - {f.fact} (claimed source: {f.source})" for f in doubtful)
+    return block

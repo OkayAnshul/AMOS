@@ -3,11 +3,13 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-11-21 (Session 18 — V1.6 reliability, V1.7 live run record, V1.8 the web page, V1.9 web research, V1.10 complex goals; the track re-planned)
+**Last updated:** 2026-11-22 (Session 19 — V1.11 research quality and a fallback chain)
 
 ## Current Version
-**V1.10 — Complex goals**, the sixth milestone of the demo track (V1.5–V2.0, `docs/19-roadmap.md`,
-**re-planned 2026-11-20**; next: V2.0 demo package). The V0.1–V1.0 roadmap is complete.
+**V1.11 — Research quality and a fallback chain**, the seventh milestone of the demo track (V1.5–V2.0,
+`docs/19-roadmap.md`; next: V2.0 demo package). A fallback chain (Gemini flash-lite → Gemma 4 → Groq),
+quoted findings checked in code with a reader step, a search cap, focused page reading, and combining
+tasks that run on partial inputs (ADR-021–023). The V0.1–V1.0 roadmap is complete.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -18,7 +20,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
 V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
-V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · V1.7 live run record and read API · V1.8 mission control web page · V1.9 web research · **V1.10 complex goals**
+V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · V1.7 live run record and read API · V1.8 mission control web page · V1.9 web research · V1.10 complex goals · **V1.11 research quality and a fallback chain**
 
 ## What Works
 ```

@@ -29,7 +29,7 @@ const PRESETS = [
   ["Recall it", "When is my project review?"],
   [
     "Plan a Goa trip",
-    "Plan a 3-day Goa trip under ₹15,000: find typical hostel, food and transport costs, then split the budget per day.",
+    "Plan a 3-day trip to North Goa for one person with a total budget of ₹15,000: find named hostels, places to eat and ways to get around, with their prices, then build a day-by-day plan with costs.",
   ],
   [
     "Compare two queues",
@@ -64,6 +64,7 @@ const PURPOSE = {
   router: "Router",
   agent: "Agent",
   revision: "Revision",
+  reader: "Reader",
   critic: "Critic",
   synthesis: "Combine",
   delegate: "Delegate",
@@ -528,6 +529,9 @@ function drawBody(trace) {
   const answerCol = h("div");
   const evidenceCol = h("div");
 
+  const checks = trace.events.filter((e) => e.kind === "findings.checked");
+  if (checks.length) body.append(...section("Findings", findingsView(trace, checks)));
+
   if (trace.result) {
     const r = trace.result;
     answerCol.append(
@@ -685,6 +689,96 @@ function drawBody(trace) {
   body.append(...section("Activity", h("div", { class: "group feed" }, feedRows(trace))));
 }
 
+const FINDING_STATUS = {
+  checked: "quote found on the page",
+  quote_not_found: "quote not found on any page this task read",
+  figure_not_in_quote: "the figure is not in the quote",
+};
+
+// What each researcher found, and what code made of it (ADR-022). Appears as
+// each research task finishes, while later tasks are still working.
+function findingsView(trace, checks) {
+  const total = checks.reduce((n, e) => n + (e.payload.total || 0), 0);
+  const checked = checks.reduce((n, e) => n + (e.payload.checked || 0), 0);
+  return h(
+    "div",
+    { class: "findings" },
+    h(
+      "p",
+      { class: "findings-lede" },
+      `${checked} of ${total} quotes were found, word for word, on the pages the researchers read. Only those reach the writer as facts. Select one to see it on its page.`,
+    ),
+    checks.map((e) => {
+      const agent = e.agent || "researcher";
+      return h(
+        "div",
+        { class: "group finding-group", style: { "--c": laneColor(agent) } },
+        h(
+          "div",
+          { class: "finding-head" },
+          h("span", { class: "dot", style: { background: laneColor(agent) } }),
+          h("span", { class: "finding-task" }, `Task ${e.task_ref}`),
+          h("span", { class: "finding-count" }, `${e.payload.checked} of ${e.payload.total} checked`),
+        ),
+        (e.payload.findings || []).map((f) => findingRow(trace, f)),
+      );
+    }),
+  );
+}
+
+function findingRow(trace, f) {
+  const ok = f.status === "checked";
+  const where = f.found_in || f.source;
+  const note = ok ? (f.source_seen ? "" : "found on a different page than the one cited") : FINDING_STATUS[f.status] || f.status;
+  return h(
+    "button",
+    { class: `row finding${ok ? "" : " doubtful"}`, type: "button", onclick: () => openFindingSource(trace, where, f) },
+    h("span", { class: `status ${ok ? "ok" : "warn"}`, title: FINDING_STATUS[f.status] }, icon(ok ? "check" : "half")),
+    h(
+      "div",
+      { class: "row-label" },
+      h("div", { class: "row-title" }, f.fact),
+      h("q", { class: "finding-quote" }, f.quote),
+      h("div", { class: "row-sub" }, [hostOf(where), note].filter(Boolean).join(", ")),
+    ),
+  );
+}
+
+function hostOf(source) {
+  try {
+    return new URL(source).hostname.replace(/^www\./, "");
+  } catch {
+    return source;
+  }
+}
+
+// The tool call a finding's source came from: the page read, the search that
+// listed it, or the document passage. Opened with the quote marked.
+function openFindingSource(trace, source, finding) {
+  const same = (a, b) => Boolean(a && b) && a.replace(/\/$/, "").toLowerCase() === b.replace(/\/$/, "").toLowerCase();
+  const page = trace.tool_calls.find((t) => t.tool_name === "fetch_page" && t.output && (same(t.output.url, source) || same(t.output.final_url, source)));
+  if (page) return select({ type: "tool", item: page, quote: finding.quote });
+  for (const t of trace.tool_calls) {
+    if (t.tool_name === "search_knowledge" && t.output) {
+      const passage = (t.output.passages || []).find((p) => same(p.citation, source));
+      if (passage) return openChunk(passage);
+    }
+  }
+  const search = trace.tool_calls.find((t) => t.tool_name === "web_search" && (t.output?.results || []).some((r) => same(r.url, source)));
+  if (search) return select({ type: "tool", item: search });
+  const event = trace.events.find((e) => e.kind === "findings.checked" && (e.payload.findings || []).includes(finding));
+  return select({ type: "event", item: event || trace.events[trace.events.length - 1] });
+}
+
+// Where the page says the quote: the words in order, any spacing, any case.
+function quoteSpan(text, quote) {
+  const first = String(quote || "").split(/\.\.\.|…/)[0].trim();
+  const words = first.split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (words.length < 2) return null;
+  const match = new RegExp(words.join("\\s+"), "i").exec(text);
+  return match ? [match.index, match.index + match[0].length] : null;
+}
+
 function collectCitations(trace) {
   const seen = new Map();
   for (const call of trace.tool_calls) {
@@ -706,6 +800,7 @@ function describe(item, trace) {
       router: "Router chose an agent",
       agent: `${who} thought`,
       revision: `${who} revised the answer`,
+      reader: `${who} pulled the facts out of what it read`,
       critic: "Critic reviewed the answer",
       synthesis: "Combined the task results",
       delegate: `${who} worked on a delegation`,
@@ -753,6 +848,9 @@ function describe(item, trace) {
     "delegation.started": `${capitalise(p.source)} asked ${capitalise(p.target)} for help`,
     "delegation.finished": `${capitalise(p.target)} answered ${capitalise(p.source)}`,
     "provider.throttled": `Waited ${ms((p.waited_seconds || 0) * 1000)} for Gemini's per-minute limit (${p.per_minute} a minute)`,
+    "provider.fallback": `${(p.failed || []).join(", ")} could not answer, so ${p.answered} did`,
+    "findings.checked": `${ref}findings: ${p.checked} of ${p.total} quotes found on their pages`,
+    "task.partial_inputs": `${ref}started without ${(p.missing || []).join(", ")}, which did not finish`,
     "sources.checked": p.unseen?.length
       ? `Citation check: ${p.unseen.length} source${p.unseen.length === 1 ? "" : "s"} this run never saw`
       : `Citation check: all ${p.cited} cited sources were seen in this run`,
@@ -1073,10 +1171,23 @@ function refreshInspector() {
     );
     if (t.error) body.append(h("div", { class: "inspector-subtitle" }, "Error"), h("div", { class: "passage" }, t.error));
     if (t.tool_name === "fetch_page" && t.output?.text) {
+      const text = t.output.text;
+      const span = sel.quote ? quoteSpan(text, sel.quote) : null;
+      let passage;
+      if (span) {
+        // A window around the quote, so the marked words are on screen.
+        const from = Math.max(0, span[0] - 1200);
+        const to = Math.min(text.length, span[1] + 2400);
+        const mark = h("mark", { class: "quote-mark" }, text.slice(span[0], span[1]));
+        passage = h("div", { class: "passage" }, from ? "… " : "", text.slice(from, span[0]), mark, text.slice(span[1], to), to < text.length ? " …" : "");
+        requestAnimationFrame(() => mark.scrollIntoView({ block: "center", behavior: "smooth" }));
+      } else {
+        passage = h("div", { class: "passage" }, text.slice(0, 6000) + (text.length > 6000 ? " …" : ""));
+      }
       body.append(
-        h("div", { class: "inspector-subtitle" }, "Page text, untrusted"),
+        h("div", { class: "inspector-subtitle" }, sel.quote ? (span ? "The quote, marked where the page says it" : "Page text; the quote's exact spelling differs here") : "Page text, untrusted"),
         h("p", null, h("a", { href: t.output.url, target: "_blank", rel: "noopener noreferrer" }, t.output.url)),
-        h("div", { class: "passage" }, t.output.text.slice(0, 6000) + (t.output.text.length > 6000 ? " …" : "")),
+        passage,
       );
       return;
     }
@@ -1316,10 +1427,15 @@ async function systemPage() {
           h(
             "div",
             { class: "group" },
-            row("Provider", capitalise(sys.provider.name)),
-            row("Model", sys.provider.model),
+            (sys.provider.chain || [{ provider: sys.provider.name, model: sys.provider.model, role: "primary" }]).map((m, n) =>
+              row(
+                n === 0 ? "First" : `Then, if busy`,
+                `${capitalise(m.provider)} ${m.model}`,
+                [m.per_minute ? `${m.per_minute} a minute` : "", m.preferred_by?.length ? `tried first by the ${m.preferred_by.join(" and ")}` : ""].filter(Boolean).join(", "),
+              ),
+            ),
             row("Embeddings", `${sys.provider.embedding_model}, ${sys.provider.embedding_dimensions} dimensions`),
-            row("On a 5xx", "one retry, inside the call's deadline"),
+            row("On a 5xx", "one retry, then the next model, inside the call's deadline"),
           ),
         ),
         ...section(
@@ -1342,8 +1458,9 @@ async function systemPage() {
             row("Provider busy (503) today", count(q.unavailable_today)),
             row("Tokens today", count(q.tokens_today)),
             row("Resets", q.resets),
+            (q.by_model || []).map((m) => row(`${capitalise(m.provider)} ${m.model}`, `${count(m.calls)} calls`, m.failed ? `${count(m.failed)} did not answer` : null)),
           ),
-          h("div", { class: "group-foot" }, q.note),
+          h("div", { class: "group-foot" }, `The meter counts ${q.model || "the primary model"}, whose daily quota it is. ${q.note}`),
         ),
         ...section(
           "Features",

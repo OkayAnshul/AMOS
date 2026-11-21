@@ -511,3 +511,74 @@ async def test_a_dependents_material_carries_the_task_id_and_its_sources() -> No
     material = next(g for g in runner.goals if g.startswith("do t2"))
     assert "- t1: do t1" in material
     assert "Sources it read: https://hostels.example/goa" in material
+
+
+# ---------- partial inputs for combining tasks (ADR-023) ----------
+
+
+class FailsStartingWith:
+    """Fails a task by its own description, not by text in its context."""
+
+    def __init__(self, *prefixes: str) -> None:
+        self.prefixes = prefixes
+        self.goals: list[str] = []
+
+    async def run(self, goal: str) -> AgentResult:
+        self.goals.append(goal)
+        if goal.startswith(self.prefixes):
+            raise ProviderTimeoutError("boom")
+        return result()
+
+
+async def test_a_task_combining_several_results_runs_on_what_arrived() -> None:
+    """Two good research tasks are worth a plan that says what the third would add."""
+    runner = FailsStartingWith("do t2")
+    report = await Executor(runner, max_attempts=1, sleep=no_sleep).execute(
+        make_plan(task("t1"), task("t2"), task("t3", "t1", "t2"))
+    )
+    assert by_ref(report) == {
+        "t1": TaskState.SUCCEEDED,
+        "t2": TaskState.PERMANENTLY_FAILED,
+        "t3": TaskState.SUCCEEDED,
+    }
+    assert report.outcome == RunOutcome.PARTIALLY_COMPLETED
+    combining = next(g for g in runner.goals if g.startswith("do t3"))
+    assert "t2: do t2\n  DID NOT FINISH" in combining
+    assert "say plainly what is missing" in combining
+
+
+async def test_a_combining_task_waits_for_all_its_inputs_to_finish() -> None:
+    """It runs on partial inputs only once nothing more can arrive."""
+    order: list[str] = []
+
+    class Slow:
+        async def run(self, goal: str) -> AgentResult:
+            order.append(goal.split("\n")[0])
+            if goal.startswith("do t2"):
+                raise ProviderTimeoutError("boom")
+            if goal.startswith("do t1"):
+                await asyncio.sleep(0.01)
+            return result()
+
+    await Executor(Slow(), max_attempts=1, sleep=no_sleep).execute(
+        make_plan(task("t1"), task("t2"), task("t3", "t1", "t2"))
+    )
+    assert order[-1] == "do t3"
+
+
+async def test_a_combining_task_with_no_inputs_left_is_skipped() -> None:
+    runner = FailsStartingWith("do t1", "do t2")
+    report = await Executor(runner, max_attempts=1, sleep=no_sleep).execute(
+        make_plan(task("t1"), task("t2"), task("t3", "t1", "t2"))
+    )
+    assert by_ref(report)["t3"] is TaskState.SKIPPED
+
+
+async def test_a_task_on_one_input_still_needs_it() -> None:
+    runner = FailsStartingWith("do t1")
+    report = await Executor(runner, max_attempts=1, sleep=no_sleep).execute(
+        make_plan(task("t1"), task("t2"), task("t3", "t1"), task("t4", "t2", "t3"))
+    )
+    states = by_ref(report)
+    assert states["t3"] is TaskState.SKIPPED, "a single-input task needs its input"
+    assert states["t4"] is TaskState.SUCCEEDED, "t4 combines t2 (ok) and t3 (skipped)"

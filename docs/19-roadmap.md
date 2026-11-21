@@ -522,7 +522,7 @@ planning goals answered with citations, watched live on a web page, and explaine
 unaided. Authorization, TLS and rate limiting stay out — localhost, one presenter.
 
 ```
-V1.5 foundation ─→ V1.6 reliability ─→ V1.7 run record ─→ V1.8 web page ─→ V1.9 web research ─→ V1.10 complex goals ─→ V2.0 demo
+V1.5 foundation ─→ V1.6 reliability ─→ V1.7 run record ─→ V1.8 web page ─→ V1.9 web research ─→ V1.10 complex goals ─→ V1.11 research quality ─→ V2.0 demo
 ```
 
 **Re-planned 2026-11-20** (`engineering/decisions-log.md`): the whole track built in one plan, the
@@ -538,6 +538,7 @@ because the page could not show what it was asked to show.
 | V1.8 Mission control web page ✅ | 2 sessions | ADR-017 | `demo-surface.md` |
 | V1.9 Web research (SearXNG) ✅ | 1 session | ADR-018, ADR-019 | `web-research.md` |
 | V1.10 Complex goals ✅ | 1 session | ADR-020 | `synthesis.md` |
+| V1.11 Research quality and a fallback chain ✅ | 1 session | ADR-021–023 | `research-quality.md` |
 | V2.0 Demo package and release | ½ session + two rehearsals | — | — |
 | **Total** | **≈ 8 sessions** | | |
 
@@ -624,6 +625,14 @@ live opt-in test.
 - 4–6 complex golden goals with deterministic checks.
 **Accept** golden goals pass on fixtures; demo queries 8 and 9 of `docs/26-project-explainer.md`
 pass live.
+
+### V1.11 — Research quality and a fallback chain ✅ (2026-11-22)
+**Objective** A complex goal produces specific, checked facts — and survives a busy provider.
+- A fallback chain: Gemini flash-lite → Gemma 4 → Groq `gpt-oss-120b`; the planner and writer
+  prefer Groq (ADR-021).
+- Quoted findings checked in code and handed on as facts; a reader step (ADR-022).
+- A search cap in code, focused page reading, combining tasks on partial inputs (ADR-023).
+**Accept** the Goa preset, live: every task succeeds, findings checked, named items with prices.
 
 ### V2.0 — Demo package and release
 - `make demo`: checks database, migrations, corpus, keys, SearXNG and quota headroom; seeds memory;

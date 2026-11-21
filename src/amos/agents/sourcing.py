@@ -36,14 +36,36 @@ def normalise(source: str) -> str:
 
 def cited(text: str) -> set[str]:
     """Every source a deliverable cites: `(source: …)` markers (several may be
-    separated by `;` or `,`) and bare URLs."""
+    separated by `;` or `,`), bare URLs, and the cells of a table's Source column
+    (ADR-022 — a live run reported "cited 0" for a fully sourced table)."""
     sources: set[str] = set()
-    for marker in _MARKER.findall(text or ""):
+    for marker in [*_MARKER.findall(text or ""), *table_sources(text or "")]:
         for part in re.split(r"\s*[;,]\s*|\s+and\s+", marker):
-            if part.strip():
+            if part.strip() and part.strip() not in {"-", "–", "—"}:
                 sources.add(part.strip())
     sources.update(_URL.findall(text or ""))
     return {s for s in (normalise(x) for x in sources) if s}
+
+
+def table_sources(text: str) -> list[str]:
+    """The cells under a "Source" or "Sources" header, in every markdown table."""
+    found: list[str] = []
+    column: int | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            column = None
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if column is None:
+            names = [c.strip("* ").lower() for c in cells]
+            column = next((i for i, n in enumerate(names) if n in {"source", "sources"}), -1)
+            continue
+        if column < 0 or len(cells) <= column or set(cells[column]) <= set("-: "):
+            continue
+        cell = re.sub(r"\[([^\]]*)\]\(([^)]+)\)", r"\2", cells[column])  # [text](url) -> url
+        found.append(cell.strip("* "))
+    return found
 
 
 def unseen(text: str, seen: set[str]) -> list[str]:

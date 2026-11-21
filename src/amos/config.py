@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from amos.errors import ConfigurationError
@@ -159,6 +159,30 @@ class Settings(BaseSettings):
             "or a legitimately running task has its run reclaimed underneath it."
         ),
     )
+    # V1.11 fallback chain (ADR-021): Gemini primary, a Gemini fallback model,
+    # then Groq on separate infrastructure. Empty values switch a member off.
+    fallback_llm_model: str = Field(
+        default="gemma-4-26b-a4b-it",
+        description="Second Gemini model, with its own quota. Empty: none.",
+    )
+    fallback_llm_minute_limit: int = Field(default=30, ge=1)
+    groq_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AMOS_GROQ_API_KEY", "GROQ_API_KEY"),
+        description="Groq key, for the last fallback and the writer. Empty: no Groq.",
+    )
+    groq_model: str = Field(default="openai/gpt-oss-120b")
+    groq_minute_request_limit: int = Field(default=30, ge=1)
+    writer_provider: str = Field(
+        default="groq",
+        description="The provider the writer tries first (ADR-021). Empty: the chain's order.",
+    )
+    planner_provider: str = Field(
+        default="groq",
+        description="The provider the planner tries first: the plan decides the whole run's "
+        "quality (ADR-021). Empty: the chain's order.",
+    )
+
     # V1.9 web research (ADR-018) and the per-run budget (ADR-019).
     web_enabled: bool = Field(
         default=False,

@@ -133,7 +133,7 @@ After V1.7–V1.8 (web search and complex goals):
 
 | # | Goal | What it shows |
 |---|---|---|
-| 8 | Plan a 3-day Goa trip under ₹15,000: find typical hostel, food and transport costs, then split the budget per day. | all three agents, web citations, arithmetic, the critic rejecting unsourced costs |
+| 8 | Plan a 3-day trip to North Goa for one person with a total budget of ₹15,000: find named hostels, places to eat and ways to get around, with their prices, then build a day-by-day plan with costs. | all three agents, web citations, arithmetic, the critic rejecting unsourced costs |
 | 9 | Compare PostgreSQL LISTEN/NOTIFY and Redis Streams for a job queue and recommend one for a single-machine project. | research → comparison table → reasoned recommendation |
 
 ## Talk track — six points

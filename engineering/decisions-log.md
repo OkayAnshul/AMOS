@@ -661,3 +661,22 @@ ADR-019's budget is — but it is what made the same question converge in 9 call
 
 **Web is off by default** (`AMOS_WEB_ENABLED=false`): it needs a running SearXNG, and the eval's
 golden goals are about AMOS's own documentation.
+
+---
+
+## 2026-11-22 — V1.11: a second provider, quoted findings, research that reads
+
+**A fallback chain, not more keys** (ADR-021). Asked whether several free keys could be rotated:
+no — Google's terms forbid working around documented limits, and keys in one project share a quota.
+Gemma 4 (own quota) and Groq (own infrastructure) sit behind flash-lite instead. ADR-014's deferral
+of Groq is revisited because both of its reconsider-if conditions happened.
+
+**The hand-off carries quoted findings, checked in code** (ADR-022), and a **reader** step extracts
+them — a separate call, because a small model at the end of a tool loop extracts lazily.
+
+**Research that reads** (ADR-023): a search cap in code, focused pages, and combining tasks that run
+on partial inputs. The cap moved from prompt to code because the prompt was measured being ignored.
+
+**The planner and writer prefer Groq** — the two calls that decide a run's quality and call no tools.
+**The quota meter counts its own model** now that a run spends three quotas.
+

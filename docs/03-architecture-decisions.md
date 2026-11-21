@@ -1148,3 +1148,154 @@ was researched.
 The writer needs a fact mid-composition often enough that a research round-trip becomes the norm
 (then let it delegate to the researcher), or the citation check produces false alarms on legitimate
 sources (then the source ledger is missing a tool).
+
+---
+
+## ADR-021 — A fallback chain of models, and a stronger model for the writer
+
+**Date** 2026-11-22 · **Status** Accepted (V1.11) · **Revisits** ADR-014's deferral of a second provider
+
+### Context
+ADR-014 deferred a second provider: one retry cleared most of Gemini's 503s, and flash-lite's 500
+calls a day were enough. Both assumptions broke in the demo's own workloads. A live complex goal
+lost a task to 503s that outlasted the retry, and a probe on 2026-11-22 found **every** Gemini model
+overloaded at once — flash, both Gemma 4 models, and flash-lite. ADR-014's *reconsider if* named both
+triggers: "503s outlast one retry in practice", and "flash-lite fails the complex goals on quality".
+The Goa plan, even when it completed, was generic; part of the cause is the smallest model writing it.
+
+### Options
+1. **More keys or accounts on Gemini's free tier.** Refused: Google's API terms forbid circumventing
+   documented limits, and keys in one project share its quota anyway.
+2. **A second Gemini model** as a fallback. Its own quota (Gemma 4: 14,400 a day), no new code — but
+   the same infrastructure, so it does not help when Google is overloaded.
+3. **A second provider, Groq**, on separate infrastructure, over its OpenAI-compatible API with
+   `httpx` (already a dependency) — no SDK.
+4. **Both**, as an ordered chain.
+
+### Decision
+**Option 4.** `FallbackProvider` tries, in order: the Gemini primary (`flash-lite`), a Gemini
+fallback model (`gemma-4-26b-a4b-it`, measured to answer structured output), then Groq
+(`openai/gpt-oss-120b`). A call moves to the next member on a 503, a rate limit or a timeout with time
+still left in the caller's deadline — **shared across the chain**, so ADR-009's bounds still hold. The
+whole chain sits inside ADR-014's single retry; each member has its own rate limiter and is recorded
+on its own row, so the page shows which model answered.
+
+**One rule the chain must keep:** a conversation whose tool calls came from one model cannot continue
+on a *different Gemini* model — Gemini 3 rejects function calls in its history that carry no
+signature it made. Groq accepts any history. So once a tool loop has a tool call from model M, Gemini
+members other than M are skipped for the rest of that loop; Groq can always take over. Checked in
+code on every call, from the model recorded on each turn.
+
+**The writer prefers Groq.** It has no tools, so no signature question arises, and `gpt-oss-120b` is a
+far stronger writer than flash-lite. If Groq fails, the writer falls back down the same chain.
+
+Groq specifics, read from its documentation on the day: `openai/gpt-oss-120b` allows 30 requests and
+8,000 tokens a minute, 1,000 requests and 200,000 tokens a day; it supports tool use but not parallel
+tool calls; **structured output cannot be combined with tools**, so with tools the schema is stated in
+the instruction and the answer parsed, and without tools `json_schema` is used.
+
+### Tradeoffs
+- **Answers can come from different models within one run.** The record says which, per call.
+- Groq's 8,000 tokens a minute make it slow for large prompts; it is a fallback and a writer, not
+  the workhorse.
+- A second provider is a second contract to keep working; both pass the same test suite on fixtures.
+- Gemma's tool calling is unmeasured (it returned 503 when probed); it is used where it was measured.
+
+### Reconsider if
+Groq's free tier changes, Gemini's capacity problems stop, or the writer's output is not measurably
+better on the complex goals than flash-lite's.
+
+---
+
+## ADR-022 — The hand-off carries quoted findings, checked in code
+
+**Date** 2026-11-22 · **Status** Accepted (V1.11) · **Builds on** ADR-018 (provenance), ADR-020 (citations)
+
+### Context
+A researcher reads a page of 20,000 characters and hands on two or three sentences. Everything else
+it read is gone before the analyst or the writer starts, so the deliverable can only be as specific
+as that summary — the measured cause of the generic Goa plans (one named hostel, "typical" transport,
+no food). The citation check could not help: it proves a cited URL was *seen*, not that the page
+*says* the figure, and it missed citations written in a table's Source column (a live run reported
+"cited 0" for a fully sourced table).
+
+### Options
+1. **Pass the raw pages on.** Nothing lost, but three pages per task is ~13,000 tokens per hand-off:
+   over Groq's 8,000 tokens a minute, and a writer drowning in boilerplate.
+2. **Ask for a longer summary.** Cheaper, but still a paraphrase nobody can check.
+3. **Findings with quotes.** Each researcher returns a list of `{fact, quote, source}`: the fact
+   with its figure, the **exact words** on the page that state it, and the URL. Code checks every
+   quote against the text that task actually read.
+
+### Decision
+**Option 3.** `AgentResponse.findings` is optional, so agents that compute or compose leave it
+empty. After a task succeeds the executor checks each finding against that task's own tool
+outputs — page text, search snippets, document passages — after normalising case, spacing, quotes
+and thousands separators:
+- **checked** — the quote is in the text of the cited source (or, if the source is not one the task
+  read, of any source it read — then marked `source_seen: false`), and every number in the fact
+  appears in the quote;
+- **quote not found**, or **figure not in quote** — otherwise.
+
+The result is a `findings.checked` event and the hand-off: downstream tasks receive checked findings
+as facts, and the rest under a separate heading they are told not to present as fact. The writer
+cites each finding's URL. The citation check also reads a markdown table's Source column.
+
+What this proves is narrow and exact: the words are on the page the agent says they came from, and
+the number in the fact is in those words. It does not prove the page is right, or that the fact is
+a fair reading — that stays the critic's job.
+
+### Tradeoffs
+- A model that paraphrases instead of quoting gets "quote not found" on a true fact. The finding is
+  still passed on, marked; nothing is dropped silently.
+- A longer structured answer costs output tokens on every research call.
+- Normalisation is deliberately simple; it will miss a quote whose characters were re-encoded.
+
+### Reconsider if
+More than a third of findings fail the check on live runs while being true on reading — then the
+check, or the instruction, is wrong.
+
+---
+
+## ADR-023 — Research that reads: a search cap, focused pages, and partial inputs
+
+**Date** 2026-11-22 · **Status** Accepted (V1.11) · **Amends** ADR-018 (web tools), the executor's skip rule (V0.4)
+
+### Context
+A live Goa run on 2026-11-22 lost its deliverable. Three causes, each measured in the run record:
+1. **Researchers search instead of reading.** One task ran 8 searches and tried 2 pages; the
+   prompt's "at most two searches" was ignored. Each search answer is a model call, so the loop
+   spends quota and time on queries that grow narrower and worse.
+2. **Pages are too long to carry.** A read page is up to 20,000 characters, mostly navigation and
+   boilerplate. Three of them in a tool loop make Gemini time out and Groq refuse the request
+   (`413 Request too large`, its 8,000-token per-minute ceiling) — so the fallback could not help.
+   SearXNG also returned off-topic results (a dictionary, a shop) for quoted or `OR` queries.
+3. **One failed task sinks the plan.** Transport research failed three times; the budget and writer
+   tasks depended on it and were skipped, so a run with two good research tasks produced no plan.
+
+### Decision
+1. **A search cap per task, in code.** The fourth `web_search` in one task attempt is refused with
+   an instruction to read the results already found or answer. Off-topic results — sharing no
+   specific word with the query — are dropped before the model sees them, and counted.
+2. **Focused page reading.** `fetch_page` takes `looking_for` ("dorm bed price per night"). A page
+   longer than 6,000 characters is cut to its most relevant passages, in page order: blocks scored by
+   the words of `looking_for` they contain and by figures and currency. The output says it is an
+   excerpt and how long the page was. Everything downstream — the findings check, the critic — sees
+   exactly what the agent saw.
+3. **A task that combines several results runs on what arrived.** A task with two or more
+   dependencies becomes ready when all of them have finished and **at least one succeeded**; it is
+   told which inputs are missing and why. A task with one dependency still needs it. The run is
+   still `PARTIALLY_COMPLETED`, and the deliverable says what is missing.
+4. **Groq requests fit Groq.** The longest tool results in a request to Groq are trimmed until the
+   request fits under its per-minute token ceiling, and a per-minute 429 with a short `retry-after`
+   inside the deadline is waited out once.
+
+### Tradeoffs
+- A capped researcher sometimes stops one search short of a better result.
+- Excerpting can cut the one sentence that mattered; `looking_for` makes that less likely, not
+  impossible. The page length is shown, so a reader can tell an excerpt from a short page.
+- A deliverable built on partial inputs is less complete — but says so, instead of not existing.
+
+### Reconsider if
+Capped tasks routinely end with "not found" where a fourth search would have found it, or a
+combining task's output on partial inputs misleads rather than informs.

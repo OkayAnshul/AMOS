@@ -23,7 +23,11 @@ _MIDNIGHT_PACIFIC = (
 )
 
 
-async def usage_today(session: AsyncSession) -> dict[str, Any]:
+async def usage_today(session: AsyncSession, model: str | None = None) -> dict[str, Any]:
+    """Today's calls to `model` — the one whose quota the meter shows — and, since
+    the fallback chain (ADR-021) spends several quotas, a count per model."""
+    where = "WHERE model = :model" if model else ""
+    params = {"model": model} if model else {}
     row = (
         await session.execute(
             sql_text(
@@ -38,11 +42,27 @@ async def usage_today(session: AsyncSession) -> dict[str, Any]:
                 f"coalesce(sum(prompt_tokens + output_tokens) FILTER "
                 f"(WHERE created_at >= {_MIDNIGHT_PACIFIC}), 0) AS tokens, "
                 f"{_MIDNIGHT_PACIFIC} AS since "
-                "FROM llm_calls"
-            )
+                f"FROM llm_calls {where}"
+            ),
+            params,
         )
     ).one()
+    per_model = (
+        await session.execute(
+            sql_text(
+                "SELECT provider, model, count(*) AS calls, "
+                "count(*) FILTER (WHERE error IS NOT NULL) AS failed "
+                f"FROM llm_calls WHERE created_at >= {_MIDNIGHT_PACIFIC} "
+                "GROUP BY provider, model ORDER BY calls DESC"
+            )
+        )
+    ).all()
     return {
+        "model": model,
+        "by_model": [
+            {"provider": r.provider, "model": r.model, "calls": r.calls, "failed": r.failed}
+            for r in per_model
+        ],
         "calls_today": row.today,
         "calls_last_minute": row.last_minute,
         "rate_limited_today": row.rate_limited,

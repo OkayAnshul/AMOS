@@ -40,6 +40,9 @@ class Turn(BaseModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tool_outcomes: list[ToolOutcome] = Field(default_factory=list)
     provider_state: Any = Field(default=None, repr=False, exclude=True)
+    #: The model that produced a model turn (V1.11). A fallback chain reads it:
+    #: Gemini rejects tool calls another model made (ADR-021).
+    model: str | None = None
 
 
 class LLMRequest(BaseModel):

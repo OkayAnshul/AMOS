@@ -814,3 +814,14 @@ which. The guard resolves with `getaddrinfo` and refuses if any address is inter
 - Why is "this run's own search returned it" a stronger rule than a host allowlist for research?
 - Why are redirects followed only within the same site, with each hop re-checked?
 **Status:** ⬜ Recognise
+
+### Strict structured output and constrained decoding (Session 19)
+Best-effort JSON mode asks the model to follow a schema; strict mode **constrains decoding** so only
+tokens that keep the output valid can be produced. The price: every property required, no extra
+properties, a smaller schema vocabulary — and a 400 when the model cannot fit its answer.
+**Read:** <https://console.groq.com/docs/structured-outputs>
+**Answer:**
+- Why does strict mode need every property marked required?
+- Why is "could not fit the schema" a reason to try another model rather than retry the same one?
+**Status:** ⬜ Recognise
+

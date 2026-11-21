@@ -372,7 +372,7 @@ async def system(
         ).scalar()
         database["revision"] = current
         database["current"] = current == database["head"] if database["head"] else None
-        quota.update(await usage_today(session))
+        quota.update(await usage_today(session, settings.llm_model))
         queue = await queue_overview(session)
         dead = await count_dead_letter(session, owner=actor.id)
         totals = await corpus_totals(session, actor.id)
@@ -389,6 +389,7 @@ async def system(
             "embedding_dimensions": settings.embedding_dimensions,
             "timeout_seconds": settings.llm_timeout_seconds,
             "retry": "one retry on a 5xx, inside the call's deadline (ADR-014)",
+            "chain": _chain(settings),
         },
         quota=quota,
         features=features,
@@ -427,3 +428,43 @@ async def system(
 
 async def run_insights(session: AsyncSession, actor: Actor) -> dict[str, Any]:
     return await insights(session, actor.id)
+
+
+def _chain(settings: Settings) -> list[dict[str, Any]]:
+    """The fallback chain as configured (ADR-021), in the order a call tries it."""
+    chain: list[dict[str, Any]] = [
+        {
+            "provider": "gemini",
+            "model": settings.llm_model,
+            "role": "primary",
+            "per_minute": settings.llm_minute_request_limit,
+        }
+    ]
+    if settings.fallback_llm_model and settings.fallback_llm_model != settings.llm_model:
+        chain.append(
+            {
+                "provider": "gemini",
+                "model": settings.fallback_llm_model,
+                "role": "fallback",
+                "per_minute": settings.fallback_llm_minute_limit,
+            }
+        )
+    if settings.groq_api_key:
+        preferred_by = [
+            role
+            for role, provider in (
+                ("writer", settings.writer_provider),
+                ("planner", settings.planner_provider),
+            )
+            if provider == "groq"
+        ]
+        chain.append(
+            {
+                "provider": "groq",
+                "model": settings.groq_model,
+                "role": "fallback",
+                "per_minute": settings.groq_minute_request_limit,
+                "preferred_by": preferred_by,
+            }
+        )
+    return chain

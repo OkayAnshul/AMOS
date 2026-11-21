@@ -56,3 +56,20 @@ def test_a_task_reference_is_a_citation_when_the_task_exists() -> None:
     text = "Total ₹6,141 (source: t4)."
     assert unseen(text, {"t4"}) == []
     assert unseen(text, {"t1"}) == ["t4"]
+
+
+def test_a_tables_source_column_counts_as_citations() -> None:
+    """A live run reported "cited 0" for a fully sourced table (ADR-022)."""
+    table = (
+        "| Time | What | Cost | Source |\n"
+        "|------|------|------|--------|\n"
+        "| 9:00 | Dorm | ₹933 | https://www.goibibo.com/h/ |\n"
+        "| 13:00 | Thali | ₹350 | [Ritz](https://example.org/food) |\n"
+        "| – | Total | ₹1,283 | t3 |\n"
+        "| – | Note | – | – |\n"
+    )
+    assert cited(table) == {"goibibo.com/h", "example.org/food", "t3"}
+
+
+def test_a_table_without_a_source_column_cites_nothing() -> None:
+    assert cited("| a | b |\n|---|---|\n| t1 | x |\n") == set()
