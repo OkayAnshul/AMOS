@@ -71,14 +71,19 @@ def material(outcomes: Iterable[ToolOutcome], limit: int = READER_TEXT_CHARS) ->
 
 
 def merge(own: list[Finding], extra: list[Finding]) -> list[Finding]:
-    """The researcher's own findings first, then the reader's, each quote once."""
-    seen: set[str] = set()
+    """The researcher's own findings first, then the reader's, each quote once.
+
+    "Once" includes overlap: a reader quote that contains, or is contained in, a
+    quote already kept is the same fact (seen live: the same restaurant twice,
+    one quote a few words longer than the other)."""
+    kept: list[str] = []
     merged: list[Finding] = []
     for finding in [*own, *extra]:
         key = normalise_text(finding.quote)
-        if key and key not in seen:
-            seen.add(key)
-            merged.append(finding)
+        if not key or any(key in other or other in key for other in kept):
+            continue
+        kept.append(key)
+        merged.append(finding)
     return merged
 
 

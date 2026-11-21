@@ -89,3 +89,21 @@ def test_merge_keeps_the_researchers_findings_first_and_each_quote_once() -> Non
         Finding(fact="b", quote="goSTOPS Goa Baga - from $2.49", source=URL),
     ]
     assert [f.fact for f in merge(own, extra)] == ["a", "b"]
+
+
+def test_an_overlapping_quote_is_the_same_finding() -> None:
+    own = [
+        Finding(
+            fact="Mister Merchants ₹2,000",
+            quote="Price: Rs.2,000 per person Must try: Mutton Curry",
+            source=URL,
+        )
+    ]
+    extra = [
+        Finding(
+            fact="Mister Merchants: Rs.2,000",
+            quote="Price: Rs.2,000 per person Must try: Mutton Curry Address: Moide",
+            source=URL,
+        )
+    ]
+    assert merge(own, extra) == own
