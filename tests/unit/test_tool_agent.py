@@ -105,7 +105,29 @@ async def test_loop_cap_is_enforced(registry: ToolRegistry) -> None:
 
     assert exc.value.iterations == 3
     assert exc.value.tool_calls == 3
-    assert provider.call_count == 3, "must stop calling the provider, not just fail at the end"
+    # Three tool rounds, then exactly one call offering no tools (V1.9). A model
+    # that still asks for a tool fails as before — bounded, not open-ended.
+    assert provider.call_count == 4, "must stop calling the provider, not just fail at the end"
+    assert provider.calls[-1].tools == [], "the final call offers no tools"
+
+
+async def test_at_the_cap_the_agent_answers_from_what_it_gathered(registry: ToolRegistry) -> None:
+    """The first live web run failed three times over at the cap with its
+    evidence in hand. Now the last call asks for an answer instead."""
+    provider = FakeProvider(
+        [
+            [calc_call("1+1")],
+            [calc_call("2+2")],
+            [calc_call("3+3")],
+            valid_response_json(answer="2, 4 and 6"),
+        ]
+    )
+    result = await ToolUsingAgent(provider, registry, max_iterations=3).run("goal")
+
+    assert result.response.answer == "2, 4 and 6"
+    assert any("Stopped after 3 rounds" in c for c in result.response.caveats)
+    assert len(result.tool_outcomes) == 3
+    assert len(result.llm_calls) == 4
 
 
 async def test_max_iterations_must_be_at_least_one(registry: ToolRegistry) -> None:

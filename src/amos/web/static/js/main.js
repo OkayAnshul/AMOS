@@ -35,6 +35,7 @@ const OPTION_LABELS = {
   critic: "Critic",
   delegation: "Delegation",
   memory: "Memory",
+  web: "Web",
 };
 
 const SECTIONS = [
@@ -482,6 +483,7 @@ function drawHead(trace) {
       trace ? h("span", null, h("strong", null, String(trace.llm_calls.length)), " model calls") : null,
       trace ? h("span", null, h("strong", null, String(trace.tool_calls.length)), " tool calls") : null,
       trace?.attempt_count > 1 ? h("span", null, `attempt ${trace.attempt_count}`) : null,
+      trace && state.system ? h("span", { title: "This run's budget (ADR-019)" }, `budget ${trace.llm_calls.length} of ${state.system.bounds.run_max_llm_calls} model calls`) : null,
       ...options,
     ),
   );
@@ -598,6 +600,47 @@ function drawBody(trace) {
     );
   }
 
+  const pagesRead = trace.tool_calls.filter((t) => t.tool_name === "fetch_page" && t.status === "ok" && t.output);
+  const searches = trace.tool_calls.filter((t) => t.tool_name === "web_search");
+  if (pagesRead.length || searches.length) {
+    const answerText = (trace.result?.answer || "").toLowerCase();
+    const host = (url) => {
+      try {
+        return new URL(url).hostname.replace(/^www\./, "");
+      } catch {
+        return url;
+      }
+    };
+    evidenceCol.append(
+      ...section(
+        "Web pages read",
+        pagesRead.length
+          ? h(
+              "div",
+              { class: "citations" },
+              pagesRead.map((t) => {
+                const cited = answerText.includes(t.output.url.toLowerCase()) || answerText.includes(host(t.output.url));
+                return h(
+                  "button",
+                  { class: `citation web${cited ? " cited" : ""}`, type: "button", onclick: () => select({ type: "tool", item: t }) },
+                  h("span", { class: "citation-source" }, host(t.output.url)),
+                  h("span", { class: "citation-heading" }, t.output.title || t.output.url),
+                  h("span", { class: "citation-score" }, `${count(t.output.text.length)} characters, untrusted${cited ? ", cited in the answer" : ""}`),
+                );
+              }),
+            )
+          : h("div", { class: "group" }, empty("No page was read", "The researcher searched but did not open a result.")),
+        h(
+          "div",
+          { class: "group-foot" },
+          `${searches.length} search${searches.length === 1 ? "" : "es"}: `,
+          searches.map((t, n) => [n ? ", " : "", h("button", { class: "link-button", type: "button", onclick: () => select({ type: "tool", item: t }) }, `“${t.arguments.query}”`)]),
+          ". Pages can be read only if this run's own search returned them.",
+        ),
+      ),
+    );
+  }
+
   const memory = trace.tool_calls.filter((t) => ["remember_fact", "recall_facts", "recall_past_runs"].includes(t.tool_name));
   if (memory.length) {
     evidenceCol.append(
@@ -700,6 +743,7 @@ function describe(item, trace) {
     "critic.verdict": `Critic ${p.verdict === "accept" ? "accepted" : "asked to revise"}${item.task_ref ? ` ${item.task_ref}` : " the answer"}`,
     "delegation.started": `${capitalise(p.source)} asked ${capitalise(p.target)} for help`,
     "delegation.finished": `${capitalise(p.target)} answered ${capitalise(p.source)}`,
+    "budget.exhausted": `Run budget reached: ${String(p.limit_kind || "").replace(/_/g, " ")} (${p.limit})`,
     "run.finished": "Run finished",
     "run.failed": "Run failed",
   };
@@ -710,7 +754,7 @@ function describe(item, trace) {
     detail: String(detail),
     meta: "",
     mark: h("span", { class: "ring" }),
-    error: ["task.failed", "task.timed_out", "task.permanently_failed", "run.failed"].includes(item.kind),
+    error: ["task.failed", "task.timed_out", "task.permanently_failed", "run.failed", "budget.exhausted"].includes(item.kind),
   };
 }
 
@@ -1015,6 +1059,14 @@ function refreshInspector() {
       json(t.arguments),
     );
     if (t.error) body.append(h("div", { class: "inspector-subtitle" }, "Error"), h("div", { class: "passage" }, t.error));
+    if (t.tool_name === "fetch_page" && t.output?.text) {
+      body.append(
+        h("div", { class: "inspector-subtitle" }, "Page text, untrusted"),
+        h("p", null, h("a", { href: t.output.url, target: "_blank", rel: "noopener noreferrer" }, t.output.url)),
+        h("div", { class: "passage" }, t.output.text.slice(0, 6000) + (t.output.text.length > 6000 ? " …" : "")),
+      );
+      return;
+    }
     if (t.output) body.append(h("div", { class: "inspector-subtitle" }, "Output"), json(t.output));
     return;
   }
@@ -1311,6 +1363,17 @@ async function systemPage() {
           h("div", { class: "group-foot" }, "There are no heartbeats: a worker is known only by the runs it claims."),
         ),
         ...section(
+          "Web research",
+          h(
+            "div",
+            { class: "group" },
+            row("Enabled", sys.web.enabled ? "Yes" : "No", sys.web.enabled ? null : "Set AMOS_WEB_ENABLED=true and start SearXNG with make web-up"),
+            row("Search service", sys.web.reachable ? "answering" : "not running", sys.web.search_url),
+            row("Engine", sys.web.engine),
+            row("Pages", "only urls this run's own search returned"),
+          ),
+        ),
+        ...section(
           "Database",
           h(
             "div",
@@ -1353,6 +1416,7 @@ async function systemPage() {
         row("Critic revisions", count(b.max_revisions)),
         row("Delegation", `depth ${b.max_delegation_depth}, ${b.delegation_budget} per task`),
         row("Retrieval threshold", String(b.retrieval_min_score)),
+        row("Each run may spend", `${b.run_max_llm_calls} model calls, ${b.run_max_tool_calls} tool calls, ${b.run_max_page_fetches} page reads`),
       ),
       h("div", { class: "group-foot" }, "The order matters more than the values: each bound must sit inside the next (ADR-009)."),
     ),

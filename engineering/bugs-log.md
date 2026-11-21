@@ -859,3 +859,30 @@ leaving the run page closes the inspector.
 **Lesson:** a page's tests prove what the tests assert; looking at it proves what it shows. Both,
 in that order, and the looking has to be checked too.
 **Test added:** `tests/browser/test_page.py` (opt-in) drives the page end to end.
+
+---
+
+## 2026-11-21 — The critic judged web answers without seeing the pages
+**Milestone:** V1.9, first live web run
+**Symptom:** prices quoted from a page were flagged "unsupported claim"; confidence forced low.
+**Root cause:** `_evidence_from` passed the critic retrieval passages properly, and every other tool
+output as `str(output)[:600]` — for `fetch_page`, mostly the url and the instruction text. The page
+was never in the evidence.
+**Fix:** page text (6000 characters) and search snippets become evidence items, each with its url.
+**Lesson:** a generic fallback is a decision about every case nobody thought of yet.
+**Test added:** `test_the_critic_is_shown_the_page_a_fact_came_from` (the fact sits past 600 characters).
+
+---
+
+## 2026-11-21 — A researcher that would not stop searching failed three times
+**Milestone:** V1.9, second live web run
+**Symptom:** FAILED after 19 model calls and 12 searches; no answer despite evidence in hand.
+**Root cause:** two. The agent had no stopping rule for an open-ended web task, so each attempt hit
+the 5-round cap; and the cap *raised*, so the executor retried an attempt that would fail the same
+way. (A `_finalise()` fallback for this existed until V0.7 and was deleted because it never fired —
+correctly at the time: nothing looped until the web did.)
+**Fix:** at the cap, one tool-free call asks for an answer from what was gathered, with a caveat
+saying so; a model that still asks for a tool fails as before. The web instruction caps searching.
+**Lesson:** "it never fired" is evidence about the workloads so far, not about the next one.
+**Tests added:** `test_at_the_cap_the_agent_answers_from_what_it_gathered`; the cap test now pins
+exactly one extra, tool-free call.

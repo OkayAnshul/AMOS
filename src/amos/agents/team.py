@@ -27,7 +27,7 @@ from amos.agents.delegation import (
     DelegationBudget,
 )
 from amos.agents.messages import CriticReport
-from amos.agents.registry import AgentRegistry, AgentSpec
+from amos.agents.registry import WEB_INSTRUCTION, AgentRegistry, AgentSpec
 from amos.agents.router import Router
 from amos.agents.schemas import AgentResponse, AgentResult
 from amos.agents.tool_agent import ToolUsingAgent
@@ -105,6 +105,8 @@ class AgentTeam:
         """
         registry = spec.registry_from(self._tools)
         instruction = spec.system_instruction
+        if "web_search" in registry.names:
+            instruction = f"{instruction}\n{WEB_INSTRUCTION}"
 
         if self._delegation_enabled and depth < self._max_delegation_depth:
             shared = budget if budget is not None else DelegationBudget(self._delegation_budget)
@@ -282,16 +284,36 @@ def _evidence_from(result: AgentResult) -> list[str]:
     for outcome in result.tool_outcomes:
         if not outcome.succeeded or not outcome.output:
             continue
-        passages = outcome.output.get("passages")
+        output = outcome.output
+        passages = output.get("passages")
         if isinstance(passages, list):
             evidence.extend(
                 f"{p.get('citation', '?')}: {str(p.get('content', ''))[:600]}"
                 for p in passages
                 if isinstance(p, dict)
             )
+        elif isinstance(output.get("text"), str):
+            # A web page (V1.9). Before this branch the critic got the first 600
+            # characters of the output *dict* — mostly its url and instruction —
+            # and flagged facts from the page as unsupported because it had never
+            # been shown the page. Found on the first live web run.
+            evidence.append(
+                f"{output.get('url', outcome.name)}: {output['text'][:PAGE_EVIDENCE_CHARS]}"
+            )
+        elif isinstance(output.get("results"), list):
+            evidence.extend(
+                f"{r.get('url')} (search snippet): {r.get('title', '')} — {r.get('snippet', '')}"
+                for r in output["results"]
+                if isinstance(r, dict)
+            )
         else:
-            evidence.append(f"{outcome.name}: {str(outcome.output)[:600]}")
+            evidence.append(f"{outcome.name}: {str(output)[:600]}")
     return evidence
+
+
+#: How much of a read page the critic sees. Enough for the facts an answer
+#: quotes; bounded because every page read costs critic tokens.
+PAGE_EVIDENCE_CHARS = 6000
 
 
 def _revision_prompt(goal: str, answer: AgentResponse, report: CriticReport) -> str:

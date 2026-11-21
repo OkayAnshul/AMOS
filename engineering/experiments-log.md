@@ -493,3 +493,33 @@ different hour and a different load. Nor does this say whether a longer delay wo
 fired once in 20 — kept under watch, not acted on from one run. **The baseline was not re-stored:**
 the gate refuses to compare 880 chunks with 850, and a run inflated by 20 retries is a poor
 reference; it is re-measured at V1.7's close, when the eval must run again anyway.
+
+---
+
+## 2026-11-21 — SearXNG on ten fixed queries (V1.9, ADR-018)
+**Question:** is self-hosted SearXNG good enough for the demo's research questions?
+**Setup:** `searxng/searxng:2026.11.6-ac11e14c5`, default engines, `use_default_settings`; ten fixed
+queries — three Goa-trip costs, LISTEN/NOTIFY, Redis Streams, pgvector HNSW, FastAPI StaticFiles,
+OpenTelemetry context, Gemini free-tier limits, `asyncio.wait_for` and context.
+**Result:** 10/10 answered, **20 results each, 0.6–1.2 s**. Top-5 relevance judged by hand:
+**about 45 of 50** on topic (weakest: the asyncio query, 3/5). **Every result came from one
+upstream engine** — Brave, DuckDuckGo and Wikidata were unresponsive on every query.
+**Conclusion:** good enough for the demo's questions, with one honest weakness: a single upstream
+engine is a single point of failure. If it starts refusing, web_search returns nothing and the
+agent says so — it fails visibly, not silently.
+**Decision affected:** ADR-018 stands; a keyed provider behind the same tool is the fallback.
+
+## 2026-11-21 — The first live web runs: two bugs, then a clean run
+**Run 1** (goal: dorm-bed price in Goa): completed, but the critic flagged prices **that were on the
+pages** as unsupported. Cause: the critic's evidence for any non-retrieval tool was the first 600
+characters of the output *dict* — the url and the instruction. Fixed: the critic gets the page text
+(up to 6000 characters) and search snippets.
+**Run 2:** **FAILED** after 19 model calls and 12 searches. The researcher never stopped searching;
+each attempt hit the 5-round cap, raised, and the executor retried it twice more the same way.
+Fixed two ways: at the cap the agent makes one tool-free call asking for an answer from what it has
+(bounded: exactly one extra call), and the web instruction gives a stopping rule — at most two
+searches and three pages.
+**Run 3:** **COMPLETED in 9 model calls**, 2 searches, 1 page; critic accepted; confidence high;
+answer ₹987–₹1,800 a night with cited sources.
+**Not shown:** that the stopping rule holds across goals — one run is an anecdote. The complex goals
+of V1.10 exercise it.

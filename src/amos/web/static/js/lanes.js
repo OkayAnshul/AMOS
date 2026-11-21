@@ -226,11 +226,13 @@ function step(spanMs) {
 // The longest label that fits: the full one (truncated only if a useful amount
 // survives), then a short form, then nothing — a capsule reading "Co…" says
 // less than an unlabelled one, whose name is a click or a focus away.
-function fit(px, ...labels) {
+function fit(px, truncate, ...labels) {
   const max = Math.floor(px / 6.6);
   const [full, ...shorter] = labels.filter(Boolean);
   if (full && full.length <= max) return full;
-  if (full && max >= 14) return `${full.slice(0, max - 1)}…`;
+  // Only a description is worth cutting mid-way ("t1 Search the web for…");
+  // "Review t1, as…" says less than "Review t1 ↺".
+  if (truncate && full && max >= 14) return `${full.slice(0, max - 1)}…`;
   return shorter.find((label) => label.length <= max) || "";
 }
 
@@ -332,7 +334,7 @@ export function render(host, model, { width, seen, selected, onSelect }) {
         },
       },
       s("rect", { class: "body", x: x1, y, width: w, height: CAP_H, rx: CAP_H / 2 }),
-      s("text", { class: "seg-label", x: x1 + 13, y: y + 19 }, fit(w - 22, label, ...short)),
+      s("text", { class: "seg-label", x: x1 + 13, y: y + 19 }, fit(w - 22, seg.kind === "task" || seg.kind === "delegate", label, ...short)),
     );
     root.append(g);
 
