@@ -1,0 +1,54 @@
+{
+ "query": "Redis Streams consumer groups job queue",
+ "number_of_results": null,
+ "results": [
+  {
+   "title": "Redis job queue | Docs",
+   "url": "https://redis.io/docs/latest/develop/use-cases/job-queue/",
+   "content": "Fan out a single user action to multiple downstream services through streams and consumer groups. Use established libraries — Sidekiq, Celery, Bull/BullMQ, RQ — ...",
+   "engine": "google cse"
+  },
+  {
+   "title": "Redis streaming | Docs",
+   "url": "https://redis.io/docs/latest/develop/use-cases/streaming/",
+   "content": "Consumer groups ( XREADGROUP , XACK ) give at-least-once delivery with per-consumer cursors and acknowledgment, so workers in a group share the stream's work ...",
+   "engine": "google cse"
+  },
+  {
+   "title": "Redis Streams | Docs",
+   "url": "https://redis.io/docs/latest/develop/data-types/streams/",
+   "content": "These include random access in O(1) time and complex consumption strategies, such as consumer groups. You can use streams to record and simultaneously syndicate ...",
+   "engine": "google cse"
+  },
+  {
+   "title": "Using Redis Streams Consumer Groups for Work Distribution (AI-200)",
+   "url": "https://www.auladex.com/en/course/ai-200/concepts/using-redis-streams-consumer-groups-for-work-distribution",
+   "content": "Using Redis Streams Consumer Groups for Work Distribution ... When you need multiple workers to process tasks, you want each task handled exactly once. If you use ...",
+   "engine": "google cse"
+  },
+  {
+   "title": "Redis Streams :: Spring Data Redis",
+   "url": "https://docs.spring.io/spring-data/redis/reference/redis/redis-streams.html",
+   "content": "When you read with messages via a Consumer Group , the server will remember that a given message was delivered and add it to the Pending Entries List (PEL). A ...",
+   "engine": "google cse"
+  },
+  {
+   "title": "Simple task queue with Redis Streams - Christopher Schleiden",
+   "url": "https://cschleiden.dev/blog/2022-04-08-task-queue-with-redis/",
+   "content": "8 Apr 2022 ... When starting up, we create a stream task-queue , and a single consumer group for all workers: task-workers . Then we generate a unique name ...",
+   "engine": "google cse"
+  },
+  {
+   "title": "Plain http mirror",
+   "url": "http://example.invalid/redis",
+   "content": "not https",
+   "engine": "test"
+  },
+  {
+   "title": "Redis job queue | Docs",
+   "url": "https://redis.io/docs/latest/develop/use-cases/job-queue/",
+   "content": "Fan out a single user action to multiple downstream services through streams and consumer groups. Use established libraries — Sidekiq, Celery, Bull/BullMQ, RQ — ...",
+   "engine": "google cse"
+  }
+ ]
+}

@@ -3,12 +3,12 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-11-21 (Session 18 — V1.6 reliability, V1.7 live run record, V1.8 the web page; the track re-planned)
+**Last updated:** 2026-11-21 (Session 18 — V1.6 reliability, V1.7 live run record, V1.8 the web page, V1.9 web research; the track re-planned)
 
 ## Current Version
-**V1.8 — Mission control web page**, the fourth milestone of the demo track (V1.5–V2.0,
-`docs/19-roadmap.md`, **re-planned 2026-11-20**: V1.9 web research → V1.10 complex goals → V2.0
-demo). The V0.1–V1.0 roadmap is complete.
+**V1.9 — Web research and the run budget**, the fifth milestone of the demo track (V1.5–V2.0,
+`docs/19-roadmap.md`, **re-planned 2026-11-20**: V1.10 complex goals → V2.0 demo). The V0.1–V1.0
+roadmap is complete.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -19,7 +19,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
 V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
-V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · V1.7 live run record and read API · **V1.8 mission control web page**
+V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · V1.7 live run record and read API · V1.8 mission control web page · **V1.9 web research**
 
 ## What Works
 ```
@@ -57,10 +57,17 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
   and tools, system and quota, insights, dead letters, settings; per-run options; light, dark,
   narrow and presenter modes. Plain HTML/CSS/JS, strict CSP, nothing loaded from outside, model
   text rendered as text (a browser test shows a prompt injection staying text)
+- **Web research** (V1.9, ADR-018): `web_search` over a pinned, self-hosted SearXNG (`make web-up`,
+  `AMOS_WEB_ENABLED=true`); `fetch_page` reads only URLs this run's own stored search returned, behind
+  a shared SSRF guard that checks every resolved address. Live: a Goa price question answered with
+  cited pages in 9 model calls
+- **A per-run budget** (ADR-019): 40 model calls, 40 tool calls, 8 page reads by default, enforced at
+  the recording seams; a spent budget is recorded and not retried. An exhausted tool loop ends in a
+  tool-free answer call instead of failing
 - **`make backup` / `make restore-drill` / `make restore`** — the first drill passed 2026-11-19
 - The corpus rebuilds in **one** free-tier day (850 chunks; `docs/build-along/` excluded), and an
   edited document **replaces** its old version on re-ingest
-- **704 tests** (707 collected: 2 live and 1 browser test, opt-in — `make browser-test`), in their own database `amos_test`; `mypy --strict`
+- **737 tests** (741 collected: 3 live and 1 browser test, opt-in), in their own database `amos_test`; `mypy --strict`
   and `ruff` clean; **CI runs with and without a database**, migrations both directions, and with
   no API key
 
@@ -122,7 +129,7 @@ Daily limits reset at midnight Pacific. Since V1.5 a daily 429 fails fast.
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`main`, at `v1.8.0`. No open feature branch. The next one is `feat/v1.9-web-research`.
+`main`, at `v1.9.0`. No open feature branch. The next one is `feat/v1.10-complex-goals`.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -187,7 +194,8 @@ costs; failed runs with no calls; worker without episodes or metrics) and a dupl
 | Database | PostgreSQL 18.6 + pgvector 0.8.6 |
 | Migrations | `e25051359e64` → `5a881f4bdb98` → `a0621f74b57c` → `5892709841cc` → `453890cfd6a9` → `835121ee2bd2` → `9c1f0d7e2a14` (V1.7 run record) |
 | Users | `alembic upgrade head` creates `default` and **prints its key once**. `AMOS_BOOTSTRAP_API_KEY` sets it instead. A `presenter` user was created 2026-11-20 for live checks and the demo; its key is not in the repo |
-| Corpus | **42 docs / 880 chunks**, re-ingested 2026-11-20 (7 edited docs replaced their old versions); backed up (`backups/amos-20261120-144852.dump`, 6.8 MB). Rebuilt from empty on 2026-11-19 in one run (850 chunks; drill passed). A full rebuild fits one free-tier day since V1.5 |
+| Corpus | **42 docs / 837 chunks**, 2026-11-21 — two personal documents left the scope (decisions-log), the rest re-ingested; backed up (`backups/amos-20261121-103812.dump`). Rebuilt from empty on 2026-11-19 in one run (850 chunks; drill passed). A full rebuild fits one free-tier day since V1.5 |
+| SearXNG | `searxng/searxng:2026.11.6-ac11e14c5` on `127.0.0.1:8888`, compose profile `web` (`make web-up`) |
 | Test database | `amos_test`, created and migrated by the test suite on first use (`AMOS_TEST_DATABASE_URL` overrides) |
 | Version | `src/amos/__init__.py`; the build reads it |
 | GitHub | `OkayAnshul/AMOS`, public. Remote over **SSH port 443** (22 blocked here) |
@@ -205,17 +213,20 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**V1.9 — web research** (`docs/19-roadmap.md`). Branch `feat/v1.9-web-research`. ADR-018
-(`web_search` over self-hosted SearXNG — verify the image tag and the JSON API docs on the day) and
-ADR-019 (per-run budget) before code. Then `fetch_page` with a provenance allowlist, the injection
-fixture, and the page's Sources panel for web citations.
+**V1.10 — complex goals** (`docs/19-roadmap.md`). Branch `feat/v1.10-complex-goals`. ADR-020 first:
+a `writer` agent with no tools composes the deliverable from earlier tasks' evidence, sourced items
+cite a source seen in the run (checked by code, not a model), and suggestions without a source go in
+a separate *not sourced* section. Then 4–6 complex golden goals and demo queries 8 and 9 live.
 
-To see the page: `make run`, open <http://127.0.0.1:8000/>, paste the API key. A `presenter` user
-exists for the demo (key not in the repo).
+For live checks: `make up && make web-up`, then `AMOS_WEB_ENABLED=true AMOS_ASYNC_ENABLED=true make run`
+and `make worker`; the page is at <http://127.0.0.1:8000/>.
 
-### The advance gate — sixteen documents, never met
+**Before the demo (V2.0):** the eval baseline was measured on 880 chunks; the corpus is now 837, so
+`make eval` reports "not comparable" until `make eval-baseline` is re-run once the docs settle.
 
-`docs/interview/*.md` — fifteen: V1.6's questions added to `reliability.md` and `security.md`, `run-record.md` (V1.7) and `demo-surface.md` (V1.8). This is the second of the project's
+### The advance gate — seventeen documents, never met
+
+`docs/interview/*.md` — fifteen: V1.6's questions added to `reliability.md` and `security.md`, `run-record.md` (V1.7), `demo-surface.md` (V1.8) and `web-research.md` (V1.9). This is the second of the project's
 two equal objectives, and the teacher demo is exactly its test: explaining the system unaided.
 Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/interview/*.md` in milestone
 order. Building further before closing it is a deliberate choice against the working agreement's

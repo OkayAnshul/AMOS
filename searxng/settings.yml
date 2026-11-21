@@ -1,0 +1,20 @@
+# SearXNG for AMOS's web_search tool (ADR-018). Everything not set here comes from
+# SearXNG's own defaults (use_default_settings), read from docs.searxng.org on
+# 2026-11-21.
+use_default_settings: true
+
+server:
+  # Overridden by $SEARXNG_SECRET from compose.yaml; never the shipped default.
+  secret_key: "set-by-environment"
+  # A private instance on 127.0.0.1: no bot limiter (it needs a valkey database),
+  # no image proxy, not advertised as public.
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  # JSON is what the tool reads. Without it the API answers 403 Forbidden.
+  formats:
+    - html
+    - json
+  safe_search: 1

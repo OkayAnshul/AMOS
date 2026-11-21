@@ -4,7 +4,7 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V1.8.** The V0.1–V1.0 roadmap is complete; the demo track (V1.5–V2.0) is in progress.
+> **Status: V1.9.** The V0.1–V1.0 roadmap is complete; the demo track (V1.5–V2.0) is in progress.
 > Queues goals to worker processes that survive being killed mid-run — and **resume** rather than
 > start over — routes work to specialised agents, plans task graphs, uses tools, retrieves with
 > citations, remembers facts across sessions, reviews its own answers, **records every call and
@@ -26,6 +26,10 @@ lane per agent, a capsule per task attempt, a tick per model or tool call, the c
 and an inspector for every call and decision. Around it: history, memory, your own uploaded
 documents, agents and tools, system health and today's quota, insights, dead letters. Plain HTML,
 CSS and JavaScript with no build step and nothing loaded from outside (ADR-017).
+
+Web research (V1.9): `make web-up` starts a pinned, self-hosted SearXNG; with
+`AMOS_WEB_ENABLED=true` the researcher can search the web and read pages — only pages its own search
+returned in that run — within a per-run budget (ADR-018, ADR-019).
 
 ![A finished run: the plan, two analyst tasks, both critic reviews, and the inspector open on one](docs/assets/mission-control-light.png)
 

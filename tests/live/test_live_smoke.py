@@ -63,3 +63,19 @@ async def test_real_gemini_uses_the_calculator_tool() -> None:
         f"\ntools={[o.name for o in result.tool_outcomes]} "
         f"llm_calls={len(result.llm_calls)} tokens={result.total_tokens}"
     )
+
+
+@pytest.mark.live
+async def test_the_local_searxng_answers_a_search() -> None:
+    """Against the real instance started by `make web-up` — no Gemini involved."""
+    import os
+
+    from amos.tools.base import ToolCall, ToolStatus
+    from amos.tools.builtin.web import WebSearchTool
+
+    tool = WebSearchTool(os.getenv("AMOS_SEARXNG_URL", "http://127.0.0.1:8888"))
+    outcome = await tool.execute(
+        ToolCall(id="c", name="web_search", arguments={"query": "PostgreSQL LISTEN NOTIFY"})
+    )
+    assert outcome.status is ToolStatus.OK, outcome.error
+    assert outcome.output["results"], "SearXNG returned no https results"

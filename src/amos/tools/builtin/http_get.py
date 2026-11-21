@@ -17,8 +17,6 @@ Four checks, all before any request is made:
 
 from __future__ import annotations
 
-import ipaddress
-import socket
 from typing import Any, ClassVar
 from urllib.parse import urlparse
 
@@ -27,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from amos.errors import ToolValidationError
 from amos.tools.base import Permission, Tool
+from amos.tools.builtin.net import require_public_https
 
 DEFAULT_ALLOWLIST = frozenset(
     {
@@ -118,16 +117,7 @@ class HttpGetTool(Tool):
     def _reject_internal_addresses(host: str) -> None:
         """Defence in depth: an allowlisted name must not resolve internally.
 
-        Guards against a DNS record for an allowlisted host being pointed at an
-        internal address, and against cloud metadata endpoints.
+        Since V1.9 the shared guard in `net.py`, which checks every resolved
+        address (IPv6 included), not just the first IPv4 one.
         """
-        try:
-            resolved = socket.gethostbyname(host)
-        except OSError as exc:
-            raise ToolValidationError(f"Could not resolve host '{host}'") from exc
-
-        address = ipaddress.ip_address(resolved)
-        if address.is_private or address.is_loopback or address.is_link_local:
-            raise ToolValidationError(
-                f"Host '{host}' resolves to the internal address {resolved}; refusing to fetch."
-            )
+        require_public_https(f"https://{host}/")

@@ -273,6 +273,7 @@ class SystemView(BaseModel):
     telemetry: dict[str, Any]
     agents: list[dict[str, Any]]
     tools: list[dict[str, Any]]
+    web: dict[str, Any] = Field(default_factory=dict)
 
 
 def _migration_head() -> str | None:
@@ -286,6 +287,19 @@ def _migration_head() -> str | None:
         return ScriptDirectory(str(directory)).get_current_head()
     except Exception:  # noqa: BLE001 - informational only
         return None
+
+
+async def _searxng_answers(base_url: str) -> bool:
+    """Whether the search service is up — a two-second probe, so a stopped
+    container shows as "not running" rather than as a slow page."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            response = await client.get(f"{base_url.rstrip('/')}/healthz")
+        return response.status_code == 200
+    except httpx.HTTPError:
+        return False
 
 
 def describe_tools(registry: ToolRegistry | None) -> list[dict[str, Any]]:
@@ -335,6 +349,12 @@ async def system(
         }
     )
     database: dict[str, Any] = {"connected": session is not None, "head": _migration_head()}
+    web: dict[str, Any] = {
+        "enabled": settings.web_enabled,
+        "search_url": settings.searxng_url,
+        "reachable": await _searxng_answers(settings.searxng_url),
+        "engine": "SearXNG, self-hosted (ADR-018)",
+    }
     quota: dict[str, Any] = {
         "daily_limit": settings.llm_daily_request_limit,
         "minute_limit": settings.llm_minute_request_limit,
@@ -385,7 +405,11 @@ async def system(
             "delegation_budget": settings.delegation_budget,
             "retrieval_min_score": settings.retrieval_min_score,
             "memory_min_score": settings.memory_min_score,
+            "run_max_llm_calls": settings.run_max_llm_calls,
+            "run_max_tool_calls": settings.run_max_tool_calls,
+            "run_max_page_fetches": settings.run_max_page_fetches,
         },
+        web=web,
         database=database,
         queue=queue,
         dead_letters=dead,

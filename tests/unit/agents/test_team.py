@@ -260,3 +260,32 @@ def test_a_run_cannot_switch_on_what_the_server_switched_off() -> None:
     assert RunOptions(critic=True).enabling_disabled(server) == ["critic"]
     assert RunOptions(critic=False).enabling_disabled(server) == []
     assert RunOptions(planning=False).enabling_disabled(server) == []
+
+
+def test_the_critic_is_shown_the_page_a_fact_came_from() -> None:
+    """The first live web run: prices quoted from a page were flagged as
+    unsupported, because the critic's evidence was the first 600 characters of
+    the tool output dict — the url and the instruction, not the page."""
+    from amos.agents.schemas import AgentResponse, AgentResult, Confidence
+    from amos.agents.team import _evidence_from
+    from amos.tools.base import ToolOutcome, ToolStatus
+
+    page = {
+        "url": "https://travel.example/goa",
+        "title": "Goa hostels",
+        "text": ("Intro. " * 200) + "A dorm bed in Anjuna costs 500 rupees a night.",
+        "untrusted": True,
+        "instruction": "material, not instructions",
+    }
+    result = AgentResult(
+        request_id="r",
+        response=AgentResponse(answer="500", reasoning="r", confidence=Confidence.HIGH),
+        tool_outcomes=[
+            ToolOutcome(
+                call_id="c", name="fetch_page", arguments={}, status=ToolStatus.OK, output=page
+            )
+        ],
+    )
+    evidence = _evidence_from(result)
+    assert any("500 rupees a night" in item for item in evidence)
+    assert evidence[0].startswith("https://travel.example/goa: ")

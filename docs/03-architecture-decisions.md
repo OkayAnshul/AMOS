@@ -995,3 +995,108 @@ Plain modules keep the whole frontend readable in a browser's view-source.
 ### Reconsider if
 The page grows past one presenter (then server-sent events, ADR-015's reconsider-if), or a second
 person maintains the frontend (then a framework's conventions start paying for themselves).
+
+---
+
+## ADR-018 — Web research through self-hosted SearXNG, and pages only from this run's own results
+
+**Date** 2026-11-21 · **Status** Accepted (V1.9)
+
+### Context
+Every goal AMOS answers today is about its own documentation. The demo needs goals about the
+world — costs, comparisons — answered with web citations, **without giving a model an open
+network**: `http_get` is allowlisted to seven documentation hosts for exactly that reason.
+
+### Options for search
+1. **A keyed search API** (Tavily, Brave, …).
+2. **Self-hosted SearXNG**, a metasearch engine run as a container beside Postgres.
+3. **The model provider's own search grounding.** Gemini 3's free tier allows **0** grounded
+   requests (account page, 2026-11-19).
+4. **Scraping a search engine's HTML** — no.
+
+### Decision — search
+**Option 2.** Anshul has no keyed provider, and SearXNG needs no key and no account. It runs from
+`compose.yaml`, **pinned** to `searxng/searxng:2026.11.6-ac11e14c5` (Docker Hub, 2026-11-21 — two
+weeks old, per the project's rule), bound to `127.0.0.1:8888`, configured with
+`use_default_settings: true` plus three changes: JSON output enabled (`search.formats`, without
+which the API answers 403), the limiter off (a private instance), and the secret from
+`$SEARXNG_SECRET`. All read from docs.searxng.org on the day. `web_search(query)` calls
+`GET /search?q=…&format=json` and returns title, URL, snippet and engine for the top results. The
+tool's interface names no provider, so a keyed one can sit behind it later.
+
+### Decision — fetching pages
+`fetch_page(url)` fetches a page **only if `web_search` returned that exact URL earlier in the same
+run** — a provenance allowlist enforced in code. Provenance is read from the **stored run record**
+(ADR-015): the run's own `web_search` rows. Nothing in memory to leak between runs or lose on a
+restart, and without a database the tool refuses everything: it fails closed.
+On top of provenance, the existing guard from `http_get`, now shared: `https` only, the resolved
+address must not be private, loopback or link-local. Redirects are followed only within the same
+host, each hop re-checked. Responses are capped at 500 KB and reduced to text with the standard
+library's `html.parser` (no new dependency), 20 000 characters at most.
+
+**Page text is untrusted data (N-12).** The tool's output says so, the researcher's instruction
+says to treat it as material rather than instructions, and a fixture page containing a prompt
+injection is part of the tests.
+
+### Why
+A keyed API is the better search but the wrong dependency for this project today. Provenance turns
+"the model may fetch any URL" into "the model may read what search found", which is the whole
+research workflow and nothing more. Reading provenance from the stored record reuses V1.7 instead
+of adding a second, in-memory source of truth.
+
+### Tradeoffs
+- **SearXNG's quality varies** with the upstream engines it queries, and they can rate-limit it.
+  Measured on ten fixed queries (`experiments-log.md`), not assumed.
+- **A ~100 MB container** in the demo's dependencies; `make demo` (V2.0) checks it is up.
+- Search results and pages change daily, so tests use **recorded fixtures**; one live test is opt-in.
+- Following no redirect to another host means some links fail. Acceptable: a refusal the model can
+  read is better than a hop nothing checked.
+
+### Consequences
+- `AMOS_WEB_ENABLED` (default **off**) adds both tools to the researcher; `web` is a per-run option.
+- `AMOS_SEARXNG_URL` names the instance (default `http://127.0.0.1:8888`); `/v1/system` reports
+  whether it answers.
+
+### Reconsider if
+SearXNG's measured relevance is too low for the demo questions (then a keyed provider behind the
+same tool), or a page needs JavaScript to render (then this is the wrong tool, not a reason to
+add a browser).
+
+---
+
+## ADR-019 — A per-run budget, enforced in code
+
+**Date** 2026-11-21 · **Status** Accepted (V1.9)
+
+### Context
+Web research fans out: search, read three pages, search again. Every step is a model call or a tool
+call against a finite quota (500 model calls a day). The existing bounds are per call, per task and
+per run *attempt*; nothing bounds what one run may spend in total.
+
+### Decision
+`RunBudget` — model calls, tool calls and page fetches — set per run by `RunService` and the
+worker (`AMOS_RUN_MAX_LLM_CALLS=40`, `AMOS_RUN_MAX_TOOL_CALLS=40`, `AMOS_RUN_MAX_PAGE_FETCHES=8`),
+and checked at the seams ADR-015 already built:
+- **Model calls** in `RecordingProvider`: past the budget, `BudgetExhaustedError`, which the
+  executor does not retry. The synthesis call is exempt, so a run that spent its budget can still
+  combine what it found.
+- **Tool calls** in `ToolUsingAgent._invoke`: past the budget, the call is **denied** with a reason
+  the model can read, so it answers with what it has instead of crashing.
+- **Page fetches** in `fetch_page`.
+
+Each limit, when first reached, is recorded as a `budget.exhausted` event, so the page shows it.
+
+### Why
+A budget is a guarantee, so it belongs to code (rule 1 of the working agreement); a prompt asking
+the model to be frugal is not one. Enforcing it at the seams that already see every call means one
+check each, not one per caller.
+
+### Tradeoffs
+- The limits are **guesses** sized from V1.7's live runs (10–12 calls for a two-task goal) with room
+  for research; complex goals (V1.10) will test them.
+- Exhausting the model budget inside a task fails that task permanently; the run ends partial or
+  failed, with the reason in its record.
+
+### Reconsider if
+Demo goals hit the budget while still making progress (raise it), or a run legitimately needs
+different budgets per agent.

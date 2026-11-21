@@ -804,3 +804,13 @@ letting untrusted text become markup: `textContent`, not `innerHTML`.
 - Why does the page still need `textContent` if the CSP refuses inline script?
 - Why can JavaScript set `el.style.width` under `style-src 'self'` when a `style=` attribute cannot?
 **Status:** ⬜ Recognise
+
+### SSRF: check every address a name resolves to (Session 18)
+`gethostbyname` returns one IPv4 address; a name can also resolve to IPv6, and an attacker controls
+which. The guard resolves with `getaddrinfo` and refuses if any address is internal.
+**Read:** <https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html> ·
+<https://docs.python.org/3/library/ipaddress.html>
+**Answer:**
+- Why is "this run's own search returned it" a stronger rule than a host allowlist for research?
+- Why are redirects followed only within the same site, with each hop re-checked?
+**Status:** ⬜ Recognise

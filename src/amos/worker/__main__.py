@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 
 from amos.agents.schemas import RunOptions
-from amos.api.dependencies import build_provider, build_registry, build_run_agent
+from amos.api.dependencies import budget_for, build_provider, build_registry, build_run_agent
 from amos.auth import Actor
 from amos.config import get_settings
 from amos.database.engine import create_engine, create_session_factory
@@ -48,6 +48,7 @@ async def main() -> None:
             factory,
             agent_for,
             episodic=episodic,
+            budget=lambda: budget_for(settings),
             poll_interval=settings.worker_poll_interval,
             max_attempts=settings.worker_max_attempts,
             visibility_timeout=settings.worker_visibility_timeout,

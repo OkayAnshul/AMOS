@@ -130,6 +130,21 @@ Unbounded anything is a denial-of-service vector, including a self-inflicted one
 production-secure. Authentication is a *precondition* for exposure, not a sufficient one — there
 is no TLS, no inbound rate limiting, no audit of authentication attempts, and no key rotation.
 
+## Web research (V1.9, ADR-018)
+
+| Control | How |
+|---|---|
+| Search is local | `web_search` queries a self-hosted SearXNG on `127.0.0.1`; the URL is configuration, never model input |
+| Pages only from this run's search | `fetch_page` reads a URL only if this run's own stored `web_search` rows returned it; no database, no fetch (fails closed) |
+| SSRF | Shared guard (`tools/builtin/net.py`): `https` only; **every** resolved address must be public — IPv6 included, which the old `gethostbyname` check missed; same-site redirects only, each hop re-checked |
+| Size | 500 KB read, 20 000 characters returned; HTML or plain text only |
+| Untrusted content (N-12) | Page text is marked `untrusted` with an instruction that it is material, not orders; the researcher's instruction says the same; an injection fixture page is in the tests |
+| Spend | A per-run budget of model calls, tool calls and page reads, enforced in code (ADR-019) |
+
+**Residual risk, stated:** prompt injection is mitigated, not prevented. The structural limits are
+what hold — the researcher has no write tools beyond `remember_fact`, every call is recorded, and
+the critic reviews the answer.
+
 ## Authentication and isolation (V1.4)
 
 Full reasoning in ADR-013. The four things worth knowing:

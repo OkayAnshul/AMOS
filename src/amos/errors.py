@@ -46,6 +46,11 @@ class ProviderUnavailableError(ProviderError):
     """
 
 
+class BudgetExhaustedError(AmosError):
+    """This run has spent its budget of model calls (ADR-019). Not retried: the
+    budget does not refill."""
+
+
 class OutputValidationError(AmosError):
     """Model output failed validation after every repair attempt was exhausted.
 

@@ -31,6 +31,7 @@ import time
 from typing import Any
 
 from amos.agents.schemas import AgentResponse, AgentResult
+from amos.budget import charge_tool_call
 from amos.database.recorder import current_recorder
 from amos.errors import ToolLoopExhaustedError, ToolNotFoundError
 from amos.llm.base import LLMCallRecord, LLMProvider, LLMRequest, Turn
@@ -172,11 +173,59 @@ class ToolUsingAgent:
             outcomes.extend(step_outcomes)
             history.append(Turn(role="tool", tool_outcomes=step_outcomes))
 
-        raise ToolLoopExhaustedError(
-            f"Agent made {self._max_iterations} tool-calling rounds without producing "
-            "an answer. Stopping to avoid an unbounded loop.",
-            iterations=self._max_iterations,
-            tool_calls=len(outcomes),
+        # The cap is reached. One more call, with NO tools offered, asking for an
+        # answer from what has been gathered (V1.9). Before this, a researcher
+        # that kept searching the web failed its task after five rounds — and
+        # the executor retried it twice more, the same way, for nothing: 19
+        # model calls and no answer on the first live web run. Still bounded —
+        # exactly one extra call — and a model that asks for a tool even now
+        # gets the old failure.
+        history.append(Turn(role="user", text=FINAL_ANSWER_PROMPT))
+        response = await self._provider.complete(
+            LLMRequest(
+                history=history,
+                system_instruction=self._system_instruction,
+                response_schema=AgentResponse,
+                temperature=self._temperature,
+            ),
+            timeout=self._timeout,
+        )
+        calls.append(
+            LLMCallRecord(
+                provider=response.provider,
+                model=response.model,
+                prompt_tokens=response.prompt_tokens,
+                output_tokens=response.output_tokens,
+                latency_ms=response.latency_ms,
+                repair_attempt=self._max_iterations,
+            )
+        )
+        if response.wants_tools:
+            raise ToolLoopExhaustedError(
+                f"Agent made {self._max_iterations} tool-calling rounds without producing "
+                "an answer, and asked for another tool when told to answer. Stopping to "
+                "avoid an unbounded loop.",
+                iterations=self._max_iterations,
+                tool_calls=len(outcomes),
+            )
+        final = (
+            response.parsed
+            if isinstance(response.parsed, AgentResponse)
+            else _fallback_response(response.text)
+        )
+        final.caveats.append(
+            f"Stopped after {self._max_iterations} rounds of tool calls; this answer uses "
+            "what had been gathered by then."
+        )
+        log_event(logger, "agent.finalised_at_cap", iterations=self._max_iterations)
+        return AgentResult(
+            request_id=request_id,
+            response=final,
+            llm_calls=calls,
+            tool_outcomes=outcomes,
+            repair_count=0,
+            total_tokens=sum(c.prompt_tokens + c.output_tokens for c in calls),
+            latency_ms=int((time.perf_counter() - started) * 1000),
         )
 
     async def _invoke(self, call: ToolCall) -> ToolOutcome:
@@ -187,7 +236,18 @@ class ToolUsingAgent:
         to the run as they happen (ADR-015). Delegates, revisions and the
         reconciler all run a ToolUsingAgent, so they are covered too.
         """
-        outcome = await self._execute(call)
+        denied = await charge_tool_call(call.name)
+        outcome = (
+            ToolOutcome(
+                call_id=call.id,
+                name=call.name,
+                arguments=call.arguments,
+                status=ToolStatus.DENIED,
+                error=denied,
+            )
+            if denied
+            else await self._execute(call)
+        )
         recorder = current_recorder()
         if recorder is not None:
             await recorder.tool_call(outcome)
@@ -217,6 +277,13 @@ class ToolUsingAgent:
             latency_ms=outcome.latency_ms,
         )
         return outcome
+
+
+#: Sent when the tool rounds are spent. No tools are offered with it.
+FINAL_ANSWER_PROMPT = (
+    "You have used all of your tool calls for this task. Answer now, using only what "
+    "your tool calls returned. Say plainly what you could not find."
+)
 
 
 def _fallback_response(text: str) -> AgentResponse:
