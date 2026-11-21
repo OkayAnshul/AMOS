@@ -42,6 +42,36 @@ DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 MAX_REQUEST_CHARS = 18_000
 #: A tool result is never cut below this.
 MIN_TOOL_CHARS = 1_500
+#: Models with strict structured output (Groq's docs, 2026-11-22).
+STRICT_MODELS = frozenset({"openai/gpt-oss-120b", "openai/gpt-oss-20b"})
+#: Keywords strict mode is not documented to accept; pydantic still enforces them after parsing.
+_UNSTRICT = frozenset(
+    {"default", "minLength", "maxLength", "minItems", "maxItems", "pattern", "format"}
+    | {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "title"}
+)
+
+
+def strict_schema(schema: Any) -> Any:
+    """A JSON schema Groq's strict mode accepts: every object's properties all
+    required, no additional properties, and no keywords strict mode rejects."""
+    if isinstance(schema, list):
+        return [strict_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    out = {
+        key: strict_schema(value)
+        for key, value in schema.items()
+        if key not in _UNSTRICT or key == "properties"
+    }
+    if isinstance(out.get("properties"), dict):
+        out["properties"] = {
+            name: strict_schema(value) for name, value in schema["properties"].items()
+        }
+        out["required"] = list(out["properties"])
+        out["additionalProperties"] = False
+    return out
+
+
 #: Groq's own custom status for "flex tier at capacity"; transient like a 503.
 _UNAVAILABLE = {498, 500, 502, 503, 504}
 
@@ -183,12 +213,18 @@ class GroqProvider:
                 # the schema, and parse the final answer from the text.
                 system += _schema_instruction(schema)
         elif schema is not None:
+            # Strict mode guarantees the schema by constrained decoding, on the models
+            # that support it. Best-effort mode was seen live leaving out a required
+            # field, which turned a writer's whole JSON into the answer text.
+            strict = self.model in STRICT_MODELS
             body["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
                     "name": schema.__name__,
-                    "strict": False,
-                    "schema": schema.model_json_schema(),
+                    "strict": strict,
+                    "schema": strict_schema(schema.model_json_schema())
+                    if strict
+                    else schema.model_json_schema(),
                 },
             }
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}] if system else []

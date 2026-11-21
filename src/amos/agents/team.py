@@ -27,6 +27,7 @@ from amos.agents.delegation import (
     DelegationBudget,
 )
 from amos.agents.messages import CriticReport
+from amos.agents.reader import merge, read_findings
 from amos.agents.registry import WEB_INSTRUCTION, AgentRegistry, AgentSpec
 from amos.agents.router import Router
 from amos.agents.schemas import AgentResponse, AgentResult, Confidence
@@ -38,6 +39,9 @@ from amos.observability import call_scope, log_event
 from amos.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+#: An agent with any of these reads sources, so a reader can pull findings from them.
+SOURCE_TOOLS = frozenset({"web_search", "fetch_page", "search_knowledge"})
 
 
 class AgentTeam:
@@ -65,7 +69,9 @@ class AgentTeam:
         max_delegation_depth: int = DEFAULT_MAX_DEPTH,
         delegation_budget: int = DEFAULT_BUDGET,
         sources: SourceLedger | None = None,
+        reader_enabled: bool = True,
     ) -> None:
+        self._reader_enabled = reader_enabled
         self._provider = provider
         self._tools = tools
         self._agents = agents or AgentRegistry()
@@ -177,6 +183,20 @@ class AgentTeam:
                 goal, agent, answer, result, spec.name, composes=not spec.tools
             )
             calls.extend(review_calls)
+
+        if self._reader_enabled and spec.tools & SOURCE_TOOLS:
+            # One focused call over exactly what this task read; its findings join the
+            # researcher's own, and code checks every quote either way (ADR-022).
+            with call_scope(purpose="reader", agent=spec.name):
+                extra = await read_findings(
+                    self._provider,
+                    goal,
+                    [*result.tool_outcomes, *budget.tool_outcomes],
+                    timeout=self._timeout,
+                    calls=calls,
+                )
+            if extra:
+                answer = answer.model_copy(update={"findings": merge(answer.findings, extra)})
 
         if not spec.tools:
             # A tool-less agent composes from material it was given; every source

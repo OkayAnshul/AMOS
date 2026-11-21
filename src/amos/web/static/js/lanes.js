@@ -80,7 +80,7 @@ export function buildModel(trace, now = Date.now()) {
       (e) => FINISH[e.kind] && e.task_ref === ref && e.task_attempt === attempt && e.seq > start.seq,
     );
     const own = calls.filter(
-      (c) => c.task_ref === ref && c.task_attempt === attempt && ["router", "agent", "revision"].includes(c.purpose),
+      (c) => c.task_ref === ref && c.task_attempt === attempt && ["router", "agent", "revision", "reader"].includes(c.purpose),
     );
     const agentCall = own.find((c) => c.purpose === "agent" && c.agent);
     const agent = routed.get(`${ref}#${attempt}`) || agentCall?.agent || tasks.get(ref)?.agent || "agent";
@@ -104,7 +104,7 @@ export function buildModel(trace, now = Date.now()) {
 
   // A run without planning has no task events: one implicit task.
   if (!events.some((e) => e.kind === "task.started")) {
-    const own = calls.filter((c) => ["router", "agent", "revision"].includes(c.purpose));
+    const own = calls.filter((c) => ["router", "agent", "revision", "reader"].includes(c.purpose));
     if (own.length || live) {
       const agentCall = own.find((c) => c.purpose === "agent" && c.agent);
       const routedRun = events.find((e) => e.kind === "task.routed");
