@@ -13,6 +13,7 @@ from amos.agents.agent import GroundedAgent
 from amos.agents.schemas import OPTION_SETTINGS, RunOptions
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent, build_default_registry
+from amos.budget import RunBudget
 from amos.config import Settings
 from amos.database.progress import RunProgress
 from amos.llm.base import LLMProvider
@@ -25,6 +26,7 @@ from amos.orchestration.orchestrator import Orchestrator
 from amos.rag.embeddings import GeminiEmbeddings
 from amos.rag.retrieval import SearchKnowledgeTool
 from amos.rag.store import SessionScopedVectorStore
+from amos.tools.builtin.web import WEB_TOOLS, FetchPageTool, RecordedProvenance, WebSearchTool
 from amos.tools.registry import ToolRegistry
 
 
@@ -89,6 +91,15 @@ def build_registry(settings: Settings, session_factory: object | None = None) ->
                         session_factory, embeddings, min_score=settings.memory_min_score
                     ),
                     RecallPastRunsTool(session_factory, embeddings),
+                ]
+            )
+        if settings.web_enabled:
+            # With a database only: fetch_page's provenance is read from the
+            # stored run, so without one it could fetch nothing (ADR-018).
+            extra.extend(
+                [
+                    WebSearchTool(settings.searxng_url),
+                    FetchPageTool(RecordedProvenance(session_factory)),
                 ]
             )
     return build_default_registry(Path(settings.tool_sandbox_root).resolve(), extra)
@@ -202,9 +213,21 @@ def settings_for(settings: Settings, options: RunOptions | None) -> Settings:
 
 
 def filter_registry(registry: ToolRegistry, settings: Settings) -> ToolRegistry:
-    if settings.memory_enabled:
+    dropped = (set() if settings.memory_enabled else set(MEMORY_TOOLS)) | (
+        set() if settings.web_enabled else set(WEB_TOOLS)
+    )
+    if not dropped & set(registry.names):
         return registry
-    return ToolRegistry([tool for tool in registry if tool.name not in MEMORY_TOOLS])
+    return ToolRegistry([tool for tool in registry if tool.name not in dropped])
+
+
+def budget_for(settings: Settings) -> RunBudget:
+    """A fresh budget for one run (ADR-019)."""
+    return RunBudget(
+        max_llm_calls=settings.run_max_llm_calls,
+        max_tool_calls=settings.run_max_tool_calls,
+        max_page_fetches=settings.run_max_page_fetches,
+    )
 
 
 def build_run_agent(

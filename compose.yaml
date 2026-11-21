@@ -42,5 +42,23 @@ services:
       - "4318:4318"   # OTLP/HTTP
     profiles: ["observability"]
 
+  # Web search for the researcher (V1.9, ADR-018). A metasearch engine run
+  # locally, so web_search needs no key and no account. Pinned to a build two
+  # weeks old on the day it was chosen; bound to localhost only.
+  # Start it with `make web-up`.
+  searxng:
+    image: docker.io/searxng/searxng:2026.11.6-ac11e14c5
+    container_name: amos-searxng
+    environment:
+      # Used for SearXNG's own cryptography. Set your own in .env for anything
+      # beyond one machine.
+      SEARXNG_SECRET: "${SEARXNG_SECRET:-amos-local-searxng-only}"
+      SEARXNG_BASE_URL: "http://127.0.0.1:8888/"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro,Z
+    ports:
+      - "127.0.0.1:8888:8080"
+    profiles: ["web"]
+
 volumes:
   amos-pgdata:

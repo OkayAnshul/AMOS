@@ -49,6 +49,7 @@ OPTION_SETTINGS: dict[str, str] = {
     "critic": "critic_enabled",
     "delegation": "delegation_enabled",
     "memory": "memory_enabled",
+    "web": "web_enabled",
 }
 
 
@@ -69,6 +70,7 @@ class RunOptions(BaseModel):
     critic: bool | None = None
     delegation: bool | None = None
     memory: bool | None = None
+    web: bool | None = None
 
     def given(self) -> dict[str, bool]:
         """Only the options the client actually set."""

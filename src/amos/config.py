@@ -159,6 +159,18 @@ class Settings(BaseSettings):
             "or a legitimately running task has its run reclaimed underneath it."
         ),
     )
+    # V1.9 web research (ADR-018) and the per-run budget (ADR-019).
+    web_enabled: bool = Field(
+        default=False,
+        description="Give the researcher web_search and fetch_page. Needs SearXNG (make web-up).",
+    )
+    searxng_url: str = Field(
+        default="http://127.0.0.1:8888", description="The SearXNG instance web_search queries."
+    )
+    run_max_llm_calls: int = Field(default=40, ge=1, le=500)
+    run_max_tool_calls: int = Field(default=40, ge=1, le=500)
+    run_max_page_fetches: int = Field(default=8, ge=0, le=100)
+
     planning_enabled: bool = Field(
         default=True,
         description=(
