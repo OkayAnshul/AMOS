@@ -485,3 +485,29 @@ async def test_an_auth_error_is_not_retried() -> None:
     await Executor(runner, max_attempts=3, sleep=no_sleep).execute(make_plan(task("t1")))
 
     assert len(runner.goals) == 1
+
+
+async def test_a_dependents_material_carries_the_task_id_and_its_sources() -> None:
+    """V1.10: the writer cited task descriptions because the material it got
+    never carried the urls its upstream tasks read."""
+    from amos.tools.base import ToolOutcome, ToolStatus
+
+    def researched(_attempt: int) -> AgentResult:
+        r = result("Dorm beds cost ₹400")
+        r.tool_outcomes.append(
+            ToolOutcome(
+                call_id="c",
+                name="fetch_page",
+                arguments={},
+                status=ToolStatus.OK,
+                output={"url": "https://hostels.example/goa", "text": "..."},
+            )
+        )
+        return r
+
+    runner = ScriptedRunner({"do t1": researched})
+    await Executor(runner, sleep=no_sleep).execute(make_plan(task("t1"), task("t2", "t1")))
+
+    material = next(g for g in runner.goals if g.startswith("do t2"))
+    assert "- t1: do t1" in material
+    assert "Sources it read: https://hostels.example/goa" in material

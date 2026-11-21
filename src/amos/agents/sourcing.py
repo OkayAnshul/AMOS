@@ -104,6 +104,14 @@ class RecordedSources:
         except ValueError:
             return set()
         async with session_scope(self._factory) as session:
+            # The run's own tasks are citable too — "(source: t4)" for a figure an
+            # earlier task computed, which has no url by nature.
+            from amos.database.models import Task
+
+            refs = (
+                await session.execute(select(Task.plan_ref).where(Task.run_id == run_id))
+            ).scalars()
+            found: set[str] = set(refs)
             rows = await session.execute(
                 select(ToolCallRow.tool_name, ToolCallRow.output).where(
                     ToolCallRow.run_id == run_id,
@@ -111,7 +119,6 @@ class RecordedSources:
                     ToolCallRow.tool_name.in_(["web_search", "fetch_page", "search_knowledge"]),
                 )
             )
-            found: set[str] = set()
             for tool_name, output in rows:
                 found |= sources_in(output, tool_name)
             return found

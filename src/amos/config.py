@@ -167,7 +167,9 @@ class Settings(BaseSettings):
     searxng_url: str = Field(
         default="http://127.0.0.1:8888", description="The SearXNG instance web_search queries."
     )
-    run_max_llm_calls: int = Field(default=40, ge=1, le=500)
+    # 60, not 40: the first live complex goal (five tasks, each routed and
+    # reviewed) spent 40 and lost its final review (ADR-019's reconsider-if).
+    run_max_llm_calls: int = Field(default=60, ge=1, le=500)
     run_max_tool_calls: int = Field(default=40, ge=1, le=500)
     run_max_page_fetches: int = Field(default=8, ge=0, le=100)
 

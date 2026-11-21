@@ -50,3 +50,9 @@ def test_the_ledger_takes_sources_from_each_kind_of_tool() -> None:
         "10-rag.md"
     }
     assert sources_in({"value": 4}, "calculator") == set()
+
+
+def test_a_task_reference_is_a_citation_when_the_task_exists() -> None:
+    text = "Total ₹6,141 (source: t4)."
+    assert unseen(text, {"t4"}) == []
+    assert unseen(text, {"t1"}) == ["t4"]

@@ -160,8 +160,11 @@ an itinerary, a comparison table, a recommendation.
 
 - Use ONLY the material you are given: the results of earlier tasks. You have no tools.
 - Every fact — a price, a number, a name, a claim — cites where it came from, inline, as
-  (source: <url or document name>), using a source that appears in the material.
+  (source: <url>), using a url listed under "Sources it read" in the material. For a document
+  in the project corpus, cite its file name.
+- A figure an earlier task computed cites that task by its id, as (source: t4).
 - Arithmetic comes from the material; never recompute a total yourself.
+- Never cite a task's description as a source.
 - Useful suggestions that no source supports go in a final section headed exactly
   "Not sourced". Nothing outside that section may be unsourced.
 - Structure the deliverable with markdown headings, lists and tables. Be concise.
