@@ -535,7 +535,7 @@ because the page could not show what it was asked to show.
 | V1.5 Demo-ready foundation ✅ | 1 session (was: + 2 calendar days) | — | `operations.md` |
 | V1.6 Reliability and isolation ✅ | 1 session | ADR-014 | `reliability.md`, `security.md` (added to) |
 | V1.7 Live run record and read API ✅ | 1½ sessions | ADR-015, ADR-016 | `run-record.md` |
-| V1.8 Mission control web page | 2 sessions | ADR-017 | `demo-surface.md` |
+| V1.8 Mission control web page ✅ | 2 sessions | ADR-017 | `demo-surface.md` |
 | V1.9 Web research (SearXNG) | 1 session | ADR-018, ADR-019 | `web-research.md` |
 | V1.10 Complex goals | 1 session | ADR-020 | `synthesis.md` |
 | V2.0 Demo package and release | ½ session + two rehearsals | — | — |
@@ -592,7 +592,7 @@ purpose, in order — and readable over HTTP.
 **Accept** a run's stored record reconstructs its graph, calls and verdicts · isolation tests ·
 `make eval` unchanged.
 
-### V1.8 — Mission control web page
+### V1.8 — Mission control web page ✅ (2026-11-21)
 **Objective** Show the system working, not just its answer.
 - Plain HTML, CSS and JavaScript served at `/`, no framework, no build step, no CDN, self-hosted
   fonts and a strict CSP (ADR-017). Model output rendered as text, never as HTML.

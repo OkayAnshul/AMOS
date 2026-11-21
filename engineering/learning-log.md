@@ -793,3 +793,14 @@ A client paging by "seq > last seen" can miss a row forever.
 - Why does the page fetch the whole run instead of a cursor?
 - What would make a cursor safe? (Hint: ordering by commit, not insert.)
 **Status:** ⬜ Recognise
+
+### Content-Security-Policy and DOM text (Session 18)
+`default-src 'self'` stops a page loading or running anything from elsewhere; refusing inline
+script means an injected `<script>` cannot run even if it reaches the DOM. The other half is never
+letting untrusted text become markup: `textContent`, not `innerHTML`.
+**Read:** <https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP> ·
+<https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html>
+**Answer:**
+- Why does the page still need `textContent` if the CSP refuses inline script?
+- Why can JavaScript set `el.style.width` under `style-src 'self'` when a `style=` attribute cannot?
+**Status:** ⬜ Recognise

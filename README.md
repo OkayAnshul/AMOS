@@ -4,11 +4,11 @@ An AI platform that takes a complex goal, decomposes it into tasks, assigns them
 agents, executes tools, retrieves knowledge, keeps memory, validates results, and recovers from
 failure.
 
-> **Status: V1.4.** The V0.1–V1.0 roadmap is complete; V1.1–V1.4 are past it.
-> Queues goals to worker processes that survive being killed mid-run — and now **resume** rather
-> than start over — routes work to specialised agents, plans task graphs, uses tools, retrieves
-> with citations, remembers facts across sessions, reviews its own answers, emits standard traces
-> that follow a job across processes, and **measures its own quality**.
+> **Status: V1.8.** The V0.1–V1.0 roadmap is complete; the demo track (V1.5–V2.0) is in progress.
+> Queues goals to worker processes that survive being killed mid-run — and **resume** rather than
+> start over — routes work to specialised agents, plans task graphs, uses tools, retrieves with
+> citations, remembers facts across sessions, reviews its own answers, **records every call and
+> decision as it happens**, and shows all of it live on a page served by the API.
 > See [`engineering/current-state.md`](engineering/current-state.md) for exactly where things stand.
 >
 > New here? [`docs/25-build-journal.md`](docs/25-build-journal.md) explains how it was built,
@@ -16,6 +16,18 @@ failure.
 >
 > Want to build it yourself? [`docs/build-along/`](docs/build-along/) is a file-by-file guide —
 > what to write, when, and why that file now rather than later.
+
+---
+
+## The mission-control page (V1.8)
+
+`make run`, then open <http://127.0.0.1:8000/> and paste your API key. Each run draws live: one
+lane per agent, a capsule per task attempt, a tick per model or tool call, the critic's verdicts,
+and an inspector for every call and decision. Around it: history, memory, your own uploaded
+documents, agents and tools, system health and today's quota, insights, dead letters. Plain HTML,
+CSS and JavaScript with no build step and nothing loaded from outside (ADR-017).
+
+![A finished run: the plan, two analyst tasks, both critic reviews, and the inspector open on one](docs/assets/mission-control-light.png)
 
 ---
 

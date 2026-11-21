@@ -25,6 +25,7 @@ All in `src/amos/api/app.py`; the read side's queries and response models in
 
 | Method | Path | Purpose | Success | Since |
 |---|---|---|---|---|
+| `GET` | `/` | the mission-control page (HTML; needs no key, the data does) | `200` | V1.8 |
 | `GET` | `/health` | liveness | `200` | V0.1 |
 | `POST` | `/v1/goals` | run a goal synchronously | `200` | V0.1 |
 | `POST` | `/v1/goals/async` | queue a goal for a worker (mounted when `AMOS_ASYNC_ENABLED`) | `202` | V0.8 |

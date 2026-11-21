@@ -1444,3 +1444,26 @@ with `critic: false` — progress visible while polling, zero critic calls, cita
 
 ### Next Exact Step
 V1.8 — the web page, ADR-017 first.
+
+## Session 18, continued — V1.8 (2026-11-21)
+
+**Module:** V1.8 — mission control web page (ADR-017)
+
+### What We Changed
+- `src/amos/web/`: `index.html`, `static/app.css`, `static/js/{main,api,dom,lanes}.js`,
+  `static/icon.svg`, `static/fonts/InterVariable.woff2` + licence. Served at `/` with a strict CSP.
+- Tests: `tests/unit/test_web_page.py` (serving, policy, assets, no outside URLs, no `innerHTML`);
+  `tests/browser/test_page.py` (opt-in, Playwright + installed Chrome). `make browser-test`.
+- Docs: ADR-017, README (with a screenshot), `06`, `19`, interview `demo-surface.md`, logs.
+
+### Problems Encountered
+1. The first screenshot script waited on a selector that matched a verdict, not the run's status.
+2. The shortcut, label fragments and a sticky inspector — found only by looking.
+
+### Tests Performed
+`make check` 704 passed; `make browser-test` passed, and failed when a paragraph was rendered with
+`innerHTML`. Live: demo queries 1, 2, 6a and 6b from the page against Gemini — sync and queued,
+light, dark, narrow, presenter — screenshots reviewed and iterated three times.
+
+### Next Exact Step
+V1.9 — web research, ADR-018 and ADR-019 first.

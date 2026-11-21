@@ -1,11 +1,14 @@
 # Common commands. `make help` lists them.
-.PHONY: help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker release attribution-check backup restore-drill restore
+.PHONY: browser-test help test lint types check fmt up down migrate ingest eval eval-baseline routing retrieval memory-trials run worker release attribution-check backup restore-drill restore
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
 
 test:  ## Run the test suite (database tests skip if none is running)
 	.venv/bin/python -m pytest -q
+
+browser-test:  ## Drive the demo page in the installed Chrome (needs Postgres; AMOS_CHROME overrides the path)
+	AMOS_RUN_BROWSER_TESTS=1 .venv/bin/python -m pytest -q tests/browser
 
 lint:  ## Ruff: lint and format check, as CI runs them
 	.venv/bin/ruff check src tests

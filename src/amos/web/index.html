@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>AMOS</title>
+    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+    <link rel="preload" href="/static/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/static/app.css" />
+    <script type="module" src="/static/js/main.js"></script>
+  </head>
+  <body>
+    <div class="window" id="window">
+      <nav class="sidebar" aria-label="Sections">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="9" cy="10" r="4" class="mark-a" />
+            <circle cx="23" cy="10" r="4" class="mark-b" />
+            <circle cx="16" cy="22" r="4" class="mark-c" />
+            <path d="M12.5 12.5 L14.5 18.5 M19.5 12.5 L17.5 18.5" class="mark-line" />
+          </svg>
+          <div>
+            <div class="brand-name">AMOS</div>
+            <div class="brand-sub" id="brand-sub">Multi-agent operating system</div>
+          </div>
+        </div>
+        <ul class="nav" id="nav"></ul>
+        <div class="sidebar-foot" id="sidebar-foot"></div>
+      </nav>
+
+      <main class="content" id="content" tabindex="-1"></main>
+
+      <aside class="inspector" id="inspector" aria-label="Details" hidden>
+        <header class="inspector-head">
+          <h2 class="inspector-title" id="inspector-title">Details</h2>
+          <button class="icon-button" id="inspector-close" type="button" aria-label="Close details">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </header>
+        <div class="inspector-body" id="inspector-body"></div>
+      </aside>
+    </div>
+    <div class="toast-host" id="toasts" role="status" aria-live="polite"></div>
+  </body>
+</html>

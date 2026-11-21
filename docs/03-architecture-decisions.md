@@ -941,3 +941,57 @@ delegation on a server that disabled it would make the environment file advisory
 
 ### Reconsider if
 Options need to be per *user* rather than per run (that is authorization, not configuration).
+
+---
+
+## ADR-017 — The demo page is plain HTML, CSS and JavaScript, served by the API, with nothing from outside
+
+**Date** 2026-11-21 · **Status** Accepted (V1.8)
+
+### Context
+V1.7 made the whole run readable over HTTP. The demo needs a page that shows it live on a
+projector to someone who has never seen AMOS: the plan as a graph, which agent did what, every
+call and decision, the answer with its sources, and the system's health and quotas around it.
+Anshul does not write the frontend and has to explain it.
+
+### Options
+1. **A framework and a build step** (React/Vite or similar).
+2. **Server-rendered templates** (Jinja + HTMX).
+3. **Plain HTML, CSS and ES modules**, served as static files by the existing app.
+
+### Decision
+**Option 3.** `src/amos/web/` holds `index.html`, one stylesheet and a handful of ES modules,
+served by Starlette's `StaticFiles` — already a dependency, no `aiofiles` needed. `GET /` returns
+the page; everything it shows comes from the V1.7 read API with the user's API key.
+
+- **Nothing from outside.** The typeface (Inter, OFL) is a file in the repository; there is no
+  CDN, no web font service, no analytics. A strict Content-Security-Policy —
+  `default-src 'self'` — makes that enforced rather than intended, and a test fails if a static
+  file names an external URL.
+- **Model output is untrusted (N-12).** It is rendered with `textContent`, and answers go through a
+  small markdown renderer that builds DOM nodes; `innerHTML` is never given text that came from a
+  model, a document or a user.
+- **The key** lives in `sessionStorage` unless the presenter chooses "remember on this device".
+- **Browser tests** use Playwright for Python, a *development* dependency, driving the Chrome
+  already installed — no browser download. Opt-in (`make browser-test`), like the live tests.
+
+### Why
+A build step is a second toolchain to install, upgrade and explain, for a page with one author and
+one audience. Templates would put rendering on the server and make every live update a round trip
+of HTML; the page's main job — redrawing a run several times a second — is client-side work.
+Plain modules keep the whole frontend readable in a browser's view-source.
+
+### Tradeoffs
+- **No component library**, so every control is written by hand: more code than a framework would
+  need, all of it inspectable.
+- **Polling, not streaming.** The page re-reads the whole run about once a second (ADR-015 explains
+  why not a cursor). Fine for one presenter; not a design for many viewers.
+- ES modules need a modern browser; the target is one known machine.
+
+### Consequences
+- The API serves a page, so `/` is no longer a 404. It needs no key; the data behind it does.
+- Hatchling packages `src/amos/web/` with the wheel, so the page ships with the service.
+
+### Reconsider if
+The page grows past one presenter (then server-sent events, ADR-015's reconsider-if), or a second
+person maintains the frontend (then a framework's conventions start paying for themselves).

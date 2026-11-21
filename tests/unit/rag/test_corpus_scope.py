@@ -24,9 +24,17 @@ def test_the_corpus_fits_one_days_embedding_quota() -> None:
     chunks = sum(
         len(chunk_markdown(path.read_text(encoding="utf-8")))
         for path in DOCS.rglob("*.md")
-        if not set(path.relative_to(DOCS).parts[:-1]) & set(CORPUS_EXCLUDE)
+        if not set(path.relative_to(DOCS).parts) & set(CORPUS_EXCLUDE)
     )
     assert chunks <= DAILY_EMBEDDING_QUOTA - HEADROOM, (
         f"docs/ is {chunks} chunks; a rebuild no longer fits one day's quota. "
         "Re-decide CORPUS_EXCLUDE in amos.rag.cli (and record why)."
     )
+
+
+def test_every_excluded_name_names_something_real() -> None:
+    """A misspelt exclusion excludes nothing and fails silently — the corpus just
+    grows. Each name must match a directory or a file under docs/."""
+    names = {part for path in DOCS.rglob("*") for part in path.relative_to(DOCS).parts}
+    missing = [name for name in CORPUS_EXCLUDE if name not in names]
+    assert not missing, f"CORPUS_EXCLUDE names nothing under docs/: {missing}"
