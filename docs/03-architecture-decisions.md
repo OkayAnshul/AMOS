@@ -1204,3 +1204,53 @@ the instruction and the answer parsed, and without tools `json_schema` is used.
 ### Reconsider if
 Groq's free tier changes, Gemini's capacity problems stop, or the writer's output is not measurably
 better on the complex goals than flash-lite's.
+
+---
+
+## ADR-022 — The hand-off carries quoted findings, checked in code
+
+**Date** 2026-11-22 · **Status** Accepted (V1.11) · **Builds on** ADR-018 (provenance), ADR-020 (citations)
+
+### Context
+A researcher reads a page of 20,000 characters and hands on two or three sentences. Everything else
+it read is gone before the analyst or the writer starts, so the deliverable can only be as specific
+as that summary — the measured cause of the generic Goa plans (one named hostel, "typical" transport,
+no food). The citation check could not help: it proves a cited URL was *seen*, not that the page
+*says* the figure, and it missed citations written in a table's Source column (a live run reported
+"cited 0" for a fully sourced table).
+
+### Options
+1. **Pass the raw pages on.** Nothing lost, but three pages per task is ~13,000 tokens per hand-off:
+   over Groq's 8,000 tokens a minute, and a writer drowning in boilerplate.
+2. **Ask for a longer summary.** Cheaper, but still a paraphrase nobody can check.
+3. **Findings with quotes.** Each researcher returns a list of `{fact, quote, source}`: the fact
+   with its figure, the **exact words** on the page that state it, and the URL. Code checks every
+   quote against the text that task actually read.
+
+### Decision
+**Option 3.** `AgentResponse.findings` is optional, so agents that compute or compose leave it
+empty. After a task succeeds the executor checks each finding against that task's own tool
+outputs — page text, search snippets, document passages — after normalising case, spacing, quotes
+and thousands separators:
+- **checked** — the quote is in the text of the cited source (or, if the source is not one the task
+  read, of any source it read — then marked `source_seen: false`), and every number in the fact
+  appears in the quote;
+- **quote not found**, or **figure not in quote** — otherwise.
+
+The result is a `findings.checked` event and the hand-off: downstream tasks receive checked findings
+as facts, and the rest under a separate heading they are told not to present as fact. The writer
+cites each finding's URL. The citation check also reads a markdown table's Source column.
+
+What this proves is narrow and exact: the words are on the page the agent says they came from, and
+the number in the fact is in those words. It does not prove the page is right, or that the fact is
+a fair reading — that stays the critic's job.
+
+### Tradeoffs
+- A model that paraphrases instead of quoting gets "quote not found" on a true fact. The finding is
+  still passed on, marked; nothing is dropped silently.
+- A longer structured answer costs output tokens on every research call.
+- Normalisation is deliberately simple; it will miss a quote whose characters were re-encoded.
+
+### Reconsider if
+More than a third of findings fail the check on live runs while being true on reading — then the
+check, or the instruction, is wrong.
