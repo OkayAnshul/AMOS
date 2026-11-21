@@ -83,4 +83,4 @@ def test_the_typeface_ships_with_its_licence() -> None:
 def test_the_page_is_packaged_with_the_service() -> None:
     """Hatchling packages everything under src/amos, so the page ships in the
     wheel; this pins that it lives there and not beside the repository."""
-    assert WEB_DIR == Path(__file__).resolve().parents[2] / "src" / "amos" / "web"
+    assert Path(__file__).resolve().parents[2] / "src" / "amos" / "web" == WEB_DIR

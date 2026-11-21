@@ -62,9 +62,10 @@ def _free_port() -> int:
 
 
 async def _make_user(url: str) -> tuple[uuid.UUID, str]:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
     from amos.auth import create_user
     from amos.database.engine import session_scope
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     engine = create_async_engine(url)
     try:
