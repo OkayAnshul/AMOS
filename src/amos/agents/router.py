@@ -154,6 +154,16 @@ async def evaluate_routing(router: Router, cases: list[RoutingCase]) -> RoutingR
 #: including tasks whose *topic* suggests one agent while their *requirement*
 #: suggests another — a router that only pattern-matches subject matter fails these.
 ROUTING_CASES: list[RoutingCase] = [
+    # V1.10: the writer composes deliverables from findings (ADR-020). The last of
+    # these is about a comparison — a topic that reads as the analyst's — but the
+    # requirement is to write it up from earlier results.
+    RoutingCase(
+        "Write a day-by-day itinerary for the trip using the costs found earlier", "writer"
+    ),
+    RoutingCase("Compose the final report from the research results above", "writer"),
+    RoutingCase(
+        "Put together the comparison table and recommendation from the earlier findings", "writer"
+    ),
     RoutingCase("Find what the documentation says about pgvector", "researcher"),
     RoutingCase("Read the file docs/13-security.md and summarise it", "researcher"),
     RoutingCase("Look up the retry policy in the project docs", "researcher"),

@@ -29,7 +29,8 @@ from amos.agents.delegation import (
 from amos.agents.messages import CriticReport
 from amos.agents.registry import WEB_INSTRUCTION, AgentRegistry, AgentSpec
 from amos.agents.router import Router
-from amos.agents.schemas import AgentResponse, AgentResult
+from amos.agents.schemas import AgentResponse, AgentResult, Confidence
+from amos.agents.sourcing import SourceLedger, cited, unseen
 from amos.agents.tool_agent import ToolUsingAgent
 from amos.database.recorder import record_event
 from amos.llm.base import LLMCallRecord, LLMProvider
@@ -63,6 +64,7 @@ class AgentTeam:
         delegation_enabled: bool = True,
         max_delegation_depth: int = DEFAULT_MAX_DEPTH,
         delegation_budget: int = DEFAULT_BUDGET,
+        sources: SourceLedger | None = None,
     ) -> None:
         self._provider = provider
         self._tools = tools
@@ -79,6 +81,9 @@ class AgentTeam:
         self._delegation_enabled = delegation_enabled
         self._max_delegation_depth = max_delegation_depth
         self._delegation_budget = delegation_budget
+        # What this run has seen, for checking a writer's citations (ADR-020).
+        # None without a database: nothing to check against, so no check.
+        self._sources = sources
         self._router = Router(provider, self._agents, timeout=timeout)
         self._critic = Critic(provider, timeout=timeout)
 
@@ -108,10 +113,12 @@ class AgentTeam:
         if "web_search" in registry.names:
             instruction = f"{instruction}\n{WEB_INSTRUCTION}"
 
-        if self._delegation_enabled and depth < self._max_delegation_depth:
+        if spec.delegates and self._delegation_enabled and depth < self._max_delegation_depth:
             shared = budget if budget is not None else DelegationBudget(self._delegation_budget)
             others = frozenset(
-                other.name for other in self._agents.routable if other.name != spec.name
+                other.name
+                for other in self._agents.routable
+                if other.name != spec.name and other.delegates
             )
             if others:
                 registry = ToolRegistry(
@@ -167,9 +174,15 @@ class AgentTeam:
 
         if self._critic_enabled:
             answer, report, review_calls = await self._review_and_revise(
-                goal, agent, answer, result, spec.name
+                goal, agent, answer, result, spec.name, composes=not spec.tools
             )
             calls.extend(review_calls)
+
+        if not spec.tools:
+            # A tool-less agent composes from material it was given; every source
+            # it cites must be one this run actually saw (ADR-020). Code checks,
+            # not a model.
+            answer = await self._check_citations(answer)
 
         calls.extend(budget.llm_calls)
         return AgentResult(
@@ -201,6 +214,8 @@ class AgentTeam:
         answer: AgentResponse,
         result: AgentResult,
         agent_name: str = "agent",
+        *,
+        composes: bool = False,
     ) -> tuple[AgentResponse, CriticReport, list[LLMCallRecord]]:
         """Review, and allow a bounded number of revisions.
 
@@ -209,6 +224,12 @@ class AgentTeam:
         """
         calls: list[LLMCallRecord] = []
         evidence = _evidence_from(result)
+        if composes and not evidence:
+            # The writer has no tool calls to show; what it may use is the material
+            # in its instruction — the earlier tasks' results — so that is what the
+            # critic judges it against. With no evidence at all, every sentence
+            # of a deliverable would read as unsupported.
+            evidence = [f"Material the writer was given:\n{goal[:COMPOSER_EVIDENCE_CHARS]}"]
         report = await self._review(goal, answer, evidence, calls, revision=0)
 
         for attempt in range(self._max_revisions):
@@ -234,6 +255,28 @@ class AgentTeam:
             answer = apply_report(answer, report)
 
         return answer, report, calls
+
+    async def _check_citations(self, answer: AgentResponse) -> AgentResponse:
+        if self._sources is None:
+            return answer
+        seen = await self._sources.seen()
+        cited_sources = cited(answer.answer)
+        missing = unseen(answer.answer, seen)
+        await record_event(
+            "sources.checked",
+            cited=len(cited_sources),
+            seen=len(seen),
+            unseen=missing[:20],
+        )
+        if missing:
+            answer.caveats.append(
+                "Cites sources this run never saw: "
+                + ", ".join(missing[:8])
+                + ". Treat those claims as unverified."
+            )
+            answer.confidence = Confidence.LOW
+            log_event(logger, "sources.unseen", count=len(missing))
+        return answer
 
     async def _review(
         self,
@@ -264,7 +307,7 @@ def _delegation_instruction(agents: AgentRegistry, spec: AgentSpec) -> str:
     Built from the registry rather than written into each spec, so adding an
     agent does not mean editing every other agent's prompt to mention it.
     """
-    others = [other for other in agents.routable if other.name != spec.name]
+    others = [other for other in agents.routable if other.name != spec.name and other.delegates]
     lines = "\n".join(f"  - {other.name}: {other.purpose}" for other in others)
     return (
         "\n- If a step needs a capability you do not have, use `delegate` rather "
@@ -310,6 +353,9 @@ def _evidence_from(result: AgentResult) -> list[str]:
             evidence.append(f"{outcome.name}: {str(output)[:600]}")
     return evidence
 
+
+#: How much of the writer's material the critic sees.
+COMPOSER_EVIDENCE_CHARS = 12_000
 
 #: How much of a read page the critic sees. Enough for the facts an answer
 #: quotes; bounded because every page read costs critic tokens.

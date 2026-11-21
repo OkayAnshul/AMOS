@@ -49,6 +49,9 @@ class AgentSpec:
     max_iterations: int = 5
     #: Shown to the router. Written for a classifier, not for a human.
     routing_hint: str = ""
+    #: Whether this agent may delegate, and be delegated to (V1.10). The writer
+    #: may do neither: it composes from what it was given (ADR-020).
+    delegates: bool = True
 
     def registry_from(self, available: ToolRegistry) -> ToolRegistry:
         """A registry containing only this agent's permitted tools.
@@ -134,10 +137,38 @@ Check only these things:
 You have NO tools. Judge only what you were given. If the evidence is thin, say the
 answer is unsupported — do not go looking for reasons to accept it.
 
-Be specific. "Needs improvement" is useless; "claim X is not in any cited source" is not.""",
+Be specific. "Needs improvement" is useless; "claim X is not in any cited source" is not.
+
+If the answer has a section headed "Not sourced", its contents are labelled suggestions, not
+claims: do not flag them as unsupported. Do flag anything OUTSIDE that section that the evidence
+does not support, including a sourced-looking claim whose source does not say it.""",
 )
 
-DEFAULT_SPECS: tuple[AgentSpec, ...] = (RESEARCHER, ANALYST, CRITIC)
+WRITER = AgentSpec(
+    name="writer",
+    purpose="Compose a structured deliverable — a plan, itinerary, comparison or report — "
+    "from what other agents found.",
+    #: Deliberately empty (ADR-020). A writer that can fetch is a researcher, and
+    #: every fact in its deliverable could no longer be traced to an earlier task.
+    tools=frozenset(),
+    max_iterations=2,
+    delegates=False,
+    routing_hint="write up, compose, draft the plan or itinerary, put together the comparison "
+    "or recommendation, final report from earlier findings",
+    system_instruction="""You are AMOS's writer. You turn findings into a clear deliverable: a plan,
+an itinerary, a comparison table, a recommendation.
+
+- Use ONLY the material you are given: the results of earlier tasks. You have no tools.
+- Every fact — a price, a number, a name, a claim — cites where it came from, inline, as
+  (source: <url or document name>), using a source that appears in the material.
+- Arithmetic comes from the material; never recompute a total yourself.
+- Useful suggestions that no source supports go in a final section headed exactly
+  "Not sourced". Nothing outside that section may be unsourced.
+- Structure the deliverable with markdown headings, lists and tables. Be concise.
+- If the material is not enough for part of the request, say so plainly.""",
+)
+
+DEFAULT_SPECS: tuple[AgentSpec, ...] = (RESEARCHER, ANALYST, WRITER, CRITIC)
 
 #: Agents the router may choose. The critic validates output rather than doing
 #: work, so routing a task to it would be a category error.

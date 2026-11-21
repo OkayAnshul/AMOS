@@ -57,9 +57,12 @@ async def test_evaluation_records_what_was_chosen_instead() -> None:
     assert (expected, actual) == ("analyst", "researcher")
 
 
-def test_the_labelled_set_covers_both_routable_agents() -> None:
+def test_the_labelled_set_covers_every_routable_agent() -> None:
+    """Every agent the router can choose is measured — the writer since V1.10."""
+    from amos.agents.registry import AgentRegistry
+
     expected = {c.expected_agent for c in ROUTING_CASES}
-    assert expected == {"researcher", "analyst"}
+    assert expected == {spec.name for spec in AgentRegistry().routable}
 
 
 def test_the_labelled_set_includes_topic_versus_requirement_traps() -> None:

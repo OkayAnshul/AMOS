@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from amos.agents.agent import GroundedAgent
+from amos.agents.sourcing import RecordedSources
 from amos.agents.schemas import OPTION_SETTINGS, RunOptions
 from amos.agents.team import AgentTeam
 from amos.agents.tool_agent import ToolUsingAgent, build_default_registry
@@ -153,6 +154,7 @@ def build_agent(
             delegation_enabled=settings.delegation_enabled,
             max_delegation_depth=settings.max_delegation_depth,
             delegation_budget=settings.delegation_budget,
+            sources=RecordedSources(session_factory) if session_factory is not None else None,
         )
     else:
         runner = build_tool_agent(settings, provider, tools)
