@@ -751,6 +751,7 @@ function describe(item, trace) {
     "critic.verdict": `Critic ${p.verdict === "accept" ? "accepted" : "asked to revise"}${item.task_ref ? ` ${item.task_ref}` : " the answer"}`,
     "delegation.started": `${capitalise(p.source)} asked ${capitalise(p.target)} for help`,
     "delegation.finished": `${capitalise(p.target)} answered ${capitalise(p.source)}`,
+    "provider.throttled": `Waited ${ms((p.waited_seconds || 0) * 1000)} for Gemini's per-minute limit (${p.per_minute} a minute)`,
     "sources.checked": p.unseen?.length
       ? `Citation check: ${p.unseen.length} source${p.unseen.length === 1 ? "" : "s"} this run never saw`
       : `Citation check: all ${p.cited} cited sources were seen in this run`,
