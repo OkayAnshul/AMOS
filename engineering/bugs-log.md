@@ -842,3 +842,20 @@ repository's had `EXECUTING` — never written anywhere — and lacked `QUEUED`,
 `DEAD_LETTER`, which the queue's had.
 **Fix:** one definition (the queue's), imported by the repository.
 **Lesson:** two definitions of one vocabulary drift by construction; the unused value was the tell.
+
+---
+
+## 2026-11-21 — Three things only a real browser found
+**Milestone:** V1.8, during the screenshot review
+**Symptoms:**
+1. "Run ⌘↵" worked only while the goal box had focus; after clicking a mode button it did nothing.
+2. Short capsules showed fragments — "Co…", "Re…" — that said less than no label.
+3. The inspector stayed open on pages that had nothing to do with it.
+**Also caught in the review itself:** the first screenshot script waited for `.status.ok`, which
+matched a critic verdict's check mark before the run had finished — the "finished" screenshot was
+of a running run. Selectors now name the run header.
+**Fix:** the shortcut is page-wide on the run page; labels fall back to a short form or nothing;
+leaving the run page closes the inspector.
+**Lesson:** a page's tests prove what the tests assert; looking at it proves what it shows. Both,
+in that order, and the looking has to be checked too.
+**Test added:** `tests/browser/test_page.py` (opt-in) drives the page end to end.

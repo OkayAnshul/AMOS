@@ -3,12 +3,12 @@
 > **Read this first when resuming.** Sufficient to restart cold after months away, without
 > conversation history.
 
-**Last updated:** 2026-11-21 (Session 18 — V1.6 reliability and isolation, V1.7 live run record; the track re-planned)
+**Last updated:** 2026-11-21 (Session 18 — V1.6 reliability, V1.7 live run record, V1.8 the web page; the track re-planned)
 
 ## Current Version
-**V1.7 — Live run record and read API**, the third milestone of the demo track (V1.5–V2.0,
-`docs/19-roadmap.md`, **re-planned 2026-11-20**: V1.8 web page → V1.9 web research → V1.10 complex
-goals → V2.0 demo). The V0.1–V1.0 roadmap is complete.
+**V1.8 — Mission control web page**, the fourth milestone of the demo track (V1.5–V2.0,
+`docs/19-roadmap.md`, **re-planned 2026-11-20**: V1.9 web research → V1.10 complex goals → V2.0
+demo). The V0.1–V1.0 roadmap is complete.
 
 Recent history: memory-reliability fixes (Session 9) · a **coherence audit** (Session 10) that
 found six defects where the code disagreed with its own configuration and ~40 places where the
@@ -19,7 +19,7 @@ queue, and trace context across the worker boundary. ADR-009 and ADR-010 added.
 Phase 0 · V0.1 provider + structured output · V0.2 tools · V0.3 persistence + trace ·
 V0.4 planner/executor · V0.5 RAG · V0.6 memory · V0.7 multi-agent · V0.8 async workers ·
 V0.9 observability · V1.0 evaluation · V1.1 reliability · V1.2 evaluation credibility ·
-V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · **V1.7 live run record and read API**
+V1.3 delegation · V1.4 auth + isolation · V1.5 demo-ready foundation · V1.6 reliability and isolation · V1.7 live run record and read API · **V1.8 mission control web page**
 
 ## What Works
 ```
@@ -51,10 +51,16 @@ goal → route to a specialist → plan a task DAG → tools + retrieval → cri
 - **Read API:** runs list, memories and history, corpus, chunks, uploads (user-owned `.md`/`.txt`),
   system (provider, quota meter, features, bounds, queue, agents, tools), insights — every
   personal list owner-scoped with an isolation test
+- **The page at `/`** (V1.8, ADR-017): a live lane graph per run — a lane per agent, a capsule per
+  task attempt, a tick per call — with an inspector for every call and decision; answer, verdicts,
+  sources that open their passage, memory, activity; history, memory, knowledge and uploads, agents
+  and tools, system and quota, insights, dead letters, settings; per-run options; light, dark,
+  narrow and presenter modes. Plain HTML/CSS/JS, strict CSP, nothing loaded from outside, model
+  text rendered as text (a browser test shows a prompt injection staying text)
 - **`make backup` / `make restore-drill` / `make restore`** — the first drill passed 2026-11-19
 - The corpus rebuilds in **one** free-tier day (850 chunks; `docs/build-along/` excluded), and an
   edited document **replaces** its old version on re-ingest
-- **698 tests** (700 collected, 2 live opt-in), in their own database `amos_test`; `mypy --strict`
+- **704 tests** (707 collected: 2 live and 1 browser test, opt-in — `make browser-test`), in their own database `amos_test`; `mypy --strict`
   and `ruff` clean; **CI runs with and without a database**, migrations both directions, and with
   no API key
 
@@ -97,7 +103,7 @@ regression against it. Only deterministic rates gate; the judged score is contex
   **Still not safe to expose publicly**
 - **Without a database the API is unauthenticated** — by design, with a startup warning
 - The corpus is shared across users by design (`documents.user_id` NULL = system corpus)
-- No UI yet (V1.8). CLIs, FastAPI's `/docs`, and since V1.7 a read API built for the page
+- The page is for **one presenter on localhost**: the key sits in browser storage, it polls rather than streams, and it is tested in Chrome only
 - `Tool` has no output schema, no retry policy and no audit metadata (`docs/08`)
 - Kubernetes, Kafka, Celery, microservices: **never built, never claimed**
 
@@ -116,7 +122,7 @@ Daily limits reset at midnight Pacific. Since V1.5 a daily 429 fails fast.
 `AMOS_PLANNING_ENABLED`, `AMOS_MULTI_AGENT_ENABLED`, `AMOS_CRITIC_ENABLED` each cut cost.
 
 ## Current Branch
-`main`, at `v1.7.0`. No open feature branch. The next one is `feat/v1.8-web-page`.
+`main`, at `v1.8.0`. No open feature branch. The next one is `feat/v1.9-web-research`.
 
 **Note on tags:** `v1.1` points at a commit whose `__version__` is still 1.0.0 — a slip recorded
 in `bugs-log.md`. `v1.2` onward are correct, and `make release VERSION=x.y.z` does
@@ -199,17 +205,17 @@ make worker                               # optional: async execution
 
 ## Exact Next Step
 
-**V1.8 — mission control web page** (`docs/19-roadmap.md`). Branch `feat/v1.8-web-page`. ADR-017
-(plain HTML/CSS/JS, no build step, no CDN, self-hosted fonts, strict CSP) before code. The read API
-it draws on is complete; the design is in the approved plan: a live lane graph — one lane per agent,
-a capsule per task, a tick per call — with an inspector for every request and response.
+**V1.9 — web research** (`docs/19-roadmap.md`). Branch `feat/v1.9-web-research`. ADR-018
+(`web_search` over self-hosted SearXNG — verify the image tag and the JSON API docs on the day) and
+ADR-019 (per-run budget) before code. Then `fetch_page` with a provenance allowlist, the injection
+fixture, and the page's Sources panel for web citations.
 
-Browser checks use Playwright for Python as a dev dependency driving the installed Chrome
-(`/usr/sbin/google-chrome-stable`), no browser download.
+To see the page: `make run`, open <http://127.0.0.1:8000/>, paste the API key. A `presenter` user
+exists for the demo (key not in the repo).
 
-### The advance gate — fifteen documents, never met
+### The advance gate — sixteen documents, never met
 
-`docs/interview/*.md` — fifteen: V1.6's questions added to `reliability.md` and `security.md`, and `run-record.md` (V1.7). This is the second of the project's
+`docs/interview/*.md` — fifteen: V1.6's questions added to `reliability.md` and `security.md`, `run-record.md` (V1.7) and `demo-surface.md` (V1.8). This is the second of the project's
 two equal objectives, and the teacher demo is exactly its test: explaining the system unaided.
 Order: `docs/25-build-journal.md` → `docs/24-study-plan.md` → `docs/interview/*.md` in milestone
 order. Building further before closing it is a deliberate choice against the working agreement's

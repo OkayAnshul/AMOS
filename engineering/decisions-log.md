@@ -604,3 +604,23 @@ are not counted — the meter is a floor and says so.
 **Uploads are JSON, ≤ 20 KB, user-owned.** JSON avoids `python-multipart`; 20 KB is one embedding
 batch with no pacing pause; ownership and an owner-namespaced hash keep uploads private and stop
 a file name from replacing the system corpus.
+
+---
+
+## 2026-11-21 — V1.8: how the page was made and checked
+
+**Design direction: Apple-grade, with one bold element.** Colour means agent (indigo Researcher,
+teal Analyst, purple Writer, orange Critic) and nothing else; the primary button is ink, not a
+colour. Panels are grouped inset lists, not a grid of identical cards. Type is SF Pro on Apple
+devices and self-hosted Inter elsewhere, with optical sizes and tabular numerals. The one bold
+element is the lane graph; the one orchestrated motion is capsules growing in when a plan arrives.
+
+**Inter is in the repository, not loaded from a font service.** A third-party request from a page
+on localhost is a leak and a projector-day dependency; the CSP refuses it anyway. OFL permits
+redistribution with the licence, which ships beside the file.
+
+**Playwright is a dev dependency driving the installed Chrome.** No browser download; opt-in, like
+the live tests; CI does not run it.
+
+**Prompts and replies are not shown,** because they are not stored. The inspector says so rather
+than implying completeness.
