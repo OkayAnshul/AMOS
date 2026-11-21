@@ -242,8 +242,32 @@ export function render(host, model, { width, seen, selected, onSelect }) {
   const span = Math.max(model.end - model.t0, 6000);
   const inner = Math.max(width - LABEL_W - PAD_R, 120);
   const x = (t) => LABEL_W + ((t - model.t0) / span) * inner;
-  const height = model.lanes.length * LANE_H + AXIS_H;
-  const laneY = (lane) => model.lanes.indexOf(lane) * LANE_H;
+
+  // Tasks that run at the same time on one agent's lane stack in sub-rows, so
+  // three researchers working in parallel read as three capsules, not one blur.
+  const rowsByLane = new Map(model.lanes.map((lane) => [lane, []]));
+  const rowOf = new Map();
+  for (const seg of [...model.segments].sort((a, b) => a.start - b.start)) {
+    const rows = rowsByLane.get(seg.lane);
+    let row = rows.findIndex((end) => end <= seg.start);
+    if (row === -1) {
+      row = rows.length;
+      rows.push(0);
+    }
+    rows[row] = seg.end;
+    rowOf.set(seg.key, row);
+  }
+  const ROW_H = CAP_H + 20;
+  const laneHeight = (lane) => LANE_H + Math.max(0, rowsByLane.get(lane).length - 1) * ROW_H;
+  const laneTop = new Map();
+  let top = 0;
+  for (const lane of model.lanes) {
+    laneTop.set(lane, top);
+    top += laneHeight(lane);
+  }
+  const height = top + AXIS_H;
+  const laneY = (lane) => laneTop.get(lane);
+  const segY = (seg) => laneY(seg.lane) + (rowOf.get(seg.key) || 0) * ROW_H;
 
   const root = s("svg", {
     class: "lanes",
@@ -255,10 +279,10 @@ export function render(host, model, { width, seen, selected, onSelect }) {
   });
 
   model.lanes.forEach((lane, i) => {
-    const y = i * LANE_H;
+    const y = laneY(lane);
     const info = LANES[lane];
     root.append(
-      s("rect", { class: `lane-bg${i % 2 ? " alt" : ""}`, x: 0, y, width, height: LANE_H }),
+      s("rect", { class: `lane-bg${i % 2 ? " alt" : ""}`, x: 0, y, width, height: laneHeight(lane) }),
       s("rect", { x: 18, y: y + 22, width: 8, height: 8, rx: 4, style: { fill: info.color } }),
       s("text", { class: "lane-name", x: 34, y: y + 30 }, info.name),
       s("text", { class: "lane-role", x: 34, y: y + 45 }, info.role),
@@ -277,9 +301,9 @@ export function render(host, model, { width, seen, selected, onSelect }) {
 
   for (const dep of model.deps) {
     const x1 = x(dep.from.end);
-    const y1 = laneY(dep.from.lane) + CAP_Y + CAP_H / 2;
+    const y1 = segY(dep.from) + CAP_Y + CAP_H / 2;
     const x2 = x(dep.to.start);
-    const y2 = laneY(dep.to.lane) + CAP_Y + CAP_H / 2;
+    const y2 = segY(dep.to) + CAP_Y + CAP_H / 2;
     const bend = Math.max(24, (x2 - x1) / 2);
     const fresh = !seen.has(`dep:${dep.key}`);
     seen.add(`dep:${dep.key}`);
@@ -295,7 +319,7 @@ export function render(host, model, { width, seen, selected, onSelect }) {
     const color = seg.kind === "critic" ? LANES.critic.color : LANES[seg.lane].color;
     const x1 = x(seg.start);
     const w = Math.max(x(seg.end) - x1, 22);
-    const y = laneY(seg.lane) + CAP_Y;
+    const y = segY(seg) + CAP_Y;
     const fresh = !seen.has(seg.key);
     seen.add(seg.key);
     const classes = ["seg", seg.kind];

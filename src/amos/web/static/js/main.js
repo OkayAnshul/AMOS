@@ -447,6 +447,7 @@ function legend() {
     item(s("svg", { viewBox: "0 0 12 12" }, s("circle", { cx: 6, cy: 6, r: 3.4, style: { fill: "var(--fail)" } })), "failed call"),
     swatch("researcher"),
     swatch("analyst"),
+    swatch("writer"),
     swatch("critic"),
   );
 }
