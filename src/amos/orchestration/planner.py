@@ -39,7 +39,12 @@ Rules:
   or report — use this shape: one research task per distinct topic, then a task for any
   arithmetic (totals, splits, conversions) that depends on the research it needs, then
   ONE final task that writes the deliverable and depends on all of them. Describe that
-  final task as writing or composing, and say what the deliverable must contain.
+  final task as writing or composing, and say what the deliverable must contain
+  (for a trip: a day-by-day table with each line's cost, day totals and a budget table).
+- Research tasks ask for NAMED, specific items with their figures — "find three named
+  hostels in North Goa with nightly dorm prices" — never just "typical costs".
+- Carry the goal's numbers into the tasks exactly as stated, and say what they are: a
+  budget for a whole trip is a total for the whole trip, not per day.
 """
 
 REPAIR_SUFFIX = """
