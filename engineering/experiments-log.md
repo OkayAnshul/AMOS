@@ -523,3 +523,18 @@ searches and three pages.
 answer ₹987–₹1,800 a night with cited sources.
 **Not shown:** that the stopping rule holds across goals — one run is an anecdote. The complex goals
 of V1.10 exercise it.
+
+---
+
+## 2026-11-21 — One upstream engine is not enough: the predicted failure, observed
+**What happened:** after a day of testing, SearXNG's only working engine (Google CSE) was suspended
+for "too many requests" — and Brave, DuckDuckGo and Wikidata were blocked too. A live Goa plan then
+ran six of seven searches to **zero results**; every research task honestly reported nothing found,
+and the writer produced a budget with no hostels, food or transport in it.
+**Probe** (each engine alone, one query): bing 10 · privacywall 10 · google CSE 20 (after a restart
+cleared its suspension) · google and qwant "access denied" · duckduckgo CAPTCHA · brave rate-limited.
+**Change:** enable bing and privacywall in `searxng/settings.yml`; the blocked ones stay off.
+**Re-measured, same ten queries:** 19–20 results each, 0.6–3 s, served by **privacywall (100) and
+bing (99)** — with Google CSE suspended again and contributing nothing. Two engines answering when a
+third is blocked is the resilience the first measurement lacked.
+**Lesson:** the 2026-11-21 measurement named this exact risk; it took one day of use to arrive.

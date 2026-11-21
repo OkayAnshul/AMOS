@@ -18,3 +18,15 @@ search:
     - html
     - json
   safe_search: 1
+
+# More than one upstream engine (V1.10). The first measurement found every
+# result coming from one engine; a day of testing then got it suspended for
+# "too many requests" and searches came back empty. Spreading queries across
+# several engines means one being blocked no longer empties the results.
+engines:
+  # Probed from this machine on 2026-11-21: bing 10 results, privacywall 10;
+  # google and qwant "access denied", duckduckgo CAPTCHA — so not enabled.
+  - name: bing
+    disabled: false
+  - name: privacywall
+    disabled: false
