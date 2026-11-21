@@ -24,6 +24,8 @@ dev = [
     "pytest-asyncio>=0.25",
     "ruff>=0.9",
     "mypy>=1.14",
+    # Browser tests only (ADR-017); drives the installed Chrome, no browser download.
+    "playwright>=1.49",
 ]
 
 [build-system]
@@ -47,6 +49,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "live: hits the real Gemini API; skipped unless AMOS_RUN_LIVE_TESTS=1",
+    "browser: drives a real Chrome against the page; skipped unless AMOS_RUN_BROWSER_TESTS=1",
 ]
 
 [tool.ruff]

@@ -11,10 +11,12 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from amos import __version__
 from amos.agents.schemas import AgentResult, GoalRequest, QueuedRun, RunOptions, RunTrace
@@ -52,6 +54,24 @@ from amos.telemetry.tracing import configure_tracing
 from amos.worker.queue import DeadLetteredRun
 
 logger = logging.getLogger(__name__)
+
+#: The page and its assets (ADR-017).
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+#: Everything the page loads comes from this origin — no CDN, no font service —
+#: and the policy makes that enforced rather than intended. Inline script and
+#: style are refused; JavaScript sets styles through the CSSOM, which CSP allows.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
+)
+PAGE_HEADERS = {
+    "content-security-policy": CONTENT_SECURITY_POLICY,
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+    "cache-control": "no-cache",
+}
 
 # Domain error -> HTTP status. One table, so adding an error type is one line.
 _STATUS_MAP: list[tuple[type[AmosError], int]] = [
@@ -492,6 +512,15 @@ def create_app(
             return await views.system(
                 settings, actor, session=session, registry=registry, tracing=app.state.tracing
             )
+
+    # ---------- the demo page (V1.8, ADR-017) ----------
+
+    app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        """The mission-control page. Needs no key itself; everything it shows does."""
+        return FileResponse(WEB_DIR / "index.html", headers=PAGE_HEADERS)
 
     @app.get("/v1/insights")
     async def get_insights(actor: CurrentActor) -> dict[str, Any]:
