@@ -159,8 +159,8 @@ class Ingestor:
     ) -> IngestReport:
         """Ingest every matching file, sorted for reproducibility.
 
-        `exclude` names directories, at any depth below `directory`, whose files
-        are not ingested — the corpus scope (`amos.rag.cli.CORPUS_EXCLUDE`).
+        `exclude` names directories (at any depth below `directory`) or files
+        that are not ingested — the corpus scope (`amos.rag.cli.CORPUS_EXCLUDE`).
 
         **Commits after every document.** A failure then costs the document in
         progress, not the run, and re-running skips everything already committed
@@ -179,7 +179,7 @@ class Ingestor:
         for path in sorted(root.rglob(pattern)):
             if not path.is_file():
                 continue
-            if set(path.relative_to(root).parts[:-1]) & set(exclude):
+            if set(path.relative_to(root).parts) & set(exclude):
                 report.documents_excluded += 1
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")

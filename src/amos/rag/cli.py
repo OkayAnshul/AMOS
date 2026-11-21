@@ -22,7 +22,12 @@ from amos.rag.store import PgVectorStore
 #: 2026-11-19). `docs/build-along/` restates each milestone's contract and no
 #: golden question cites it; leaving it out keeps a full ingest inside one
 #: day's embedding quota (850 chunks of 1000, not 1108).
-CORPUS_EXCLUDE: tuple[str, ...] = ("build-along",)
+#:
+#: 2026-11-21: the V1.6–V1.8 docs took `docs/` to 962 chunks, past the line. Two
+#: files about Anshul rather than about AMOS — his resume evidence and his study
+#: plan — leave too (206 → 837 chunks). No golden question cites either; the
+#: build journal stays, because it is about the system (decisions-log).
+CORPUS_EXCLUDE: tuple[str, ...] = ("build-along", "22-resume-evidence.md", "24-study-plan.md")
 
 
 async def ingest(directory: str) -> None:

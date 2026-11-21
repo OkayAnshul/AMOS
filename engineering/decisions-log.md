@@ -624,3 +624,24 @@ the live tests; CI does not run it.
 
 **Prompts and replies are not shown,** because they are not stored. The inspector says so rather
 than implying completeness.
+
+---
+
+## 2026-11-21 — The corpus scope, re-decided: two documents about Anshul leave it
+
+`test_the_corpus_fits_one_days_embedding_quota` failed as designed: V1.6–V1.8's ADRs and interview
+documents took `docs/` to **962 chunks**, past the 950 that keeps a full rebuild inside one day's
+1000-embedding quota.
+
+**Decision:** exclude `22-resume-evidence.md` and `24-study-plan.md` (837 chunks after).
+*Why these two:* they are about the person, not the system — his resume evidence and his study
+plan — and no retrieval golden question cites either. The build journal (81 chunks) stays: it is
+about how AMOS was built and is a demo talking point.
+*Rejected:* excluding `docs/interview/` (six golden questions accept interview documents); and
+accepting a two-day rebuild (backups make a rebuild rare, but the demo plan assumes one day).
+*How:* `CORPUS_EXCLUDE` now names files as well as directories, and a new test fails if an
+excluded name matches nothing — a typo would otherwise exclude nothing, silently. The two documents
+were deleted from the local corpus after `make backup`.
+*Consequence:* the eval baseline (880 chunks) is no longer comparable; it is re-measured before the
+demo (V2.0), once the documentation has stopped moving.
+*Reconsider if:* `docs/` passes 950 again — likely at V2.0. Next candidate: the build journal.
